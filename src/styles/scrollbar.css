@@ -1,0 +1,95 @@
+/* scrollbar.css - Add this to your global styles */
+
+/* Default Custom Scrollbar for entire app */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #f5eaf9 rgba(0, 0, 0, 0.05);
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #eddcf3;
+  border-radius: 10px;
+  transition: background 0.3s ease;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #e8cef0;
+}
+
+/* Thin scrollbar utility class */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+/* Hidden scrollbar utility class */
+.scrollbar-hidden::-webkit-scrollbar {
+  display: none;
+}
+
+.scrollbar-hidden {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Dark theme scrollbar */
+.dark .scrollbar-dark::-webkit-scrollbar-track,
+.scrollbar-dark::-webkit-scrollbar-track {
+  background: #fefbff;
+}
+
+/* Modal scrollbar (slightly thinner) */
+.modal-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.modal-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.modal-scroll::-webkit-scrollbar-thumb {
+  background: #f2e8f5;
+}
+
+.modal-scroll::-webkit-scrollbar-thumb:hover {
+  background: #faf0ff;
+}
+
+/* Explicit Horizontal Scrollbar Class for Data Grids */
+.horizontal-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #e2cceb transparent;
+  /* Thumb Track(transparent) */
+}
+
+.horizontal-scrollbar::-webkit-scrollbar {
+  height: 6px;
+  /* Thinner for sleeker look */
+}
+
+.horizontal-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+  /* Remove table/page background contrast issue */
+}
+
+.horizontal-scrollbar::-webkit-scrollbar-thumb {
+  background: #daced6;
+  /* Subtle distinct color */
+  border-radius: 100vh;
+  /* Maximally rounded (capsule shape) */
+}
+
+.horizontal-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #c5b4d0;
+  /* Darker on hover */
+}

@@ -1,0 +1,94 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+    :root {
+        /* Primary Text Colors */
+        --text-primary: #000000;
+        --text-secondary: #00000089;
+        --text-tertiary: #000000cc;
+        --text-accent-blue: #0088ff;
+        --text-accent-dark: #012348;
+        --text-accent-green: #34c759;
+        --text-accent-purple: #cb30e0;
+        --text-accent-red: #ff383c;
+
+        /* Background Colors */
+        --bg-primary: #ffffff;
+        --bg-secondary: #fdfdfd;
+        --bg-overlay-light: #00000005;
+        --bg-overlay-medium: #00000019;
+        --bg-accent-blue: #0088ff19;
+        --bg-accent-green: #34c75919;
+        --bg-accent-purple-light: #cb30e00a;
+        --bg-accent-purple: #cb30e019;
+        --bg-accent-red: #ff383c19;
+
+        /* Border Colors */
+        --border-primary: #00000019;
+        --border-secondary: #00000089;
+        --border-accent-green: #34c759;
+        --border-accent-purple-alt: #ae53dc;
+        --border-accent-purple: #cb30e0;
+        --border-neutral: #d1d5db;
+        --border-accent-red: #ff383c;
+
+        /* Typography Variables */
+        --font-size-xs: 10px;
+        --font-size-sm: 12px;
+        --font-size-base: 13px;
+        --font-size-md: 14px;
+        --font-size-lg: 16px;
+        --font-size-xl: 24px;
+
+        /* Font Weight Variables */
+        --font-weight-normal: 400;
+        --font-weight-medium: 500;
+        --font-weight-semibold: 600;
+        --font-weight-bold: 700;
+
+        /* Line Height Variables */
+        --line-height-xs: 12px;
+        --line-height-sm: 15px;
+        --line-height-base: 16px;
+        --line-height-md: 17px;
+        --line-height-lg: 20px;
+        --line-height-xl: 24px;
+        --line-height-2xl: 29px;
+
+        /* Spacing Variables */
+        --spacing-xs: 4px;
+        --spacing-sm: 6px;
+        --spacing-base: 8px;
+        --spacing-md: 10px;
+        --spacing-lg: 12px;
+        --spacing-xl: 14px;
+        --spacing-2xl: 16px;
+        --spacing-3xl: 20px;
+        --spacing-4xl: 24px;
+        --spacing-5xl: 32px;
+        --spacing-6xl: 40px;
+        --spacing-7xl: 68px;
+        --spacing-8xl: 70px;
+        --spacing-9xl: 72px;
+        --spacing-10xl: 74px;
+
+        /* Border Radius Variables */
+        --radius-sm: 8px;
+        --radius-base: 12px;
+        --radius-md: 14px;
+        --radius-lg: 20px;
+        --radius-xl: 22px;
+        --radius-2xl: 24px;
+        --radius-3xl: 28px;
+
+        /* Component-specific Variables */
+        --sidebar-border: var(--border-primary);
+        --sidebar-width: 16%;
+        --header-border: var(--border-primary);
+        --button-radius-primary: var(--radius-base);
+        --search-bg: var(--bg-primary);
+        --search-border: var(--border-secondary);
+    }
+}
