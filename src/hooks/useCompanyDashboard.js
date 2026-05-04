@@ -344,10 +344,13 @@ export function useCompanyDashboard(companyId) {
                     updateState();
                 } else {
                     console.warn('Company doc not found');
+                    setError(new Error("Company profile could not be found. Please contact support."));
+                    setLoading(false);
                 }
             }, (err) => {
                 console.error('Company snapshot error', err);
                 setError(err);
+                setLoading(false);
             });
 
             usersUnsub = onSnapshot(usersQuery, (snap) => {

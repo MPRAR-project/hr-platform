@@ -432,7 +432,13 @@ export const getBillingSummary = async (companyId) => {
   // Calculate Add-ons Cost
   let addonsCost = 0;
   if (data.plugins?.scheduling) {
-    addonsCost += 2.50; // Hardcoded scheduling price matching signup/stripe
+    addonsCost += 2.50; // Shift Roster
+  }
+  if (data.plugins?.traveller) {
+    addonsCost += 100.00; // Traveller System
+  }
+  if (data.plugins?.timeworks) {
+    addonsCost += 50.00; // TimeWorks
   }
 
   const monthlyAmount = (seatQuota * price) + addonsCost;

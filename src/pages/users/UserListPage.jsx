@@ -133,6 +133,16 @@ const UserListPage = () => {
       ...u
     }));
 
+    // Filter out the current user and any system owners
+    const currentUserId = user?.userId || user?.uid || user?.id;
+    const currentUserEmail = user?.email?.toLowerCase();
+    normalized = normalized.filter(u => 
+      u.id !== currentUserId && 
+      u.userId !== currentUserId &&
+      u.email?.toLowerCase() !== currentUserEmail &&
+      u.centralRole !== 'owner'
+    );
+
     // HR Advisors must not see Site Owner / Site Manager users
     if (user?.role === 'hrAdvisor') {
       normalized = normalized.filter((u) => !isSiteOwnerOrManager(u.primaryRole || u.role));
@@ -827,10 +837,19 @@ const UserListPage = () => {
     if (dashboardData.teamMembers.length === 0 && dashboardData.hasData) {
       return <EmptyTeamState onAddUsers={handleAddUsersTM} />;
     }
+    const currentUserId = user?.userId || user?.uid || user?.id;
+    const currentUserEmail = user?.email?.toLowerCase();
+    const filteredTeamMembers = dashboardData.teamMembers.filter(m => 
+      m.id !== currentUserId && 
+      m.userId !== currentUserId &&
+      m.email?.toLowerCase() !== currentUserEmail &&
+      m.centralRole !== 'owner'
+    );
+
     return (
       <>
         <OptimizedTeamTable
-          teamMembers={dashboardData.teamMembers}
+          teamMembers={filteredTeamMembers}
           onEdit={handleEditTM}
           onDeactivate={handleRemoveTM}
           onActivate={handleActivateTM}

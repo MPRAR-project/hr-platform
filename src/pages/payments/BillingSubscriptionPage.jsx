@@ -1120,8 +1120,20 @@ const BillingSubscriptionsPage = ({ isEmbedded }) => {
             </div>
             {companyData?.plugins?.scheduling && (
               <div className="flex justify-between text-sm">
-                <span className="text-gray-500">Active Add-ons</span>
+                <span className="text-gray-500">Shift Roster</span>
                 <span className="font-medium">£2.50/mo</span>
+              </div>
+            )}
+            {companyData?.plugins?.traveller && (
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-500">Traveller System</span>
+                <span className="font-medium">£100.00/mo</span>
+              </div>
+            )}
+            {companyData?.plugins?.timeworks && (
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-500">TimeWorks</span>
+                <span className="font-medium">£50.00/mo</span>
               </div>
             )}
           </div>
@@ -1173,43 +1185,55 @@ const BillingSubscriptionsPage = ({ isEmbedded }) => {
           </div>
 
           <div className="space-y-4 mt-2">
-            <div className="border border-gray-100 rounded-lg p-3">
-              <div className="flex justify-between items-start">
-                <div>
-                  <h4 className="font-semibold text-gray-900">Shift Scheduling & Roster</h4>
-                  <p className="text-xs text-gray-500 mt-1">Manage shifts, rosters, and schedules.</p>
-                  <p className="text-sm font-bold text-purple-600 mt-2">£2.50<span className="text-xs font-normal text-gray-500">/mo flat fee</span></p>
-                </div>
-                <div className="flex items-center">
-                  {schedulingPluginEnabled ? (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="text-red-500 hover:text-red-700 hover:bg-red-50 h-8 text-xs"
-                      onClick={() => handleToggleAddon('scheduling', false)}
-                      disabled={isProcessingAddon}
-                    >
-                      {isProcessingAddon ? '...' : 'Remove'}
-                    </Button>
-                  ) : (
-                    <Button
-                      size="sm"
-                      className="bg-purple-600 p-2 rounded-sm hover:bg-purple-700 text-white h-8 text-xs"
-                      onClick={() => handleToggleAddon('scheduling', true)}
-                      disabled={isProcessingAddon}
-                    >
-                      {isProcessingAddon ? '...' : 'Add'}
-                    </Button>
+            {[
+              { id: 'scheduling', name: 'Shift Scheduling & Roster', desc: 'Manage shifts, rosters, and schedules.', price: '£2.50', flat: true },
+              { id: 'traveller', name: 'Traveller System', desc: 'Complete logistics and employee booking management.', price: '£100.00', flat: true },
+              { id: 'timeworks', name: 'TimeWorks', desc: 'Advanced biometric-ready attendance and scheduling.', price: '£50.00', flat: true }
+            ].map((addon) => {
+              const isEnabled = companyData?.plugins?.[addon.id];
+              return (
+                <div key={addon.id} className="border border-gray-100 rounded-lg p-3">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <h4 className="font-semibold text-gray-900">{addon.name}</h4>
+                      <p className="text-xs text-gray-500 mt-1">{addon.desc}</p>
+                      <p className="text-sm font-bold text-purple-600 mt-2">
+                        {addon.price}
+                        <span className="text-xs font-normal text-gray-500">/mo {addon.flat ? 'flat fee' : 'per user'}</span>
+                      </p>
+                    </div>
+                    <div className="flex items-center">
+                      {isEnabled ? (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-red-500 hover:text-red-700 hover:bg-red-50 h-8 text-xs"
+                          onClick={() => handleToggleAddon(addon.id, false)}
+                          disabled={isProcessingAddon}
+                        >
+                          {isProcessingAddon ? '...' : 'Remove'}
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          className="bg-purple-600 px-3 py-1 rounded-md hover:bg-purple-700 text-white h-8 text-xs font-bold"
+                          onClick={() => handleToggleAddon(addon.id, true)}
+                          disabled={isProcessingAddon}
+                        >
+                          {isProcessingAddon ? '...' : 'Add'}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                  {isEnabled && (
+                    <div className="mt-2 pt-2 border-t border-gray-50 flex items-center">
+                      <Badge variant="success" className="text-xs py-0">Active</Badge>
+                      <span className="text-xs text-gray-400 ml-2">Included in monthly bill</span>
+                    </div>
                   )}
                 </div>
-              </div>
-              {schedulingPluginEnabled && (
-                <div className="mt-2 pt-2 border-t border-gray-50 flex items-center">
-                  <Badge variant="success" className="text-xs py-0">Active</Badge>
-                  <span className="text-xs text-gray-400 ml-2">Next added to monthly bill</span>
-                </div>
-              )}
-            </div>
+              );
+            })}
           </div>
         </div>
       </div>}

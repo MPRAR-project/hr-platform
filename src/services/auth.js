@@ -300,6 +300,93 @@ export async function loginWithToken(token) {
         const firebaseUser = userCredential.user;
         const email = firebaseUser.email;
 
+        // --- SYNC ROLES FROM CUSTOM TOKEN ---
+        const idTokenResult = await firebaseUser.getIdTokenResult();
+        const claims = idTokenResult.claims || {};
+        
+        if (claims.bridged) {
+            let hrRole = claims.hr_role;
+            
+            // Enforce central platform role mapping rules
+            if (claims.central_role === 'admin') {
+                hrRole = 'superUser';
+            } else if (claims.central_role === 'owner') {
+                hrRole = 'siteManager';
+            }
+            
+            if (hrRole) {
+                const userRef = doc(db, 'users', firebaseUser.uid);
+                const snap = await getDoc(userRef);
+                if (snap.exists()) {
+                    await updateDoc(userRef, { 
+                        role: hrRole, 
+                        primaryRole: hrRole,
+                        centralRole: claims.central_role || null,
+                        companyId: claims.company_id || snap.data().companyId,
+                        primaryCompanyId: claims.company_id || snap.data().primaryCompanyId,
+                        'plugins.scheduling': !!claims.shift_roster,
+                        'plugins.traveller': !!claims.traveller,
+                        'plugins.timeworks': !!claims.timeworks
+                    });
+                    console.log(`Synchronized role and centralRole to bridged user ${firebaseUser.email}`);
+                } else {
+                    await setDoc(userRef, {
+                        email: firebaseUser.email,
+                        displayName: firebaseUser.email.split('@')[0],
+                        role: hrRole,
+                        primaryRole: hrRole,
+                        centralRole: claims.central_role || null,
+                        companyId: claims.company_id || null,
+                        primaryCompanyId: claims.company_id || null,
+                        status: 'active',
+                        createdAt: serverTimestamp(),
+                        updatedAt: serverTimestamp()
+                    });
+                    console.log(`Auto-created HR profile for bridged user ${firebaseUser.email}`);
+                }
+            }
+            
+            // Auto-create or synchronize company document for bridged users
+            if (claims.company_id) {
+                const compId = claims.company_id.includes('/') ? claims.company_id.split('/')[1] : claims.company_id;
+                const compRef = doc(db, 'companies', compId);
+                const compSnap = await getDoc(compRef);
+                if (!compSnap.exists()) {
+                    await setDoc(compRef, {
+                        name: claims.company_name || 'My Company',
+                        status: 'active',
+                        createdAt: serverTimestamp(),
+                        updatedAt: serverTimestamp(),
+                        seatCount: claims.seat_count || 10,
+                        currentEmployeeCount: 1,
+                        subscriptionTier: 'trial',
+                        billingSubscriptionStatus: 'trial',
+                        plugins: {
+                            scheduling: !!claims.shift_roster,
+                            traveller: !!claims.traveller,
+                            timeworks: !!claims.timeworks
+                        }
+                    });
+                    console.log(`Auto-created missing company profile for ${compId}`);
+                    await updateDoc(compRef, {
+                        seatCount: claims.seat_count,
+                        'plugins.scheduling': !!claims.shift_roster,
+                        'plugins.traveller': !!claims.traveller,
+                        'plugins.timeworks': !!claims.timeworks
+                    });
+                    console.log(`Synchronized company: seats=${claims.seat_count}, scheduling=${!!claims.shift_roster}, traveller=${!!claims.traveller}, timeworks=${!!claims.timeworks}`);
+                } else if (claims.shift_roster !== undefined || claims.traveller !== undefined || claims.timeworks !== undefined) {
+                    const pluginUpdates = {};
+                    if (claims.shift_roster !== undefined) pluginUpdates['plugins.scheduling'] = !!claims.shift_roster;
+                    if (claims.traveller !== undefined) pluginUpdates['plugins.traveller'] = !!claims.traveller;
+                    if (claims.timeworks !== undefined) pluginUpdates['plugins.timeworks'] = !!claims.timeworks;
+                    
+                    await updateDoc(compRef, pluginUpdates);
+                    console.log('Synchronized company plugins status');
+                }
+            }
+        }
+
         // Reuse the logic from loginWithEmailPassword for consistency
         // If email is missing (e.g. anonymous or phone), we use UID
         if (email) {
