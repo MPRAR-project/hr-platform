@@ -480,16 +480,24 @@ export async function getUserByEmail(email) {
 
 export async function sendPasswordResetLink(email) {
     try {
-        // Use custom Cloud Function to send branded email
-        const sendResetFn = httpsCallable(functions, 'sendPasswordReset');
-        await sendResetFn({ email });
+        // Redirect to Central Platform for identity management
+        // Central is the master of identity and handles syncing to Firebase
+        const centralBackendUrl = 'http://localhost:5000'; // Default to 5000
+        
+        const response = await fetch(`${centralBackendUrl}/auth/forgot-password`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: email.toLowerCase().trim() })
+        });
+
+        if (!response.ok) {
+            const errData = await response.json();
+            throw new Error(errData.error || 'Failed to send reset link.');
+        }
+
         return { success: true };
     } catch (error) {
-        console.error('Password reset request failed:', error);
-        if (error.code === 'auth/user-not-found' || error.message === 'User not found') {
-            // Consistent error handling
-            throw new Error('No account found with this email.');
-        }
+        console.error('Password reset request failed via Central:', error);
         throw error;
     }
 }

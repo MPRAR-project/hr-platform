@@ -253,16 +253,16 @@ const AppRouter = () => {
         } />
         <Route path="/bridge" element={<BridgePage />} />
         <Route path='/manual' element={<DummyTimesheetGenerator />} />
-        <Route path="/signup" element={
+        {/* <Route path="/signup" element={
           <PublicRoute>
             <SignupPage />
           </PublicRoute>
-        } />
-        <Route path="/team-size-selection" element={
+        } /> */}
+        {/* <Route path="/team-size-selection" element={
           <PublicRoute>
             <TeamSizeSelection />
           </PublicRoute>
-        } />
+        } /> */}
         <Route path="/invite" element={
           <PublicRoute>
             <InviteSignupPage />

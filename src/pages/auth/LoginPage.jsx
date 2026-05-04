@@ -186,13 +186,6 @@ const LoginPage = () => {
                                 )}
                             </button>
 
-                            {/* Sign Up Link */}
-                            <p className="text-center text-md font-medium text-text-secondary">
-                                Don't have an account?{' '}
-                                <Link to="/signup" className="text-text-accent-purple hover:underline">
-                                    Sign up
-                                </Link>
-                            </p>
                         </form>
                     </div>
                 </div>
