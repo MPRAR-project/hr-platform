@@ -234,7 +234,7 @@ export const AuthProvider = ({ children }) => {
                         // Map Central roles to HR roles
                         // Central 'admin' or 'owner' usually maps to 'siteManager' in HR
                         let hrRole = claims.hr_role;
-                        if (claims.central_role === 'admin') {
+                        if (claims.central_role === 'super_admin' || claims.central_role === 'admin') {
                             hrRole = 'superUser';
                         } else if (claims.central_role === 'owner') {
                             hrRole = 'siteManager';
