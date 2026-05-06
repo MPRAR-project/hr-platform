@@ -44,6 +44,7 @@ const EmployeeOnboarding = lazy(() => import('./pages/onboarding/EmployeeOnboard
 const MyTeamPage = lazy(() => import('./pages/users/MyTeamPage'));
 const MyAbsencesPage = lazy(() => import('./pages/absence/MyAbsencePage'));
 const ProfilePage = lazy(() => import('./pages/profile/MyProfilePage'));
+const MyCompanyPage = lazy(() => import('./pages/companies/MyCompanyPage'));
 const SeatRequestPage = lazy(() => import('./pages/users/SeatManagementPage'));
 const TimesheetManagementPage = lazy(() => import('./pages/timesheets/TimesheetManagementPage'));
 const AbsenceManagementPage = lazy(() => import('./pages/absence/AbsenceManagementPage'));
@@ -129,6 +130,7 @@ const AppRouter = () => {
             </PluginGuard>
           } />
           <Route path="/myprofile" element={<ProfilePage />} />
+          <Route path="/my-company" element={<MyCompanyPage />} />
           <Route path='/seat-management' element={
             <RoleGuard allowedRoles={['seniorManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor']}>
               <SeatRequestPage />

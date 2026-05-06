@@ -31,7 +31,8 @@ import {
   Activity,
   ChevronDown,
   ChevronRight,
-  DollarSign
+  DollarSign,
+  Building2
 } from 'lucide-react';
 import { useUI } from '../../hooks/useUI';
 
@@ -387,6 +388,12 @@ const Sidebar = () => {
       label: 'Profile',
       icon: UserCircle,
       roles: ['employee', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor']
+    },
+    {
+      to: '/my-company',
+      label: 'My Company',
+      icon: Building2,
+      roles: ['employee', 'siteManager', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor', 'contractManager']
     },
     {
       to: '/emp/onboarding',
