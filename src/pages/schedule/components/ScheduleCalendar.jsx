@@ -49,14 +49,22 @@ const ScheduleCalendar = ({ targetUserId, onBack }) => {
             // 2. Load Static Data (Sites for all, Users for Managers or to show name)
             const loadData = async () => {
                 try {
-                    const [sitesData, locationsData, usersData] = await Promise.all([
+                    const { getUserById } = await import('../../../services/users');
+                    
+                    const promises = [
                         getSites(user.companyId),
-                        getWorkLocations(user.companyId),
-                        // Always load users if we need to display names, or if we are manager
-                        // If targetUserId is set, we need at least that user's info.
-                        // Best to load all company users to be safe for display mapping
-                        getUsersByCompany(user.companyId)
-                    ]);
+                        getWorkLocations(user.companyId)
+                    ];
+
+                    // If we have a targetUserId and we are NOT in matrix view, 
+                    // we only need that user's data.
+                    if (targetUserId && !isManager) {
+                        promises.push(getUserById(targetUserId).then(u => u ? [u] : []));
+                    } else {
+                        promises.push(getUsersByCompany(user.companyId));
+                    }
+
+                    const [sitesData, locationsData, usersData] = await Promise.all(promises);
                     setSites(sitesData);
                     setWorkLocations(locationsData);
                     setUsers(usersData);
@@ -73,7 +81,15 @@ const ScheduleCalendar = ({ targetUserId, onBack }) => {
     }, [user?.companyId]);
 
     // Helpers
-    const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 }); // Monday start
+    const { weekStartDay } = useAuth();
+    const getWeekStartIndex = (dayName) => {
+        const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+        const index = days.indexOf(dayName?.toLowerCase());
+        return index === -1 ? 1 : index; // Default to Monday if not found
+    };
+
+    const weekStartsOn = useMemo(() => getWeekStartIndex(weekStartDay), [weekStartDay]);
+    const weekStart = startOfWeek(currentDate, { weekStartsOn });
     const weekDays = useMemo(() => Array.from({ length: 7 }).map((_, i) => addDays(weekStart, i)), [weekStart]);
 
     const getShiftsForCell = (userId, date) => {
@@ -82,7 +98,11 @@ const ScheduleCalendar = ({ targetUserId, onBack }) => {
                 s.employeeId === userId &&
                 isSameDay(new Date(s.start), date)
             )
-            .sort((a, b) => new Date(a.start) - new Date(b.start)); // Sort by start time ascending
+            .sort((a, b) => {
+                const startA = new Date(a.start).getTime();
+                const startB = new Date(b.start).getTime();
+                return startA - startB;
+            });
     };
 
     // Filter Users for Display

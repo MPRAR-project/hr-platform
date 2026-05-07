@@ -99,7 +99,7 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
             fullName: '',
             email: '',
             role: 'employee',
-            reportsTo: 'teamManager',
+            reportsTo: '',
             enableOnboarding: false,
             isTrainingMandatory: false
         }
@@ -120,17 +120,12 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
         return managerRoles.includes(role);
     };
 
-    // Updated: Reports To visibility depends on role AND hierarchy
+    // Updated: Reports To visibility depends on role
     const shouldShowReportsTo = (role) => {
-        // Senior Managers report to Site Manager (not selected here)
-        if (role === 'seniorManager') return false;
+        // Site Managers and Super Users are at the top and don't report to others here
+        if (['siteManager', 'superUser'].includes(role)) return false;
 
-        // Team/HR/Admin Managers report to Senior Manager IF one exists
-        if (['teamManager', 'adminManager', 'hrManager'].includes(role)) {
-            return hasSeniorManager;
-        }
-
-        // Employees/Advisors always show Reports To
+        // Everyone else (including all other manager types) reports to someone
         return true;
     };
 
@@ -157,19 +152,19 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
 
     // Updated: Get allowed manager roles based on user role and hierarchy
     const getAllowedManagerRoles = (userRole) => {
-        // If user is a mid-level manager, they report to Senior Manager
-        if (['teamManager', 'adminManager', 'hrManager'].includes(userRole)) {
-            return ['seniorManager'];
+        // If user is a mid-level manager, they report to Senior Manager (or fallback to Site Manager)
+        if (['teamManager', 'adminManager', 'hrManager', 'seniorManager'].includes(userRole)) {
+            return ['seniorManager', 'siteManager', 'superUser'];
         }
 
         const roleMapping = {
-            'employee': ['teamManager'],
-            'hrAdvisor': ['hrManager'],
-            'adminAdvisor': ['adminManager'],
-            'contractManager': ['teamManager']
+            'employee': ['teamManager', 'siteManager', 'superUser'],
+            'hrAdvisor': ['hrManager', 'siteManager', 'superUser'],
+            'adminAdvisor': ['adminManager', 'siteManager', 'superUser'],
+            'contractManager': ['teamManager', 'siteManager', 'superUser']
         };
 
-        return roleMapping[userRole] || [];
+        return roleMapping[userRole] || ['siteManager', 'superUser'];
     };
 
     // Filter managers based on user role
@@ -191,7 +186,7 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
                 email: '',
                 password: '',
                 role: 'employee',
-                reportsTo: 'teamManager',
+                reportsTo: '',
                 enableOnboarding: false,
                 isTrainingMandatory: false
             }
@@ -245,7 +240,7 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
                 fullName: '',
                 email: '',
                 role: 'employee',
-                reportsTo: 'teamManager',
+                reportsTo: '',
                 enableOnboarding: false,
                 isTrainingMandatory: false
             }
@@ -353,10 +348,11 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
                 if (!authed?.companyId) return;
                 const companyPath = authed.companyId;
                 const companyId = companyPath.includes('/') ? companyPath.split('/')[1] : companyPath;
-                const roles = ['teamManager', 'adminManager', 'hrManager', 'seniorManager'];
+                const companyIdRaw = companyPath.replace('companies/', '');
+                const roles = ['teamManager', 'adminManager', 'hrManager', 'seniorManager', 'siteManager', 'superUser'];
                 const usersCol = collection(db, 'users');
-                // fetch all managers for the company
-                const q = query(usersCol, where('companyId', '==', `companies/${companyId}`));
+                // fetch all potential managers for the company - handle both formats
+                const q = query(usersCol, where('companyId', 'in', [companyIdRaw, `companies/${companyIdRaw}`]));
                 const snap = await getDocs(q);
                 const opts = snap.docs
                     .map(d => ({ id: d.id, ...d.data() }))

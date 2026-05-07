@@ -160,7 +160,7 @@ const CreateAllowanceModal = ({ isOpen, onClose, onSave, onDelete, employee, exi
       const hasAnyField = allowance.type || allowance.totalDays || allowance.validFrom || allowance.validUntil;
       if (!hasAnyField) return;
 
-      if (allowance.allowanceId) {
+      if (allowance.allowanceId && !String(allowance.allowanceId).startsWith('default-empty-') && !String(allowance.allowanceId).startsWith('virtual-')) {
         // Only include if it was being edited (view mode) or always in add mode
         if (!isViewMode || editingIds.has(allowance.id)) {
           toUpdate.push({

@@ -4,13 +4,21 @@ import { auth, db } from '../firebase/client';
 import eventBus from '../services/EventBus';
 import { clearAllCache } from '../services/dataCache';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { collection, query, where, getDocs, doc, getDoc, setDoc, limit, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, getDoc, setDoc, limit, updateDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import { getCompanyOnboardingSettings, shouldRequireOnboarding, isRoleExemptFromOnboarding, getOnboardingRedirectPath } from '../utils/onboardingUtils';
 import { resolveWeekStartDay, DEFAULT_WEEK_START_DAY } from '../services/weekStartConfig';
 
 
 // Create the context
 export const AuthContext = createContext(null);
+
+// Helper: normalise weekStartDay values to a consistent lowercase string
+const VALID_WEEK_DAYS = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
+const normalizeWeekStartDay = (value) => {
+    if (!value) return null;
+    const normalized = String(value).trim().toLowerCase();
+    return VALID_WEEK_DAYS.includes(normalized) ? normalized : null;
+};
 
 // Create a list of all available roles and dummy user data for each
 const ALL_ROLES = ['superUser', 'siteManager', 'teamManager', 'adminManager', 'hrManager', 'employee', 'adminAdvisor', 'hrAdvisor', 'contractManager'];
@@ -230,7 +238,7 @@ export const AuthProvider = ({ children }) => {
                         // Get custom claims from the token
                         const idTokenResult = await fbUser.getIdTokenResult();
                         const claims = idTokenResult.claims || {};
-                        
+
                         // Map Central roles to HR roles
                         // Central 'admin' or 'owner' usually maps to 'siteManager' in HR
                         let hrRole = claims.hr_role;
@@ -329,7 +337,6 @@ export const AuthProvider = ({ children }) => {
                 }
 
                 // Subscribe to User Document (and profile when company exists)
-                const { onSnapshot } = await import('firebase/firestore');
 
                 // SCALABILITY: Import subscription monitor (graceful - doesn't break if fails)
                 let subscriptionMonitor = null;
@@ -574,6 +581,44 @@ export const AuthProvider = ({ children }) => {
         }
     }, []);
 
+    const [companySettings, setCompanySettings] = useState(null);
+    const [isCompanyLoading, setIsCompanyLoading] = useState(false);
+
+    // 3. Real-time Company Settings Listener
+    useEffect(() => {
+        if (!authInitialized) return;
+        const targetCompanyId = authedUser?.companyId || authedUser?.primaryCompanyId;
+        const cid = (targetCompanyId || '').toString().split('/').pop() || (targetCompanyId || '').toString();
+
+        if (!cid || cid === 'undefined' || cid === 'null') {
+            setCompanySettings(null);
+            setWeekStartDay(DEFAULT_WEEK_START_DAY);
+            return;
+        }
+
+        setIsCompanyLoading(true);
+        const compRef = doc(db, 'companies', cid);
+
+        const unsubscribe = onSnapshot(compRef, (docSnap) => {
+            if (docSnap.exists()) {
+                const data = docSnap.data();
+                setCompanySettings(data);
+
+                // Sync weekStartDay
+                if (data.weekStartDay) {
+                    const normalized = normalizeWeekStartDay(data.weekStartDay);
+                    setWeekStartDay(normalized);
+                }
+            }
+            setIsCompanyLoading(false);
+        }, (err) => {
+            console.error('AuthContext: Company listener error', err);
+            setIsCompanyLoading(false);
+        });
+
+        return () => unsubscribe();
+    }, [authedUser?.companyId, authedUser?.primaryCompanyId, authInitialized]);
+
     const refreshWeekStartDay = useCallback(async (companyId, siteId) => {
         if (!companyId && !siteId) {
             setWeekStartDay(DEFAULT_WEEK_START_DAY);
@@ -595,8 +640,11 @@ export const AuthProvider = ({ children }) => {
         }
     }, []);
 
+    // Effect for manual refresh is now secondary to the real-time listener
     useEffect(() => {
         if (authedUser?.companyId || authedUser?.siteId) {
+            // We still run this on initial load to prime the state quickly 
+            // before the listener might fire (though onSnapshot fires immediately)
             refreshWeekStartDay(authedUser.companyId, authedUser.siteId);
         } else {
             setWeekStartDay(DEFAULT_WEEK_START_DAY);
@@ -722,10 +770,12 @@ export const AuthProvider = ({ children }) => {
         logout,
         checkOnboardingRequirement,
         refreshUserData,
+        companySettings,
+        isCompanyLoading,
         weekStartDay,
         refreshWeekStartDay,
         isWeekStartLoading
-    }), [user, role, authedUser, isLoading, weekStartDay, isWeekStartLoading, refreshWeekStartDay, switchRole, login, loginWithToken, logout, checkOnboardingRequirement, refreshUserData]);
+    }), [user, role, authedUser, isLoading, companySettings, isCompanyLoading, weekStartDay, isWeekStartLoading, refreshWeekStartDay, switchRole, login, loginWithToken, logout, checkOnboardingRequirement, refreshUserData]);
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }; 

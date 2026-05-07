@@ -48,7 +48,7 @@ const AllowancesTab = ({ allowances = [], year: initialYear, employee, onAllowan
             // If the allowance ID starts with 'virtual-', it means the document doesn't exist yet
             // in Firestore (it's generated on-the-fly from absence data).
             // In this case, we need to create a new allowance document.
-            if (allowanceId && String(allowanceId).startsWith('virtual-')) {
+            if (allowanceId && (String(allowanceId).startsWith('virtual-') || String(allowanceId).startsWith('default-empty-'))) {
                 const employeeId = employee?.id || employee?.uid;
 
                 // Map the virtual allowance to the format expected by createAllowances

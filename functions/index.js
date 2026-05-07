@@ -120,59 +120,11 @@ exports.sendPasswordReset = functions.https.onCall(async (data, context) => {
     await mail.send({
       to: email,
       from: 'notifications@mprar.com',
-      subject: 'Reset your password for MPRAR',
-      html: `< !DOCTYPE html >
-  <html lang="en">
-    <head>
-      <meta charset="UTF-8" />
-      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-      <title>Reset Your Password</title>
-    </head>
-    <body style="font-family: 'Segoe UI', Arial, sans-serif; background-color: #f7f9fc; margin: 0; padding: 0;">
-      <table width="100%" cellspacing="0" cellpadding="0" style="background-color: #f7f9fc; padding: 40px 0;">
-        <tr>
-          <td align="center">
-            <table width="600" cellspacing="0" cellpadding="0" style="background-color: #ffffff; border-radius: 10px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
-              <!-- Header -->
-              <tr>
-                <td align="center" style="background-color: #0069d9; color: #ffffff; padding: 25px 10px; font-size: 22px; font-weight: bold;">
-                  Password Reset Request
-                </td>
-              </tr>
-              <!-- Body -->
-              <tr>
-                <td style="padding: 40px 30px; color: #333333;">
-                  <p style="font-size: 18px; margin: 0 0 15px 0;">Hello,</p>
-                  <p style="font-size: 16px; line-height: 1.6; margin: 0 0 20px 0;">
-                    We received a request to reset your password for your MPRAR account.
-                  </p>
-                  <p style="font-size: 16px; line-height: 1.6; margin: 0 0 30px 0;">
-                    Click the button below to reset it. This link is valid for 1 hour.
-                  </p>
-                  <p style="text-align: center; margin: 40px 0;">
-                    <a href="${link}"
-                      style="background-color: #0069d9; color: #ffffff; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-size: 16px; font-weight: 600; display: inline-block;">
-                      Reset Password
-                    </a>
-                  </p>
-                  <p style="font-size: 14px; color: #777777; margin: 0 0 15px 0;">
-                    If you didn't ask for a password reset, you can ignore this email.
-                  </p>
-                </td>
-              </tr>
-              <!-- Footer -->
-              <tr>
-                <td align="center" style="background-color: #f0f4f8; padding: 20px; font-size: 13px; color: #666666;">
-                  &copy; ${new Date().getFullYear()} MPRAR. All rights reserved.
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-      </table>
-    </body>
-  </html>
-`
+      templateId: process.env.SENDGRID_TEMPLATE_PASSWORD_RESET || 'd-d94dd4c1f8a340f5aac415bd37f2845c',
+      dynamicTemplateData: {
+        firstName: email.split('@')[0],
+        resetUrl: link
+      }
     });
 
     return { success: true };

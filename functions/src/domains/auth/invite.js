@@ -71,72 +71,13 @@ exports.sendUserInvite = functions.https.onCall(async (data, context) => {
   await mail.send({
     to: email,
     from: 'notifications@mprar.com',
-    subject: 'You’re invited to MPRAR',
-    html: `<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Invitation to Join</title>
-  </head>
-  <body style="font-family: 'Segoe UI', Arial, sans-serif; background-color: #f7f9fc; margin: 0; padding: 0;">
-    <table width="100%" cellspacing="0" cellpadding="0" style="background-color: #f7f9fc; padding: 40px 0;">
-      <tr>
-        <td align="center">
-          <table width="600" cellspacing="0" cellpadding="0" style="background-color: #ffffff; border-radius: 10px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
-
-            <!-- Header -->
-            <tr>
-              <td align="center" style="background-color: #0069d9; color: #ffffff; padding: 25px 10px; font-size: 22px; font-weight: bold;">
-                Welcome to Our Team!
-              </td>
-            </tr>
-
-            <!-- Body -->
-            <tr>
-              <td style="padding: 40px 30px; color: #333333;">
-                <p style="font-size: 18px; margin: 0 0 15px 0;">Hello${displayName ? ' ' + displayName : ''},</p>
-                
-                <p style="font-size: 16px; line-height: 1.6; margin: 0 0 20px 0;">
-                  You’ve been invited to join our platform. We’re excited to have you on board!
-                </p>
-
-                <p style="font-size: 16px; line-height: 1.6; margin: 0 0 30px 0;">
-                  Please click the button below to complete your account setup and get started.
-                </p>
-
-                <p style="text-align: center; margin: 40px 0;">
-                  <a href="${inviteLink}"
-                    style="background-color: #0069d9; color: #ffffff; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-size: 16px; font-weight: 600; display: inline-block;">
-                    Complete Your Account
-                  </a>
-                </p>
-
-                <p style="font-size: 14px; color: #777777; margin: 0 0 15px 0;">
-                  <strong>Note:</strong> This invitation link will expire in <strong>7 days</strong>.
-                </p>
-
-                <hr style="border: none; border-top: 1px solid #e5e5e5; margin: 30px 0;" />
-
-                <p style="font-size: 14px; color: #777777; margin: 0;">
-                  If you didn’t request this invitation, please ignore this email.
-                </p>
-              </td>
-            </tr>
-
-            <!-- Footer -->
-            <tr>
-              <td align="center" style="background-color: #f0f4f8; padding: 20px; font-size: 13px; color: #666666;">
-                &copy; ${new Date().getFullYear()} MPRAR. All rights reserved.
-              </td>
-            </tr>
-            
-          </table>
-        </td>
-      </tr>
-    </table>
-  </body>
-</html>`
+    templateId: process.env.SENDGRID_TEMPLATE_WELCOME || 'd-12bfa9f6d8b64f0c99ad302e71158364',
+    dynamicTemplateData: {
+      firstName: displayName || email.split('@')[0],
+      loginUrl: inviteLink,
+      companyName: 'MPRaR Platform', // Could be dynamic if company name is passed in data
+      platformName: 'HR Portal'
+    }
   });
 
   return { success: true, message: 'Invite sent' };

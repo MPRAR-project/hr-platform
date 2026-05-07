@@ -20,6 +20,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { useDashboardPerformance } from '../../hooks/useDashboardPerformance';
 import { usePerformanceMonitor } from '../../hooks/usePerformanceMonitor';
 import { addUsersBySiteManager, updateUserBySiteManager } from '../../services/users';
+import { sendUserInvite } from '../../services/invitations';
 
 // Enhanced components for better error handling and loading states
 import DashboardLoadingState from '../../components/ui/DashboardLoadingState';
@@ -273,19 +274,20 @@ const SiteManagerDashboard = () => {
   };
 
   const handleDeleteConfirm = async () => {
+    if (!selectedUser?.id) {
+      toast.error('No user selected.');
+      return;
+    }
     try {
-      console.log('Removing user:', selectedUser.id);
-      // TODO: Implement user removal logic
+      const { archiveUser } = await import('../../services/users');
+      const effectiveCompanyId = companyId || user?.companyId || selectedUser.companyId;
+      await archiveUser(selectedUser.id, effectiveCompanyId);
       setShowDeleteModal(false);
-      toast.success('User removed successfully');
-
-      // Refresh dashboard data (clear cache for fresh data)
-      // await loadDashboardData(false, true);
-
+      toast.success(`${selectedUser.name || selectedUser.displayName || 'User'} has been removed.`);
     } catch (e) {
       console.error('Failed to remove user:', e);
       const userMessage = getUserErrorMessage(e);
-      toast.error(userMessage);
+      toast.error(userMessage || 'Failed to remove user. Please try again.');
     }
   };
 

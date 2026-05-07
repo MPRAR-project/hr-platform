@@ -12,10 +12,18 @@ const BridgePage = () => {
     const [error, setError] = useState(null);
 
     useEffect(() => {
-        const token = searchParams.get('token');
+        const token        = searchParams.get('token');
+        const centralToken = searchParams.get('central_token');
+
         if (!token) {
             setError('Access token is missing. Please return to the Central Platform.');
             return;
+        }
+
+        // Store the Central JWT so the HR platform can call the Central API
+        // for user sync (HR → Central Postgres) when site managers add users.
+        if (centralToken) {
+            localStorage.setItem('mprar_central_token', centralToken);
         }
 
         const performLogin = async () => {

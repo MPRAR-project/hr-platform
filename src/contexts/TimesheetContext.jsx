@@ -41,7 +41,7 @@ export const useTimesheetContext = () => {
 };
 
 export const TimesheetProvider = ({ children }) => {
-    const { user } = useAuth();
+    const { user, companySettings, weekStartDay: authWeekStartDay } = useAuth();
     // Get sessions from ClockSessionContext (returns safe defaults if not available)
     const { sessionDocs: allSessionDocs } = useClockSessionContext();
     const [timesheetDocs, setTimesheetDocs] = useState([]);
@@ -60,43 +60,27 @@ export const TimesheetProvider = ({ children }) => {
     const lastProcessedRef = useRef('');
     const [currentSchedule, setCurrentSchedule] = useState(null);
 
-    // Subscribe to company schedule and absences for real-time updates
+    // Sync company settings from AuthContext
+    useEffect(() => {
+        if (companySettings) {
+            const schedule = companySettings.workSchedule || {};
+            setCurrentSchedule(schedule);
+            if (user?.uid) {
+                scheduleCacheRef.current[user.uid] = schedule;
+            }
+        }
+    }, [companySettings, user?.uid]);
+
+    // Subscribe to absences for real-time updates
     useEffect(() => {
         if (!user?.uid) {
-            setCurrentSchedule(null);
             setAbsencesMap(null);
             return;
         }
 
-        let unsubscribeSchedule = null;
-        let unsubscribeAbsences = null;
-
         const setupListeners = async () => {
             try {
-                const { companyIdPath } = await getUserWeekContext(user.uid);
-                if (!companyIdPath) return;
-
-                const compKey = companyIdPath.includes('/') ? companyIdPath.split('/')[1] : companyIdPath;
-                if (!compKey) return;
-
-                const { doc, onSnapshot, collection, query, where } = await import('firebase/firestore');
-                const { db } = await import('../firebase/client');
-
-                // 1. Schedule Listener
-                const compRef = doc(db, 'companies', compKey);
-                unsubscribeSchedule = onSnapshot(compRef, (docSnap) => {
-                    if (docSnap.exists()) {
-                        const schedule = docSnap.data().workSchedule || {};
-                        setCurrentSchedule(schedule);
-                        scheduleCacheRef.current[user.uid] = schedule;
-                        scheduleLastFetched.current[user.uid] = Date.now();
-                    } else {
-                        // Fail-safe: if document doesn't exist, set empty object to end loading state
-                        setCurrentSchedule({});
-                    }
-                });
-
-                // 2. Absences Listener/Fetch
+                // Absences Listener/Fetch
                 // We'll use the service to fetch them for the relevant range
                 const { fetchApprovedAbsencesForWeek } = await import('../services/timesheetAbsenceIntegration');
                 const today = new Date();
@@ -113,7 +97,6 @@ export const TimesheetProvider = ({ children }) => {
             } catch (err) {
                 console.error('[TimesheetProvider] Error setting up listeners:', err);
                 // Fail-safe to prevent permanent loading hang
-                setCurrentSchedule({});
                 setAbsencesMap(new Map());
             }
         };
@@ -121,8 +104,7 @@ export const TimesheetProvider = ({ children }) => {
         setupListeners();
 
         return () => {
-            if (unsubscribeSchedule) unsubscribeSchedule();
-            if (unsubscribeAbsences) unsubscribeAbsences();
+            // No cleanup needed for manual fetch
         };
     }, [user?.uid]);
 
@@ -228,9 +210,9 @@ export const TimesheetProvider = ({ children }) => {
             const sessionsToUse = sessionDocs || sessionDocsRef.current || [];
 
             // Get user's week start day
-            const { weekStartDay, companyIdPath } = await getUserWeekContext(user.uid);
+            const { companyIdPath } = await getUserWeekContext(user.uid);
             const { STORAGE_ANCHOR_DAY, isMondayAnchorEnabled } = await import('../utils/weekStartUtils');
-            const weekStart = isMondayAnchorEnabled(companyIdPath) ? STORAGE_ANCHOR_DAY : (weekStartDay || DEFAULT_WEEK_START_DAY);
+            const weekStart = isMondayAnchorEnabled(companyIdPath) ? STORAGE_ANCHOR_DAY : (authWeekStartDay || DEFAULT_WEEK_START_DAY);
 
             // Get company schedule
             const schedule = await getCompanySchedule(user.uid);

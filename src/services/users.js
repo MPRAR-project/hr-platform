@@ -182,6 +182,51 @@ export async function addUsersBySiteManager(companyId, siteId, usersPayload) {
         await batch.commit();
         console.log(`Successfully committed batch for ${created.length} users`);
 
+        // ──────────────────────────────────────────────────────────────────
+        // 4) Best-effort sync to Central Platform Postgres
+        //    So users created here are visible on the owner's /owner-users page.
+        //    Uses the Central access token stored after SSO bridge login.
+        // ──────────────────────────────────────────────────────────────────
+        try {
+            const centralApiUrl = import.meta.env.VITE_CENTRAL_API_URL || 'http://localhost:5000';
+            const centralToken  = localStorage.getItem('mprar_central_token');
+            const cleanCompanyId = companyId.replace('companies/', '');
+
+            if (centralToken && centralApiUrl) {
+                await Promise.allSettled(
+                    created
+                        .filter(u => !u._isExistingUser)  // only sync brand new users
+                        .map(u => fetch(`${centralApiUrl}/companies/${cleanCompanyId}/users`, {
+                            method:  'POST',
+                            headers: {
+                                'Content-Type':  'application/json',
+                                'Authorization': `Bearer ${centralToken}`,
+                            },
+                            body: JSON.stringify({
+                                email:       u.email,
+                                firstName:   u.firstName,
+                                lastName:    u.lastName,
+                                hrRole:      u._profileData?.primaryRole || 'employee',
+                                centralRole: null,
+                            }),
+                        })
+                        .then(async res => {
+                            if (!res.ok) {
+                                const err = await res.json().catch(() => ({}));
+                                console.warn('[HR→Central sync] Non-fatal error for', u.email, err.error || res.status);
+                            } else {
+                                console.info('[HR→Central sync] Synced', u.email, 'to Central Postgres');
+                            }
+                        })
+                        .catch(err => console.warn('[HR→Central sync] Network error for', u.email, err.message))
+                        )
+                );
+            }
+        } catch (syncErr) {
+            // Non-blocking: HR users are created in Firestore regardless
+            console.warn('[HR→Central sync] Failed (non-fatal):', syncErr.message);
+        }
+
         // Create automatic sick leave allowances for new employees
         try {
             const { automaticAllowanceService } = await import('./automaticAllowanceService');
@@ -688,10 +733,14 @@ export function subscribeToCompanyUsers(companyId, onUpdate, onError, options = 
         const usersRef = collection(db, 'users');
         const { status = 'active', limit: maxLimit = 1000 } = options;
 
+        const rawId = companyId.replace('companies/', '');
+        const pathId = `companies/${rawId}`;
+
         // SCALABILITY: Build query with optional status filter and required limit
+        // Query both formats to handle legacy + bridge-created users
         let q = query(
             usersRef,
-            where('companyId', '==', `companies/${companyId}`)
+            where('companyId', 'in', [rawId, pathId])
         );
 
         // Add status filter if specified

@@ -34,10 +34,12 @@ import DashboardLoadingState from '../../components/ui/DashboardLoadingState';
 import { ConfigurationErrorState, NetworkErrorState, EmptyTeamState } from '../../components/ui/DataUnavailableState';
 import { getBillingSummary, recordSeatTopUp } from '../../services/billing';
 import { trackUserAction, dashboardLogger } from '../../utils/logger';
-import { sendUserInvite } from '../../services/invitations';
-import { useCompanyDashboard } from '../../hooks/useCompanyDashboard';
-import { useCache } from '../../contexts/CacheContext';
 import { invalidateCompanyCache } from '../../services/cacheInvalidationService';
+import { sendUserInvite } from '../../services/invitations';
+import { useCache } from '../../contexts/CacheContext';
+import { useCompanyDashboard } from '../../hooks/useCompanyDashboard';
+
+// Removed duplicate normalizeRoleKey definition
 
 const roleToJobTitle = (role) => {
   switch (role) {
@@ -699,12 +701,12 @@ const UserListPage = () => {
       : dashboardData?.teamMembers?.find(m => m.id === memberOrId);
     if (member) {
       const roleKey = normalizeRoleKey(member.primaryRole || member.role);
-      const currentUserRoleKey = normalizeRoleKey(currentUser?.primaryRole || currentUser?.role);
+      const userRoleKey = normalizeRoleKey(user?.primaryRole || user?.role);
 
       // Prevent editing Senior Manager profiles from the Team Management view
       // HR Managers, Team Managers, and lower roles cannot edit Senior Managers
       if (roleKey === 'seniormanager' &&
-        !['superuser', 'siteowner', 'sitemanager'].includes(currentUserRoleKey)) {
+        !['superuser', 'siteowner', 'sitemanager'].includes(userRoleKey)) {
         toast.error('Senior Manager profile cannot be edited from this view.');
         return;
       }

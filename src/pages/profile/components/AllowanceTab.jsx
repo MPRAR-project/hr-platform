@@ -18,10 +18,10 @@ export const AllowancesTab = ({ refreshToken = 0, selectedLeaveType: externalSel
   const [showAll, setShowAll] = useState(false);
   const [error, setError] = useState(null);
   const unsubscribeRef = useRef(null);
-  
+
   // Use external state if provided, otherwise use internal state for backward compatibility
   const selectedLeaveType = externalSelectedLeaveType || 'all';
-  const handleLeaveTypeChange = onLeaveTypeChange || (() => {});
+  const handleLeaveTypeChange = onLeaveTypeChange || (() => { });
 
   useEffect(() => {
     if (authLoading) return;
@@ -206,7 +206,7 @@ export const AllowancesTab = ({ refreshToken = 0, selectedLeaveType: externalSel
     // Enhance allowances with real-time usage from provided absences
     return raw.map(allowance => {
       const norm = allowanceService.normalizeLeaveType(allowance.leaveType);
-      
+
       // Calculate actual usage from the provided absences array
       const actualUsed = absences
         .filter(abs => {

@@ -1,4 +1,6 @@
 import { db } from '../firebase/client';
+import { functions } from '../firebase/client';
+import { httpsCallable } from 'firebase/functions';
 import {
   arrayUnion,
   doc,
@@ -562,9 +564,7 @@ export const BILLING_CONSTANTS = {
   CURRENCY
 };
 
-import { getFunctions, httpsCallable } from 'firebase/functions';
 
-const functions = getFunctions();
 
 export const addPluginService = async (companyId, addonType) => {
   const addAddon = httpsCallable(functions, 'addSubscriptionAddon');

@@ -527,7 +527,7 @@ class AllowanceService {
         if (!existingTypes.has(norm)) {
           const leaveConfig = LEAVE_TYPES.find(t => t.value === typeKey);
           const displayName = leaveConfig?.label || this.getLeaveTypeDisplayName(typeKey);
-          
+
           updatedAllowances.push({
             id: `default-empty-${norm}`,
             employeeId,
@@ -619,14 +619,14 @@ class AllowanceService {
 
         const sortedAllowances = Array.from(groupedMap.values());
         const existingTypes = new Set(sortedAllowances.map(a => this.normalizeLeaveType(a.leaveType)));
-        
+
         // Ensure ALL core ALLOWANCE_LINKED_TYPES are present in real-time snapshot too
         ALLOWANCE_LINKED_TYPES.forEach(typeKey => {
           const norm = this.normalizeLeaveType(typeKey);
           if (!existingTypes.has(norm)) {
             const leaveConfig = LEAVE_TYPES.find(t => t.value === typeKey);
             const displayName = leaveConfig?.label || this.getLeaveTypeDisplayName(typeKey);
-            
+
             sortedAllowances.push({
               id: `default-empty-${norm}`,
               employeeId,
@@ -1133,7 +1133,7 @@ class AllowanceService {
 
   canViewAllowances(employeeId, currentUser) {
     // Users can view their own allowances
-    if (currentUser.userId === employeeId) {
+    if (currentUser?.userId === employeeId) {
       return true;
     }
 
@@ -1187,6 +1187,184 @@ class AllowanceService {
       console.error('Error deleting allowance:', error);
       throw new Error('Failed to delete allowance');
     }
+  }
+
+  /**
+   * Subscribe to real-time updates for employee allowances
+   * Now includes real-time absence tracking for perfectly synced balances
+   */
+  subscribeToEmployeeAllowances(employeeId, currentUser, year, callback, onError) {
+    if (!this.canViewAllowances(employeeId, currentUser)) {
+      if (onError) onError(new Error('Permission denied'));
+      return () => { };
+    }
+
+    const currentYear = year || new Date().getFullYear();
+    let currentAllowances = [];
+    let currentAbsences = [];
+
+    const notify = () => {
+      const usageByLeaveType = new Map();
+      currentAbsences.forEach(absence => {
+        const norm = this.normalizeLeaveType(absence.leaveType);
+        const days = this.calculateDaysFromDates(absence.startDate, absence.endDate) || 0;
+        usageByLeaveType.set(norm, (usageByLeaveType.get(norm) || 0) + days);
+      });
+
+      const updatedAllowances = currentAllowances.map(allowance => {
+        const norm = this.normalizeLeaveType(allowance.leaveType);
+        const used = usageByLeaveType.get(norm) || 0;
+        return {
+          ...allowance,
+          usedDays: used,
+          remainingDays: Math.max(0, (Number(allowance.totalDays) || 0) - used)
+        };
+      });
+
+      // Add virtual/empty allowances
+      const existingTypes = new Set(updatedAllowances.map(a => this.normalizeLeaveType(a.leaveType)));
+      
+      ALLOWANCE_LINKED_TYPES.forEach(typeKey => {
+        const norm = this.normalizeLeaveType(typeKey);
+        if (!existingTypes.has(norm)) {
+          const leaveConfig = LEAVE_TYPES.find(t => t.value === typeKey);
+          updatedAllowances.push({
+            id: `default-empty-${norm}`,
+            employeeId,
+            leaveType: leaveConfig?.label || this.getLeaveTypeDisplayName(typeKey),
+            totalDays: 0,
+            usedDays: 0,
+            remainingDays: 0,
+            isEmpty: true,
+            validFrom: `${currentYear}-01-01`,
+            validUntil: `${currentYear}-12-31`
+          });
+          existingTypes.add(norm);
+        }
+      });
+
+      callback(updatedAllowances);
+    };
+
+    // 1. Listen to Allowances
+    const qAllowances = query(
+      collection(db, this.collection),
+      where('employeeId', '==', employeeId),
+      where('isActive', '==', true)
+    );
+
+    const unsubAllowances = onSnapshot(qAllowances, (snapshot) => {
+      const rawAllowances = [];
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        let isValidForYear = true;
+
+        if (currentYear) {
+          if (data.year) {
+            isValidForYear = data.year === currentYear;
+          } else if (data.validFrom) {
+            const fromYear = new Date(data.validFrom).getFullYear();
+            isValidForYear = fromYear === currentYear;
+          } else {
+            isValidForYear = false;
+          }
+        }
+
+        if (isValidForYear) {
+          rawAllowances.push({ id: doc.id, ...data });
+        }
+      });
+
+      // Group by normalized leave type (latest entry wins)
+      const groupedMap = new Map();
+      rawAllowances.sort((a, b) => {
+        const aTime = a.createdAt?.toMillis?.() || a.createdAt || 0;
+        const bTime = b.createdAt?.toMillis?.() || b.createdAt || 0;
+        return bTime - aTime;
+      }).forEach((allowance) => {
+        const normalized = this.normalizeLeaveType(allowance.leaveType);
+        if (!groupedMap.has(normalized)) {
+          groupedMap.set(normalized, {
+            ...allowance,
+            displayName: this.getLeaveTypeDisplayName(allowance.leaveType),
+            ids: [allowance.id]
+          });
+        }
+      });
+
+      currentAllowances = Array.from(groupedMap.values());
+      notify();
+    }, onError);
+
+    // 2. Listen to Approved Absences
+    const qAbsences = query(
+      collection(db, 'absences'),
+      where('userId', '==', employeeId),
+      where('status', '==', 'Approved')
+    );
+
+    const unsubAbsences = onSnapshot(qAbsences, (snapshot) => {
+      currentAbsences = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .filter(absence => {
+          if (!absence.startDate) return false;
+          const absenceYear = new Date(absence.startDate).getFullYear();
+          return absenceYear === currentYear;
+        });
+      notify();
+    }, onError);
+
+    return () => {
+      unsubAllowances();
+      unsubAbsences();
+    };
+  }
+  /**
+   * Subscribe to real-time updates for all allowances in a company
+   */
+  subscribeToCompanyAllowances(companyId, currentUser, year, callback, onError) {
+    if (!this.canManageAllowances(currentUser)) {
+      if (onError) onError(new Error('Permission denied'));
+      return () => { };
+    }
+
+    const currentYear = year || new Date().getFullYear();
+    const q = query(
+      collection(db, this.collection),
+      where('companyId', '==', companyId),
+      where('isActive', '==', true)
+    );
+
+    return onSnapshot(q, (snapshot) => {
+      try {
+        const allowances = [];
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          let isValidForYear = true;
+
+          if (currentYear) {
+            if (data.year) {
+              isValidForYear = data.year === currentYear;
+            } else if (data.validFrom) {
+              const fromYear = new Date(data.validFrom).getFullYear();
+              isValidForYear = fromYear === currentYear;
+            }
+          }
+
+          if (isValidForYear) {
+            allowances.push({ id: doc.id, ...data });
+          }
+        });
+
+        callback(allowances);
+      } catch (err) {
+        console.error('Error in subscribeToCompanyAllowances:', err);
+        if (onError) onError(err);
+      }
+    }, (err) => {
+      console.error('Firestore onSnapshot error in subscribeToCompanyAllowances:', err);
+      if (onError) onError(err);
+    });
   }
 }
 

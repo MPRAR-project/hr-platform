@@ -71,6 +71,16 @@ const AbsenceManagementPage = () => {
   // Optimistic UI state
   const [pendingAbsences, setPendingAbsences] = useState([]);
   const [syncingIds, setSyncingIds] = useState(new Set());
+  const allowanceUnsubRef = React.useRef(null);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (allowanceUnsubRef.current) {
+        allowanceUnsubRef.current();
+      }
+    };
+  }, []);
 
   // Set up real-time listeners on component mount and tab change
   useEffect(() => {
@@ -152,42 +162,35 @@ const AbsenceManagementPage = () => {
     }
   }, [user?.userId, activeTab, allowancesRefreshNonce]); // Add allowancesRefreshNonce to refetch when refreshed
 
-  const fetchUserAllowances = async (forceRefresh = false) => {
+  const fetchUserAllowances = (forceRefresh = false) => {
     const currentYear = new Date().getFullYear();
-    const cacheKey = `${user.userId}_${currentYear}`;
 
-    // Check cache first (unless refresh was forced)
-    if (!forceRefresh && allowancesCache.has(cacheKey)) {
-      const cachedAllowances = allowancesCache.get(cacheKey);
-      setUserAllowances(cachedAllowances);
-      return;
-    }
-
-    // Clear existing timeout
+    // Debounce the subscription setup to avoid rapid re-subscriptions
     if (fetchTimeout) {
       clearTimeout(fetchTimeout);
     }
 
-    // Debounce the API call
-    const timeoutId = setTimeout(async () => {
-      setLoadingAllowances(true);
-      try {
-        const allowances = await allowanceService.getEmployeeAllowances(
-          user.userId,
-          user,
-          currentYear
-        );
-
-        // Update cache
-        setAllowancesCache(prev => new Map(prev).set(cacheKey, allowances));
-        setUserAllowances(allowances);
-      } catch (error) {
-        console.error('Error fetching user allowances:', error);
-        setUserAllowances([]);
-      } finally {
-        setLoadingAllowances(false);
+    const timeoutId = setTimeout(() => {
+      if (allowanceUnsubRef.current) {
+        allowanceUnsubRef.current();
       }
-    }, 300); // 300ms debounce
+
+      setLoadingAllowances(true);
+      allowanceUnsubRef.current = allowanceService.subscribeToEmployeeAllowances(
+        user.userId,
+        user,
+        currentYear,
+        (allowances) => {
+          setUserAllowances(allowances);
+          setLoadingAllowances(false);
+        },
+        (error) => {
+          console.error('Error in allowance subscription:', error);
+          setUserAllowances([]);
+          setLoadingAllowances(false);
+        }
+      );
+    }, 100);
 
     setFetchTimeout(timeoutId);
   };

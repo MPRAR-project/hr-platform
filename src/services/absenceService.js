@@ -154,6 +154,36 @@ class AbsenceService {
     }
   }
 
+  /**
+   * Delete an absence request
+   * @param {string} absenceId - The absence ID
+   * @param {Object} currentUser - The current user object
+   * @returns {Promise<boolean>} Success status
+   */
+  async deleteAbsence(absenceId, currentUser) {
+    try {
+      const absenceRef = doc(db, this.collection, absenceId);
+      const absenceSnap = await getDoc(absenceRef);
+
+      if (!absenceSnap.exists()) {
+        throw new Error('Absence not found');
+      }
+
+      const absenceData = { id: absenceId, ...absenceSnap.data() };
+
+      // Check permission
+      if (!this.canDeleteAbsence(absenceData, currentUser)) {
+        throw new Error('You do not have permission to delete this absence request');
+      }
+
+      await deleteDoc(absenceRef);
+      return true;
+    } catch (error) {
+      console.error('Error deleting absence:', error);
+      throw error;
+    }
+  }
+
   // --- (Other existing methods: getUserAbsences, getEmployeeAbsences, etc. remain unchanged) ---
 
   /**
@@ -996,6 +1026,11 @@ class AbsenceService {
     // Only elevated roles can delete absences
     if (['siteManager', 'seniorManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor', 'teamManager'].includes(currentUser.role)) {
       return currentUser.companyId === absenceData.companyId;
+    }
+
+    // Users can delete their own pending absences
+    if (absenceData.userId === currentUser.userId && (absenceData.status === 'Pending' || absenceData.status === 'Draft')) {
+      return true;
     }
 
     return false;

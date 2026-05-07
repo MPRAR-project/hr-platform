@@ -94,23 +94,28 @@ const SubscriptionGuard = ({ children }) => {
     path.startsWith(allowedPath)
   );
 
-  // If we are still checking, and NOT a super admin, show a loader to prevent dashboard and sensitive content flash
-  if (state.checking && !isSuperAdmin && !isAllowedPath) {
-    return (
-      <div className="flex flex-col items-center justify-center h-screen bg-bg-secondary w-full">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mb-4"></div>
-        <p className="text-text-secondary animate-pulse text-sm font-medium">Verifying access...</p>
-      </div>
-    );
+  // If we are still checking, or a super admin, or on an allowed path, just show content
+  if (isSuperAdmin || isAllowedPath) {
+    return children;
   }
 
-  // Redirect based on final status
-  if (!isSuperAdmin && state.expired && !isAllowedPath) {
-    return <Navigate to="/subscription-expired" replace />;
-  }
-
-  return children;
+  return (
+    <div className="relative w-full h-full">
+      {/* Expiration Banner - Non-blocking overlay */}
+      {!state.checking && state.expired && (
+        <div className="bg-red-600 text-white px-4 py-2 text-center text-sm font-bold sticky top-0 z-[100] shadow-lg flex items-center justify-center gap-3 animate-in slide-in-from-top duration-300">
+          <AlertCircle size={16} />
+          <span>Your subscription has expired. Some features may be restricted until payment is processed.</span>
+          <a href="/owner-billing" className="bg-white text-red-600 px-3 py-1 rounded-lg hover:bg-red-50 transition-colors ml-2">
+            Manage Subscription
+          </a>
+        </div>
+      )}
+      
+      {/* Show children even while checking (non-blocking) */}
+      {children}
+    </div>
+  );
 };
 
 export default SubscriptionGuard;
-

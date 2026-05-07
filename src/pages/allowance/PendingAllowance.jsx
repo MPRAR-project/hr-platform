@@ -81,12 +81,23 @@ const PendingAllowancePage = () => {
   const { user } = useAuth();
   const { getItem, setItem } = useCache();
   const unsubRef = useRef(null);
+  const unsubscribeAllowancesRef = useRef(null);
 
   // Load employees and ensure automatic sick leave allowances exist
   useEffect(() => {
     if (user) {
       loadEmployeesAndEnsureAllowances();
     }
+    return () => {
+      if (typeof unsubRef.current === 'function') {
+        unsubRef.current();
+        unsubRef.current = null;
+      }
+      if (typeof unsubscribeAllowancesRef.current === 'function') {
+        unsubscribeAllowancesRef.current();
+        unsubscribeAllowancesRef.current = null;
+      }
+    };
   }, [user]);
 
   const loadEmployeesAndEnsureAllowances = async () => {
@@ -301,58 +312,55 @@ const PendingAllowancePage = () => {
         const { db } = await import('../../firebase/client');
         const currentYear = new Date().getFullYear();
 
-        const q = firestoreQuery(
-          firestoreCollection(db, 'allowances'),
-          where('companyId', '==', user.companyId),
-          where('isActive', '==', true)
+        if (unsubscribeAllowancesRef.current) {
+          unsubscribeAllowancesRef.current();
+        }
+
+        unsubscribeAllowancesRef.current = allowanceService.subscribeToCompanyAllowances(
+          user.companyId,
+          user,
+          currentYear,
+          (allowancesData) => {
+            // Build a map: employeeId -> Set of normalized leave types
+            const employeeAllowanceMap = new Map();
+            allowancesData.forEach((data) => {
+              const empId = data.employeeId;
+              if (!employeeAllowanceMap.has(empId)) {
+                employeeAllowanceMap.set(empId, new Set());
+              }
+              const normalized = allowanceService.normalizeLeaveType(data.leaveType);
+              employeeAllowanceMap.get(empId).add(normalized);
+            });
+
+            // Determine pending: employees with NO allowances, or ONLY sick leave
+            const pending = new Set();
+            const sickLeaveNormalized = allowanceService.normalizeLeaveType('sick_leave');
+
+            employees.forEach((emp) => {
+              const role = (emp?.primaryRole || emp?.role || '').toString().toLowerCase();
+              if (role === 'sitemanager') return; // skip site managers
+
+              const types = employeeAllowanceMap.get(emp.id);
+              if (!types || types.size === 0) {
+                // No allowances at all
+                pending.add(emp.id);
+              } else {
+                // Check if they ONLY have sick leave
+                const nonSickTypes = [...types].filter(t => t !== sickLeaveNormalized);
+                if (nonSickTypes.length === 0) {
+                  pending.add(emp.id);
+                }
+              }
+            });
+
+            setPendingEmployeeIds(pending);
+            setAllowancesLoaded(true);
+          },
+          (err) => {
+            console.error('Error in company allowances subscription:', err);
+            setAllowancesLoaded(true);
+          }
         );
-
-        const snapshot = await getDocs(q);
-
-        // Build a map: employeeId -> Set of normalized leave types
-        const employeeAllowanceMap = new Map();
-        snapshot.forEach((doc) => {
-          const data = doc.data();
-          // Filter by current year
-          let isCurrentYear = false;
-          if (data.year) {
-            isCurrentYear = data.year === currentYear;
-          } else if (data.validFrom) {
-            isCurrentYear = new Date(data.validFrom).getFullYear() === currentYear;
-          }
-          if (!isCurrentYear) return;
-
-          const empId = data.employeeId;
-          if (!employeeAllowanceMap.has(empId)) {
-            employeeAllowanceMap.set(empId, new Set());
-          }
-          const normalized = allowanceService.normalizeLeaveType(data.leaveType);
-          employeeAllowanceMap.get(empId).add(normalized);
-        });
-
-        // Determine pending: employees with NO allowances, or ONLY sick leave
-        const pending = new Set();
-        const sickLeaveNormalized = allowanceService.normalizeLeaveType('sick_leave');
-
-        employees.forEach((emp) => {
-          const role = (emp?.primaryRole || emp?.role || '').toString().toLowerCase();
-          if (role === 'sitemanager') return; // skip site managers
-
-          const types = employeeAllowanceMap.get(emp.id);
-          if (!types || types.size === 0) {
-            // No allowances at all
-            pending.add(emp.id);
-          } else {
-            // Check if they ONLY have sick leave
-            const nonSickTypes = [...types].filter(t => t !== sickLeaveNormalized);
-            if (nonSickTypes.length === 0) {
-              pending.add(emp.id);
-            }
-          }
-        });
-
-        setPendingEmployeeIds(pending);
-        setAllowancesLoaded(true);
       } catch (err) {
         console.error('Error fetching company allowances for pending check:', err);
         setAllowancesLoaded(true);

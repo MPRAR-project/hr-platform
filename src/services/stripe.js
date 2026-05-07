@@ -4,9 +4,10 @@ import { functions } from '../firebase/client';
 
 /**
  * Feature flag to enable/disable Stripe integration
- * Set to false to use mock payments
+ * Set VITE_USE_STRIPE=true in .env when you have real Stripe keys.
+ * Defaults to false so all seat/payment ops use Firestore mock path.
  */
-export const USE_STRIPE = true; // Change to false to use mock payments
+export const USE_STRIPE = import.meta.env.VITE_USE_STRIPE === 'true';
 
 /**
  * Create a Stripe customer for a company

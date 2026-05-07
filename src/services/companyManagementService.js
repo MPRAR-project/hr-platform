@@ -224,3 +224,44 @@ export async function getCompanyPlugins(companyId) {
     return {};
   }
 }
+
+/**
+ * Update company profile (name, website, etc) via Central Backend
+ * @param {string} companyId 
+ * @param {Object} updateData 
+ */
+export async function updateCompanyProfile(companyId, updateData) {
+    if (!companyId) throw new Error('Company ID is required');
+    const centralApiUrl = import.meta.env.VITE_CENTRAL_API_URL || 'http://localhost:5000';
+    const token = localStorage.getItem('mprar_central_token');
+
+    if (!token) {
+        throw new Error('Authentication token missing. Please log in again.');
+    }
+
+    try {
+        const normalizedId = companyId.replace('companies/', '');
+        const response = await fetch(`${centralApiUrl}/companies/${normalizedId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify(updateData)
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to update company profile');
+        }
+
+        const result = await response.json();
+        console.log(`[companyManagementService] Profile updated for ${normalizedId}`);
+        toast.success('Company profile updated successfully');
+        return result.company;
+    } catch (error) {
+        console.error('[companyManagementService] Profile update failed:', error);
+        toast.error(error.message || 'Failed to update company profile');
+        throw error;
+    }
+}

@@ -25,12 +25,9 @@ const SchedulePage = () => {
 
     // Available Tabs
     const tabs = useMemo(() => {
-        if (isSiteManager) {
-            return [{ label: 'All Schedules' }];
-        }
         const t = [{ label: 'My Schedule' }];
         // Managers get All Schedules too
-        if (isManager) {
+        if (isManager || isSiteManager) {
             t.push({ label: 'All Schedules' });
         }
         return t;

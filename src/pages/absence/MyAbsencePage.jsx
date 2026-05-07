@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, ChevronDown, ArrowRight } from 'lucide-react';
+import { Calendar, ChevronDown, ArrowRight, Trash2 } from 'lucide-react';
 import Header from '../../components/layout/Header';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow } f
 import { useAuth } from '../../hooks/useAuth';
 import { absenceService } from '../../services/absenceService';
 import { allowanceService } from '../../services/allowanceService';
+import { automaticAllowanceService } from '../../services/automaticAllowanceService';
 import { EMPLOYEE_LEAVE_TYPES, DEFAULT_LEAVE_TYPE, LEAVE_TYPES } from '../../constants/leaveTypes';
 import { toast, Slide } from 'react-toastify';
 
@@ -26,50 +27,76 @@ const MyAbsencesPage = () => {
   const [error, setError] = useState(null);
   const [allowanceInfo, setAllowanceInfo] = useState(null);
   const [autoApprovalPreview, setAutoApprovalPreview] = useState(null);
+  const allowanceUnsubRef = React.useRef(null);
 
   // Load user's absences on component mount
+  const absenceUnsubRef = React.useRef(null);
+
   useEffect(() => {
-    loadAbsences();
+    if (user) {
+      automaticAllowanceService.ensureEmployeeAllowances(user.userId, user)
+        .catch(() => null);
+
+      if (absenceUnsubRef.current) {
+        absenceUnsubRef.current();
+      }
+
+      setLoading(true);
+      absenceUnsubRef.current = absenceService.subscribeToUserAbsences(user.userId, (absences, err) => {
+        if (err) {
+          console.error('Error in absences subscription:', err);
+          setError(err.message);
+        } else {
+          setAbsencesHistory(absences.map(absence => ({
+            ...absence,
+            date: formatDateRange(absence.startDate, absence.endDate)
+          })));
+        }
+        setLoading(false);
+      });
+    }
+
+    return () => {
+      if (absenceUnsubRef.current) {
+        absenceUnsubRef.current();
+      }
+    };
   }, [user]);
 
-  // Check allowance and auto-approval when form data changes
+  // Subscription for allowance summary
+  useEffect(() => {
+    if (!user || !formData.leaveType) return;
+
+    if (allowanceUnsubRef.current) {
+      allowanceUnsubRef.current();
+    }
+
+    allowanceUnsubRef.current = allowanceService.subscribeToEmployeeAllowances(
+      user.userId,
+      user,
+      new Date().getFullYear(),
+      (allowances) => {
+        const normTarget = allowanceService.normalizeLeaveType(formData.leaveType);
+        const match = allowances.find(a => allowanceService.normalizeLeaveType(a.leaveType) === normTarget);
+        setAllowanceInfo(match || null);
+      }
+    );
+
+    return () => {
+      if (allowanceUnsubRef.current) {
+        allowanceUnsubRef.current();
+      }
+    };
+  }, [user, formData.leaveType]);
+
+  const loadAbsences = () => {
+    // This is now handled by the subscription, but kept as a no-op if called elsewhere
+  };
+
+  // Check auto-approval when form data changes
   useEffect(() => {
     checkAutoApprovalPreview();
-  }, [formData.leaveType, formData.startingDate, formData.endingDate, user]);
-
-  const loadAbsences = async () => {
-    if (!user) return;
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      const absences = await absenceService.getUserAbsences(user.uid);
-      setAbsencesHistory(absences.map(absence => ({
-        ...absence,
-        date: formatDateRange(absence.startDate, absence.endDate)
-      })));
-
-
-      console.log('Loaded absences history:', absences);
-
-      // Load current allowance info for the selected leave type
-      if (formData.leaveType) {
-        try {
-          const allowance = await allowanceService.getAllowanceSummary(user.uid, formData.leaveType);
-          setAllowanceInfo(allowance);
-        } catch (allowanceError) {
-          console.error('Error loading allowance info:', allowanceError);
-          setAllowanceInfo(null);
-        }
-      }
-    } catch (err) {
-      console.error('Error loading absences:', err);
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [formData.leaveType, formData.startingDate, formData.endingDate, user, allowanceInfo]);
 
   const checkAutoApprovalPreview = async () => {
     if (!user || !formData.leaveType || !formData.startingDate || !formData.endingDate) {
@@ -91,19 +118,16 @@ const MyAbsencesPage = () => {
 
       // Business rule: only Sick Leave can be auto-approved.
       // Keep allowance information for display, but force manual approval for other types.
-      const allowanceCheckRaw = await allowanceService.checkAutoApproval(user.uid, formData.leaveType, durationDays);
+      const allowanceCheckRaw = await allowanceService.checkAutoApproval(user.userId, formData.leaveType, durationDays);
       const isSickLeave = formData.leaveType === 'sick_leave';
       const allowanceCheck = isSickLeave
         ? allowanceCheckRaw
         : { ...allowanceCheckRaw, canAutoApprove: false, reason: 'Manual approval required' };
 
-      // Get current allowance info
-      const allowance = await allowanceService.getAllowanceSummary(user.uid, formData.leaveType);
-
       setAutoApprovalPreview({
         ...allowanceCheck,
         durationDays,
-        currentAllowance: allowance
+        currentAllowance: allowanceInfo
       });
 
     } catch (error) {
@@ -135,6 +159,19 @@ const MyAbsencesPage = () => {
 
 
 
+  const handleDelete = async (absenceId) => {
+    if (!window.confirm('Are you sure you want to delete this absence request?')) return;
+
+    try {
+      await absenceService.deleteAbsence(absenceId, user);
+      toast.success('Absence request deleted');
+      loadAbsences();
+    } catch (err) {
+      console.error('Error deleting absence:', err);
+      toast.error(err.message || 'Failed to delete absence');
+    }
+  };
+
   const handleSubmit = async () => {
     if (!formData.startingDate || !formData.endingDate || !formData.reason.trim()) {
       setError('Please fill in all required fields');
@@ -150,7 +187,7 @@ const MyAbsencesPage = () => {
     setError(null);
 
     try {
-      await absenceService.createAbsence(formData, user.uid);
+      await absenceService.createAbsence(formData, user.userId);
 
       // Reset form
       setFormData({
@@ -362,6 +399,7 @@ const MyAbsencesPage = () => {
                   <TableHeaderCell>Reason</TableHeaderCell>
                   <TableHeaderCell>Date</TableHeaderCell>
                   <TableHeaderCell>Status</TableHeaderCell>
+                  <TableHeaderCell>Actions</TableHeaderCell>
                 </TableHeader>
 
                 <TableBody>
@@ -382,6 +420,17 @@ const MyAbsencesPage = () => {
                         <Badge variant={getStatusVariant(absence.status)}>
                           {absence.status}
                         </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {absenceService.canDeleteAbsence(absence, user) && (
+                          <button
+                            onClick={() => handleDelete(absence.id)}
+                            className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                            title="Delete Request"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}

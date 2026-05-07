@@ -1,4 +1,4 @@
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, getDocs, query, where, Timestamp, onSnapshot, documentId } from 'firebase/firestore';
 import { Calendar, CheckCircle, Clock, Search, User, XCircle } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import Header from '../../components/layout/Header';
@@ -12,7 +12,9 @@ import Tabs from '../../components/ui/Tabs';
 import { db } from '../../firebase/client';
 import { useAuth } from '../../hooks/useAuth';
 import { allowanceService } from '../../services/allowanceService';
+import { absenceService } from '../../services/absenceService';
 import { approveTimesheet, declineTimesheet } from '../../services/timesheets';
+import { approverEmployeeRoleMatch } from '../../services/teams';
 import { getTimesheetEditPermissions } from '../../utils/timesheetPermissions';
 
 const ApprovalsPage = () => {
@@ -24,25 +26,25 @@ const ApprovalsPage = () => {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showApproveModal, setShowApproveModal] = useState(false);
   const [showDeclineModal, setShowDeclineModal] = useState(false);
+  const [timesheets, setTimesheets] = useState([]);
+  const [absences, setAbsences] = useState([]);
   const [selectedItem, setSelectedItem] = useState(null);
   const { user } = useAuth();
 
   // State for user data cache to avoid refetching
   const [usersCache, setUsersCache] = useState({});
 
-  // Real-time listener setup
+  // Real-time listener setup for Timesheets
   useEffect(() => {
     let unsubscribes = [];
 
     const setupListeners = async () => {
-      const companyKey = (user?.companyId || '').split('/')[1];
-      if (!companyKey) { setTimesheets([]); return; }
+      const companyId = user?.companyId || '';
+      if (!companyId) { setTimesheets([]); return; }
 
+      const companyKey = companyId.includes('/') ? companyId.split('/')[1] : companyId;
       const approverRole = user?.role || user?.primaryRole;
       const timesheetsCol = collection(db, 'timesheets');
-      const { onSnapshot } = await import('firebase/firestore');
-
-
 
       // Define Queries
       let queries = [];
@@ -52,19 +54,11 @@ const ApprovalsPage = () => {
       } else {
         const managerId = user?.id || user?.uid;
         queries.push(query(timesheetsCol, where('managerUserId', '==', managerId), where('status', 'in', ['pending', 'approved-by-team'])));
-
-        // Note: Fallback to "Managed Employees" logic for non-site-managers 
-        // is difficult with onSnapshot if managerUserId is missing.
-        // We will assume managerUserId is populated. If not, they won't see real-time updates for legacy data.
       }
 
       // Attach Listeners
       queries.forEach(q => {
         const unsub = onSnapshot(q, (snap) => {
-          // We simple collect all docs from this snap and update generic state?
-          // Issue: multiple listeners.
-          // We need a way to merge them.
-          // Simpler: Just update a map of docs by ID.
           setDocMap(prev => {
             const next = { ...prev };
             snap.docChanges().forEach(change => {
@@ -84,6 +78,33 @@ const ApprovalsPage = () => {
       unsubscribes.forEach(u => u());
     };
   }, [user?.companyId, user?.role, user?.id, user?.uid]);
+
+  // Real-time listener setup for Absences
+  useEffect(() => {
+    if (!user) return;
+
+    const unsub = absenceService.subscribeToEmployeeAbsences(user, (data) => {
+      if (data) {
+        const rows = data.filter(a => a.status === 'Pending').map(a => ({
+          id: a.id,
+          userId: a.userId,
+          name: a.employeeName || a.userId,
+          role: a.employeeRole || 'Employee',
+          period: `${a.startDate} to ${a.endDate}`,
+          dates: `${a.startDate} to ${a.endDate}`,
+          duration: a.duration,
+          leaveType: a.leaveType,
+          reason: a.reason || a.notes || '-',
+          status: a.status,
+          submittedOn: a.createdAt?.toDate ? a.createdAt.toDate().toISOString().slice(0, 10) : '',
+          raw: a
+        }));
+        setAbsences(rows);
+      }
+    });
+
+    return () => unsub();
+  }, [user]);
 
   // Intermediate state for raw docs and map
   const [docMap, setDocMap] = useState({});
@@ -186,6 +207,29 @@ const ApprovalsPage = () => {
     processDocs();
   }, [rawTimesheetDocs, usersCache, user?.role, user?.primaryRole]);
 
+  // Filtering logic
+  const filteredTimesheets = timesheets.filter(t => {
+    const matchesSearch = !searchQuery || 
+      t.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      t.role.toLowerCase().includes(searchQuery.toLowerCase());
+    
+    const matchesStatus = filterState === 'All States' || 
+      (filterState === 'Pending' && (t.status === 'Pending' || t.status === 'Approved by Team')) ||
+      t.status === filterState;
+
+    return matchesSearch && matchesStatus;
+  });
+
+  const filteredAbsences = absences.filter(a => {
+    const matchesSearch = !searchQuery || 
+      a.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      a.leaveType.toLowerCase().includes(searchQuery.toLowerCase());
+    
+    const matchesStatus = filterState === 'All States' || a.status === filterState;
+
+    return matchesSearch && matchesStatus;
+  });
+
   // Keep loadTimesheets as a no-op or manual refresh that clears cache?
   // Actually, we can remove it, but if other components call it? No, it was local.
   const loadTimesheets = useCallback(() => {
@@ -193,20 +237,6 @@ const ApprovalsPage = () => {
     console.log('Manual refresh requested - handled by real-time listener');
   }, []);
 
-  const leaves = [
-    {
-      id: 1,
-      name: 'John Smith',
-      role: 'Employee',
-      period: 'Week of Jan 8-14, 2025',
-      dates: '2024-02-05 to 2024-02-09',
-      duration: '5 days',
-      leaveType: 'Sick Leave',
-      reason: 'Family vacation - pre-planned trip to celebrate wedding anniversary',
-      status: 'Pending',
-      submittedOn: '2024-01-20'
-    }
-  ];
 
   const handleViewDetails = async (item) => {
     if (activeTab === 'Timesheets') {
@@ -259,28 +289,43 @@ const ApprovalsPage = () => {
     setShowDeclineModal(true);
   };
 
-  const handleApproveConfirm = async (timesheetId, notes) => {
+  const handleApproveConfirm = async (id, notes) => {
     try {
       if (!selectedItem) return;
-      const approverName = user.displayName || user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Manager';
-      await approveTimesheet(timesheetId || selectedItem.id, user?.uid || '', notes, approverName);
+      const itemId = id || selectedItem.id;
+
+      if (activeTab === 'Timesheets') {
+        const approverName = user.displayName || user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Manager';
+        await approveTimesheet(itemId, user?.uid || '', notes, approverName);
+      } else {
+        await absenceService.approveAbsence(itemId, user);
+      }
+
       setShowApproveModal(false);
       setSelectedItem(null);
-      // Add small delay to allow Firestore to update, then refresh
-      setTimeout(async () => {
-        await loadTimesheets();
-      }, 500);
-    } catch (e) { console.error(e); alert(e.message || 'Failed to approve'); }
+    } catch (e) {
+      console.error(e);
+      alert(e.message || 'Failed to approve');
+    }
   };
 
-  const handleDeclineConfirm = async (timesheetId, notes) => {
+  const handleDeclineConfirm = async (id, notes) => {
     try {
       if (!selectedItem) return;
-      await declineTimesheet(timesheetId || selectedItem.id, user?.uid || '', notes);
+      const itemId = id || selectedItem.id;
+
+      if (activeTab === 'Timesheets') {
+        await declineTimesheet(itemId, user?.uid || '', notes);
+      } else {
+        await absenceService.declineAbsence(itemId, notes, user);
+      }
+
       setShowDeclineModal(false);
       setSelectedItem(null);
-      await loadTimesheets();
-    } catch (e) { console.error(e); alert(e.message || 'Failed to decline'); }
+    } catch (e) {
+      console.error(e);
+      alert(e.message || 'Failed to decline');
+    }
   };
 
   const pretty = (role = '') =>
@@ -466,8 +511,19 @@ const ApprovalsPage = () => {
 
           {/* Content */}
           <div className="space-y-4">
-            {activeTab === 'Timesheets' && timesheets.map(renderTimesheetCard)}
-            {activeTab === 'Leaves' && leaves.map(renderLeaveCard)}
+            {activeTab === 'Timesheets' && filteredTimesheets.map(renderTimesheetCard)}
+            {activeTab === 'Leaves' && filteredAbsences.map(renderLeaveCard)}
+            
+            {activeTab === 'Timesheets' && filteredTimesheets.length === 0 && (
+              <div className="text-center py-12 bg-white rounded-lg border border-dashed border-border-secondary">
+                <p className="text-text-secondary">No timesheets found matching your filters.</p>
+              </div>
+            )}
+            {activeTab === 'Leaves' && filteredAbsences.length === 0 && (
+              <div className="text-center py-12 bg-white rounded-lg border border-dashed border-border-secondary">
+                <p className="text-text-secondary">No leave requests found matching your filters.</p>
+              </div>
+            )}
           </div>
         </div>
       </div>

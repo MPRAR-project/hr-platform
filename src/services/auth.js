@@ -316,14 +316,21 @@ export async function loginWithToken(token) {
             
             if (hrRole) {
                 const userRef = doc(db, 'users', firebaseUser.uid);
+                // Normalize companyId to path format for consistency across all Firestore queries
+                const rawCompanyId = claims.company_id || null;
+                const normalizedCompanyId = rawCompanyId
+                    ? (rawCompanyId.startsWith('companies/') ? rawCompanyId : `companies/${rawCompanyId}`)
+                    : null;
+
                 const snap = await getDoc(userRef);
                 if (snap.exists()) {
                     await updateDoc(userRef, { 
                         role: hrRole, 
                         primaryRole: hrRole,
+                        status: 'active', // Ensure user is marked as active when bridging from Central
                         centralRole: claims.central_role || null,
-                        companyId: claims.company_id || snap.data().companyId,
-                        primaryCompanyId: claims.company_id || snap.data().primaryCompanyId,
+                        companyId: normalizedCompanyId || snap.data().companyId,
+                        primaryCompanyId: normalizedCompanyId || snap.data().primaryCompanyId,
                         'plugins.scheduling': !!claims.shift_roster,
                         'plugins.traveller': !!claims.traveller,
                         'plugins.timeworks': !!claims.timeworks
@@ -332,12 +339,12 @@ export async function loginWithToken(token) {
                 } else {
                     await setDoc(userRef, {
                         email: firebaseUser.email,
-                        displayName: firebaseUser.email.split('@')[0],
+                        displayName: firebaseUser.displayName || firebaseUser.email.split('@')[0],
                         role: hrRole,
                         primaryRole: hrRole,
                         centralRole: claims.central_role || null,
-                        companyId: claims.company_id || null,
-                        primaryCompanyId: claims.company_id || null,
+                        companyId: normalizedCompanyId || null,
+                        primaryCompanyId: normalizedCompanyId || null,
                         status: 'active',
                         createdAt: serverTimestamp(),
                         updatedAt: serverTimestamp()
@@ -374,15 +381,21 @@ export async function loginWithToken(token) {
                         'plugins.traveller': !!claims.traveller,
                         'plugins.timeworks': !!claims.timeworks
                     });
-                    console.log(`Synchronized company: seats=${claims.seat_count}, scheduling=${!!claims.shift_roster}, traveller=${!!claims.traveller}, timeworks=${!!claims.timeworks}`);
-                } else if (claims.shift_roster !== undefined || claims.traveller !== undefined || claims.timeworks !== undefined) {
+                } else {
                     const pluginUpdates = {};
                     if (claims.shift_roster !== undefined) pluginUpdates['plugins.scheduling'] = !!claims.shift_roster;
                     if (claims.traveller !== undefined) pluginUpdates['plugins.traveller'] = !!claims.traveller;
                     if (claims.timeworks !== undefined) pluginUpdates['plugins.timeworks'] = !!claims.timeworks;
+
+                    // Owners bridging from Central should always have an active company status in HR
+                    if (claims.central_role === 'owner') {
+                        pluginUpdates.status = 'active';
+                    }
                     
-                    await updateDoc(compRef, pluginUpdates);
-                    console.log('Synchronized company plugins status');
+                    if (Object.keys(pluginUpdates).length > 0) {
+                        await updateDoc(compRef, pluginUpdates);
+                        console.log('Synchronized company status and plugins');
+                    }
                 }
             }
         }
@@ -482,7 +495,7 @@ export async function sendPasswordResetLink(email) {
     try {
         // Redirect to Central Platform for identity management
         // Central is the master of identity and handles syncing to Firebase
-        const centralBackendUrl = 'http://localhost:5000'; // Default to 5000
+        const centralBackendUrl = import.meta.env.VITE_CENTRAL_API_URL || 'http://localhost:5000';
         
         const response = await fetch(`${centralBackendUrl}/auth/forgot-password`, {
             method: 'POST',

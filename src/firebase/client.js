@@ -1,8 +1,8 @@
 import { initializeApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
 import { getAuth, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { getFunctions } from 'firebase/functions';
-import { getStorage } from 'firebase/storage'; // ✅ Added Storage import
+import { getStorage } from 'firebase/storage';
 
 // Initialize Firebase app from Vite env vars
 const firebaseConfig = {
@@ -27,18 +27,17 @@ const getApp = () => {
 let _db;
 export const getDb = () => {
     if (!_db) {
-        _db = getFirestore(getApp());
-        // ✅ Enable Multi-Tab Persistence for O(1) connection multiplexing and scaling
-        if (typeof window !== 'undefined') {
-            import('firebase/firestore').then(({ enableMultiTabIndexedDbPersistence }) => {
-                enableMultiTabIndexedDbPersistence(_db).catch((err) => {
-                    if (err.code === 'failed-precondition') {
-                        console.warn('Firestore multi-tab persistence failed (multiple tabs open)');
-                    } else if (err.code === 'unimplemented') {
-                        console.warn('Firestore multi-tab persistence not supported by browser');
-                    }
-                });
+        try {
+            // Modern API: persistent cache with multi-tab support (Firebase JS SDK v9.6+)
+            _db = initializeFirestore(getApp(), {
+                localCache: persistentLocalCache({
+                    tabManager: persistentMultipleTabManager()
+                })
             });
+        } catch (err) {
+            // Fallback: persistence not supported (private/incognito browsers) or already initialized
+            console.warn('[Firebase] Persistent cache unavailable, using memory cache:', err.code || err.message);
+            _db = getFirestore(getApp());
         }
     }
     return _db;

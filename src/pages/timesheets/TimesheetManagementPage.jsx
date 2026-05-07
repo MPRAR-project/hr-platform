@@ -599,6 +599,21 @@ const TimesheetManagementPage = ({ userRole = 'employee' }) => {
                                 </p>
                               </div>
                             )}
+
+                            {/* Load More Button */}
+                            {hasMore && !searchQuery && filterRole === 'All Roles' && (
+                              <div className="flex justify-center pt-8">
+                                <Button
+                                  variant="outline-primary"
+                                  onClick={loadMore}
+                                  disabled={isPaginatedLoading}
+                                  cn="px-8"
+                                >
+                                  {isPaginatedLoading ? 'Loading...' : 'Load More Employees'}
+                                </Button>
+                              </div>
+                            )}
+
                           </div>
                         )}
                       </div>
