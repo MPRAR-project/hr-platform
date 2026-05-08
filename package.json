@@ -17,7 +17,7 @@
         "algoliasearch": "^5.48.1",
         "class-variance-authority": "^0.7.1",
         "date-fns": "^4.1.0",
-        "firebase": "^12.6.0",
+        "firebase": "^12.13.0",
         "framer-motion": "^12.23.22",
         "jspdf": "^2.5.1",
         "jspdf-autotable": "^3.5.35",
