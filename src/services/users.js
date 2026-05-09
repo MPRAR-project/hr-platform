@@ -207,6 +207,7 @@ export async function addUsersBySiteManager(companyId, siteId, usersPayload) {
                                 firstName:   u.firstName,
                                 lastName:    u.lastName,
                                 hrRole:      u._profileData?.primaryRole || 'employee',
+                                reportsTo:   u._profileData?.reportsTo || null,
                                 centralRole: null,
                             }),
                         })
@@ -329,15 +330,35 @@ export async function updateUserBySiteManager(userId, updates, contextCompanyId 
         // but this implies data inconsistency.
     }
 
-    // Clear cache after user update - DB updated, cache must reflect immediately
+    // 3. Best-effort sync to Central Platform Postgres
     try {
-        const { invalidateCompanyCache, invalidateAllCache } = await import('./cacheInvalidationService');
-        if (contextCompanyId) {
-            await invalidateCompanyCache(contextCompanyId);
-        } else {
-            await invalidateAllCache();
+        const centralApiUrl = import.meta.env.VITE_CENTRAL_API_URL || 'http://localhost:5000';
+        const centralToken  = localStorage.getItem('mprar_central_token');
+        const cleanCompanyId = (contextCompanyId || '').replace('companies/', '');
+
+        if (centralToken && centralApiUrl && cleanCompanyId) {
+            await fetch(`${centralApiUrl}/companies/${cleanCompanyId}/users/${userId}/roles`, {
+                method:  'PUT',
+                headers: {
+                    'Content-Type':  'application/json',
+                    'Authorization': `Bearer ${centralToken}`,
+                },
+                body: JSON.stringify({
+                    hrRole:      payload.primaryRole || undefined,
+                    reportsTo:   payload.reportsTo   || undefined,
+                }),
+            }).then(async res => {
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    console.warn('[HR→Central sync] Update failed:', err.error || res.status);
+                } else {
+                    console.info('[HR→Central sync] Role updated in Central Postgres');
+                }
+            }).catch(err => console.warn('[HR→Central sync] Network error:', err.message));
         }
-    } catch (_) { }
+    } catch (syncErr) {
+        console.warn('[HR→Central sync] Failed (non-fatal):', syncErr.message);
+    }
 
     return { ok: true };
 }

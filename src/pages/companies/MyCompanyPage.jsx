@@ -143,6 +143,7 @@ const MyCompanyPage = () => {
   const [error, setError]     = useState(null);
 
   const isManager = MANAGER_ROLES.includes(user?.role);
+  const canEdit   = ['siteManager', 'superUser'].includes(user?.role);
   const [isEditing, setIsEditing] = useState(false);
   const [editData, setEditData] = useState({});
   const [saving, setSaving] = useState(false);
@@ -151,9 +152,15 @@ const MyCompanyPage = () => {
   const rawCompanyId =
     user?.companyId ||
     user?.primaryCompanyId ||
-    user?.firebaseUser?.reloadUserInfo?.customAttributes
-      ? null
-      : null;
+    user?.metadata?.companyId ||
+    (user?.firebaseUser?.reloadUserInfo?.customAttributes
+      ? (() => {
+          try {
+            const attr = JSON.parse(user.firebaseUser.reloadUserInfo.customAttributes);
+            return attr.company_id || attr.companyId;
+          } catch { return null; }
+        })()
+      : null);
 
   const companyId = cleanId(rawCompanyId);
 
@@ -420,15 +427,17 @@ const MyCompanyPage = () => {
                         <InfoRow icon={Mail}   label="Contact Email"  value={contactEmail} />
                         {phone !== '—' && <InfoRow icon={Phone} label="Phone" value={phone} />}
                         <InfoRow icon={Shield} label="Company Owner"  value={ownerName} />
-                        <div className="py-4">
-                           <button 
-                             onClick={() => setIsEditing(true)}
-                             className="flex items-center gap-2 text-sm font-bold text-purple-600 hover:text-purple-700 transition-colors"
-                           >
-                             <Edit3 size={14} />
-                             Edit Company Profile
-                           </button>
-                        </div>
+                    {canEdit && (
+                      <div className="py-4">
+                         <button 
+                           onClick={() => setIsEditing(true)}
+                           className="flex items-center gap-2 text-sm font-bold text-purple-600 hover:text-purple-700 transition-colors"
+                         >
+                           <Edit3 size={14} />
+                           Edit Company Profile
+                         </button>
+                      </div>
+                    )}
                       </>
                     )}
                   </>

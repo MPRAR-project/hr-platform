@@ -411,9 +411,9 @@ const Sidebar = () => {
   ];
   // Filter navigation links based on the current user's role and optional condition
   const accessibleLinks = navLinks.reduce((acc, link) => {
-    // Helper to check access for a single item
+    // Simple matching using standardized camelCase roles from Central
     const hasAccess = (item) => {
-      if (!item.roles) return true; // Groups might not have roles, rely on children
+      if (!item.roles) return true;
       const userRole = user?.role || '';
       const roleMatch = item.roles.includes(userRole) || item.roles.includes('all');
       const conditionMatch = item.condition !== undefined ? item.condition : true;

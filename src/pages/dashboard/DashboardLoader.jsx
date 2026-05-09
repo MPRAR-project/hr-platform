@@ -38,9 +38,13 @@ const DashboardLoader = () => {
   // Redirect to login if no user is authenticated
   if (!user) return <Navigate to="/login" replace />;
 
-  return dashboards[user.role] || <div className='w-full '>
-    <Header title={"Coming Soon"} subtitle={"Work in progress.."} />
-    <ComingSoon /></div>;
+  // Direct mapping using standardized camelCase roles from Central
+  return dashboards[user.role] || (
+    <div className='w-full'>
+      <Header title={"Coming Soon"} subtitle={"Work in progress.."} />
+      <ComingSoon />
+    </div>
+  );
 };
 
 export default DashboardLoader;

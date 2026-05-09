@@ -14,7 +14,11 @@ const RoleGuard = ({ children, allowedRoles = [] }) => {
         return <Navigate to="/login" replace />;
     }
 
-    if (allowedRoles.length > 0 && !allowedRoles.includes(user.role)) {
+    const normalize = (r) => String(r || '').toLowerCase().replace(/[_\s-]/g, '');
+    const userRoleNormalized = normalize(user.role);
+    const normalizedAllowed = allowedRoles.map(normalize);
+
+    if (allowedRoles.length > 0 && !normalizedAllowed.includes(userRoleNormalized)) {
         // Redirect to dashboard if role is not authorized
         return <Navigate to="/" replace />;
     }
