@@ -20,21 +20,63 @@ const BridgePage = () => {
             return;
         }
 
-        // Store the Central JWT so the HR platform can call the Central API
-        // for user sync (HR → Central Postgres) when site managers add users.
+        // 1. FORCED CLEAN START: mimicking incognito by reloading once with empty storage
+        const isCleared = searchParams.get('cleared') === 'true';
+        if (!isCleared) {
+            const performTotalWipe = async () => {
+                try {
+                    console.log('Bridge: Performing total environment wipe...');
+                    localStorage.clear();
+                    sessionStorage.clear();
+                    
+                    // Also clear Firestore IndexedDB persistence if possible
+                    const { clearFirestorePersistence } = await import('../../firebase/client');
+                    await clearFirestorePersistence();
+                } catch (e) { console.warn('Wipe failed', e); }
+
+                // Reload with 'cleared' flag to start fresh
+                const newParams = new URLSearchParams(searchParams);
+                newParams.set('cleared', 'true');
+                window.location.search = newParams.toString();
+            };
+            performTotalWipe();
+            return;
+        }
+
+        // Re-persist the central token we just got into the now-empty storage
         if (centralToken) {
             localStorage.setItem('mprar_central_token', centralToken);
         }
 
-        const performLogin = async () => {
+        const performLogin = async (retryCount = 0) => {
             try {
+                const { auth } = await import('../../firebase/client');
+                const { signOut } = await import('firebase/auth');
+                
+                // We use a try-catch for signout as it might fail if already out
+                try { 
+                    await signOut(auth); 
+                    // Small delay to let Firebase internal state settle
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                } catch (e) { /* ignore */ }
+
+                console.log(`Bridge: Attempting loginWithToken (attempt ${retryCount + 1})...`);
                 await loginWithToken(token);
-                // On success, the AuthContext listener will fire and redirect to / automatically
-                // but we can force it for faster UI feedback
+                
+                console.log('Bridge: Login success, navigating to home');
                 navigate('/', { replace: true });
             } catch (err) {
-                console.error('Bridge login failed:', err);
-                setError('Authentication failed. Your session might have expired. Please log in again from the Central Platform.');
+                console.error(`Bridge login failed (attempt ${retryCount + 1}):`, err);
+                
+                // If it's a network error or a potential race condition, try once more
+                if (retryCount < 1) {
+                    console.log('Bridge: Retrying login once...');
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    return performLogin(retryCount + 1);
+                }
+
+                const detail = err?.message || 'Unknown authentication error';
+                setError(`Authentication failed: ${detail}. This can happen if your session expired or there is a temporary connection issue. Please try launching again from the Central Platform.`);
             }
         };
 

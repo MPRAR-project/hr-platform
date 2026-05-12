@@ -176,6 +176,31 @@ export async function loginWithEmailPassword(email, password) {
             console.warn('Failed to update lastActive timestamp:', e);
         }
 
+        // --- SYNC WITH CENTRAL BACKEND ---
+        // Fetch a Central access token so this user can perform identity actions (like password sync)
+        if (password) {
+            try {
+                const centralBackendUrl = import.meta.env.VITE_CENTRAL_API_URL || 'http://localhost:5000';
+                const centralResponse = await fetch(`${centralBackendUrl}/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        email: email.toLowerCase().trim(), 
+                        password: password,
+                        platform: 'hr' // Important: identifies as HR to bypass Central-only role restrictions
+                    })
+                });
+
+                if (centralResponse.ok) {
+                    const centralData = await centralResponse.json();
+                    localStorage.setItem('mprar_central_token', centralData.accessToken);
+                    console.log('[auth] Central identity token synchronized');
+                }
+            } catch (centralErr) {
+                console.warn('[auth] Failed to fetch Central identity token. Password sync features may be limited.', centralErr);
+            }
+        }
+
         // Return user data with Firebase Auth UID (role from doc so cache gets correct role)
         return {
             userId: firebaseUser.uid,     // ← Use userId consistently
@@ -429,12 +454,12 @@ export async function loginWithToken(token) {
 
 export async function logout() {
     try {
-        // Clear all caches before signOut so refresh never shows previous user's data
+        // Clear EVERYTHING from local storage for a complete fresh start (incognito-like)
         try {
-            localStorage.removeItem('mprar_auth_cache_v1');
-            localStorage.removeItem('mprar_global_cache_v1');
+            localStorage.clear();
             clearAllCache();
             eventBus.emit('cache:company:invalidated', { all: true });
+            console.log('Auth service: Local storage and cache cleared');
         } catch (e) {
             console.warn('auth.logout: Failed to clear some caches', e);
         }
@@ -500,7 +525,10 @@ export async function sendPasswordResetLink(email) {
         const response = await fetch(`${centralBackendUrl}/auth/forgot-password`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: email.toLowerCase().trim() })
+            body: JSON.stringify({ 
+                email: email.toLowerCase().trim(),
+                origin: 'hr'
+            })
         });
 
         if (!response.ok) {

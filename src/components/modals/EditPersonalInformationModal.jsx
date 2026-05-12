@@ -4,8 +4,9 @@ import { toast } from 'react-toastify';
 import Button from '../ui/Button';
 import { db } from '../../firebase/client';
 import { doc, getDoc, updateDoc, serverTimestamp, collection, query, where, getDocs } from 'firebase/firestore';
+import { syncUserToCentral } from '../../services/users';
 
-const EditPersonalInformationModal = ({ isOpen, onClose, userId, currentData, onSave }) => {
+const EditPersonalInformationModal = ({ isOpen, onClose, userId, companyId, currentData, onSave }) => {
   const [loading, setLoading] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
   const [originalFormData, setOriginalFormData] = useState({});
@@ -305,6 +306,9 @@ const EditPersonalInformationModal = ({ isOpen, onClose, userId, currentData, on
       // Update basic information fields in users collection
       if (formData.firstName) updates.firstName = formData.firstName;
       if (formData.lastName) updates.lastName = formData.lastName;
+      if (formData.firstName || formData.lastName) {
+        updates.displayName = `${formData.firstName || ''} ${formData.lastName || ''}`.trim();
+      }
       if (formData.phone) updates.phone = formData.phone;
       if (formData.dateOfBirth) updates.dateOfBirth = formData.dateOfBirth;
       if (formData.gender) updates.gender = formData.gender;
@@ -425,6 +429,17 @@ const EditPersonalInformationModal = ({ isOpen, onClose, userId, currentData, on
       } catch (hrSyncError) {
         console.warn('Failed to sync to HR onboarding (non-critical):', hrSyncError);
         // Don't throw - this is a secondary sync
+      }
+
+      // Sync to Central Platform Postgres
+      try {
+        await syncUserToCentral(normalizedUserId, companyId, {
+          firstName: formData.firstName,
+          lastName: formData.lastName,
+          email: formData.email
+        });
+      } catch (centralSyncError) {
+        console.warn('Failed to sync to Central platform (non-critical):', centralSyncError);
       }
 
       toast.success('Personal information updated successfully');

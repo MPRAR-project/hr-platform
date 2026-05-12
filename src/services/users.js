@@ -92,7 +92,7 @@ export async function addUsersBySiteManager(companyId, siteId, usersPayload) {
                     displayName: full || email,
                     primaryCompanyId: `companies/${companyId}`, // New field for multi-company
                     companyId: `companies/${companyId}`, // Keep for backward compatibility
-                    status: 'active',
+                    status: 'inactive',
                     tempPassword,
                     isOnboardingCompleted: false,
                     isOnboardingMandatory: u.isOnboardingMandatory || false,
@@ -135,6 +135,7 @@ export async function addUsersBySiteManager(companyId, siteId, usersPayload) {
                     reportsTo: reportsToRaw,
                     managerUserId: reportsToRaw || null,
                     weekStartDay: companyWeekStartDay, // Set company's week start day in profile
+                    status: 'inactive', // Start profile as inactive
                 };
 
                 // Add to batch using the updated service
@@ -261,7 +262,7 @@ export async function addUsersBySiteManager(companyId, siteId, usersPayload) {
 
 export async function updateUserBySiteManager(userId, updates, contextCompanyId = null) {
     // Only allow updating safe fields
-    const allowed = ['displayName', 'firstName', 'lastName', 'primaryRole', 'roles', 'reportsTo', 'managerUserId', 'status', 'updatedAt', 'rates', 'cisDeduction', 'utrNumber', 'siteId', 'companyId'];
+    const allowed = ['displayName', 'firstName', 'lastName', 'email', 'primaryRole', 'roles', 'reportsTo', 'managerUserId', 'status', 'updatedAt', 'rates', 'cisDeduction', 'utrNumber', 'siteId', 'companyId'];
     const payload = {};
     for (const k of allowed) {
         if (k in updates) payload[k] = updates[k];
@@ -269,25 +270,19 @@ export async function updateUserBySiteManager(userId, updates, contextCompanyId 
     payload.updatedAt = serverTimestamp();
 
     const ref = doc(db, 'users', userId);
+    
+    // Fetch current user data for sync context
+    const userSnap = await getDoc(ref);
+    const userData = userSnap.exists() ? userSnap.data() : {};
 
     // 1. Update the User Document (Legacy & Global Source)
     await updateDoc(ref, payload);
     try { console.log('User updated (doc):', userId, payload); } catch (_) { }
 
     // 2. Update the User Company Profile (Multi-Company Source)
+    let targetCompanyId = contextCompanyId || userData.primaryCompanyId || userData.companyId;
+    
     try {
-        // We need to know which company to update. 
-        // Use contextCompanyId if provided (preferred), otherwise infer from user doc.
-        let targetCompanyId = contextCompanyId;
-
-        if (!targetCompanyId) {
-            const userSnap = await getDoc(ref);
-            if (userSnap.exists()) {
-                const userData = userSnap.data();
-                targetCompanyId = userData.primaryCompanyId || userData.companyId;
-            }
-        }
-
         if (targetCompanyId) {
             // Ensure ID format
             const cleanCompanyId = targetCompanyId.replace('companies/', '');
@@ -310,7 +305,7 @@ export async function updateUserBySiteManager(userId, updates, contextCompanyId 
                 if (payload.reportsTo !== undefined) profileUpdates.reportsTo = payload.reportsTo;
                 if (payload.managerUserId !== undefined) profileUpdates.managerUserId = payload.managerUserId;
                 if (payload.teamId !== undefined) profileUpdates.teamId = payload.teamId;
-                if (payload.status) profileUpdates.status = payload.status; // This will now receive 'Active' or 'Archived' from UI
+                if (payload.status) profileUpdates.status = payload.status;
                 if (payload.rates) profileUpdates.rates = payload.rates;
                 if (payload.cisDeduction) profileUpdates.cisDeduction = payload.cisDeduction;
                 if (payload.utrNumber) profileUpdates.utrNumber = payload.utrNumber;
@@ -318,49 +313,101 @@ export async function updateUserBySiteManager(userId, updates, contextCompanyId 
                 // Execute Update
                 const profileRef = doc(db, 'userCompanyProfiles', profile.id);
                 await updateDoc(profileRef, profileUpdates);
-                console.log('User Profile updated:', profile.id, profileUpdates);
-            } else {
-                console.warn(`No active profile found for user ${userId} in ${cleanCompanyId} to update`);
-                // Optional: Create one if missing? Best to leave it to migration/repair scripts.
             }
         }
     } catch (err) {
         console.error('Failed to update user company profile:', err);
-        // We don't throw here to avoid failing the whole operation if just the profile sync fails
-        // but this implies data inconsistency.
     }
 
     // 3. Best-effort sync to Central Platform Postgres
+    let firstName = payload.firstName || userData.firstName;
+    let lastName = payload.lastName || userData.lastName;
+    const email = payload.email || userData.email;
+
+    if (!firstName && payload.displayName) {
+        const parts = payload.displayName.trim().split(' ');
+        firstName = parts[0] || undefined;
+        lastName = parts.slice(1).join(' ').trim() || undefined;
+    }
+
+    await syncUserToCentral(userId, targetCompanyId, {
+        primaryRole: payload.primaryRole,
+        reportsTo:   payload.reportsTo === '' ? null : (payload.reportsTo || undefined),
+        firstName,
+        lastName,
+        status:      payload.status,
+        email:       email
+    });
+
+    return { ok: true };
+}
+
+/**
+ * Reusable helper to sync HR user changes to Central Platform Postgres
+ */
+export async function syncUserToCentral(userId, companyId, payload) {
     try {
         const centralApiUrl = import.meta.env.VITE_CENTRAL_API_URL || 'http://localhost:5000';
         const centralToken  = localStorage.getItem('mprar_central_token');
-        const cleanCompanyId = (contextCompanyId || '').replace('companies/', '');
+        const cleanCompanyId = (companyId || '').toString().replace('companies/', '');
 
         if (centralToken && centralApiUrl && cleanCompanyId) {
-            await fetch(`${centralApiUrl}/companies/${cleanCompanyId}/users/${userId}/roles`, {
-                method:  'PUT',
-                headers: {
-                    'Content-Type':  'application/json',
-                    'Authorization': `Bearer ${centralToken}`,
-                },
-                body: JSON.stringify({
-                    hrRole:      payload.primaryRole || undefined,
-                    reportsTo:   payload.reportsTo   || undefined,
-                }),
-            }).then(async res => {
-                if (!res.ok) {
-                    const err = await res.json().catch(() => ({}));
-                    console.warn('[HR→Central sync] Update failed:', err.error || res.status);
-                } else {
-                    console.info('[HR→Central sync] Role updated in Central Postgres');
-                }
-            }).catch(err => console.warn('[HR→Central sync] Network error:', err.message));
+            // A. Sync Roles & Management structure (if provided)
+            if (payload.primaryRole || payload.reportsTo) {
+                await fetch(`${centralApiUrl}/companies/${cleanCompanyId}/users/${userId}/roles`, {
+                    method:  'PUT',
+                    headers: {
+                        'Content-Type':  'application/json',
+                        'Authorization': `Bearer ${centralToken}`,
+                    },
+                    body: JSON.stringify({
+                        hrRole:      payload.primaryRole || undefined,
+                        reportsTo:   payload.reportsTo   || undefined,
+                    }),
+                }).then(async res => {
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        console.warn('[HR→Central sync] Role update failed:', err.error || res.status);
+                    }
+                }).catch(err => console.warn('[HR→Central sync] Network error (roles):', err.message));
+            }
+
+            // B. Sync Profile (Identity)
+            if (payload.firstName || payload.lastName || payload.status || payload.email) {
+                const rawStatus = typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : undefined;
+                const normalizedStatus = rawStatus === 'archived' ? 'inactive'
+                    : rawStatus === 'active' ? 'active'
+                    : rawStatus === 'inactive' ? 'inactive'
+                    : undefined;
+
+                await fetch(`${centralApiUrl}/companies/${cleanCompanyId}/users/${userId}`, {
+                    method:  'PUT',
+                    headers: {
+                        'Content-Type':  'application/json',
+                        'Authorization': `Bearer ${centralToken}`,
+                    },
+                    body: JSON.stringify({
+                        firstName: payload.firstName || undefined,
+                        lastName:  payload.lastName  || undefined,
+                        status:    normalizedStatus,
+                        email:     payload.email     || undefined
+                    }),
+                }).then(async res => {
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        console.warn('[HR→Central sync] Profile update failed:', err.error || res.status);
+                    } else {
+                        console.info('[HR→Central sync] Profile updated in Central Postgres');
+                        
+                        // Clear Central cache if we have a way to do so via URL
+                        // (Usually the Central API handles its own cache invalidation on PUT)
+                    }
+                }).catch(err => console.warn('[HR→Central sync] Network error (profile):', err.message));
+            }
         }
     } catch (syncErr) {
         console.warn('[HR→Central sync] Failed (non-fatal):', syncErr.message);
     }
-
-    return { ok: true };
 }
 
 export async function setUserStatus(userId, status) {
@@ -368,6 +415,21 @@ export async function setUserStatus(userId, status) {
     if (!allowed.includes(status)) throw new Error('Invalid status');
     const ref = doc(db, 'users', userId);
     await updateDoc(ref, { status, updatedAt: serverTimestamp() });
+    
+    // Best-effort sync to Central Platform Postgres
+    try {
+        const userSnap = await getDoc(ref);
+        if (userSnap.exists()) {
+            const userData = userSnap.data();
+            const companyId = userData.primaryCompanyId || userData.companyId;
+            if (companyId) {
+                await syncUserToCentral(userId, companyId, { status });
+            }
+        }
+    } catch (syncErr) {
+        console.warn('[setUserStatus] Sync failed (non-fatal):', syncErr.message);
+    }
+
     try { console.log('User status updated:', userId, status); } catch (_) { }
     try {
         const { invalidateAllCache } = await import('./cacheInvalidationService');
@@ -673,6 +735,31 @@ export async function archiveUser(userId, companyId = null) {
             await invalidateCompanyCache(cleanCompanyId);
         } catch (_) { }
 
+        // --- Best-effort sync to Central Platform Postgres ---
+        try {
+            const centralApiUrl = import.meta.env.VITE_CENTRAL_API_URL || 'http://localhost:5000';
+            const centralToken  = localStorage.getItem('mprar_central_token');
+
+            if (centralToken && centralApiUrl && cleanCompanyId) {
+                console.log(`[HR→Central sync] Attempting to remove user ${userId} from company ${cleanCompanyId} in Central...`);
+                await fetch(`${centralApiUrl}/companies/${cleanCompanyId}/users/${userId}`, {
+                    method:  'DELETE',
+                    headers: {
+                        'Authorization': `Bearer ${centralToken}`,
+                    },
+                }).then(async res => {
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        console.warn('[HR→Central sync] Removal failed:', err.error || res.status);
+                    } else {
+                        console.info('[HR→Central sync] User removed from company in Central Postgres');
+                    }
+                }).catch(err => console.warn('[HR→Central sync] Network error (removal):', err.message));
+            }
+        } catch (syncErr) {
+            console.warn('[HR→Central sync] Failed (non-fatal):', syncErr.message);
+        }
+
         return { ok: true };
     } catch (error) {
         console.error('Error archiving user:', error);
@@ -723,11 +810,30 @@ export async function unarchiveUser(userId, companyId = null) {
             console.error('Failed to increment employee count:', err);
         }
 
-        // Clear cache - DB updated, cache must reflect immediately
         try {
             const { invalidateCompanyCache } = await import('./cacheInvalidationService');
             await invalidateCompanyCache(cleanCompanyId);
         } catch (_) { }
+
+        // --- Best-effort sync to Central Platform Postgres ---
+        // Reactivate user in Central by sending current state
+        try {
+            const userRef = doc(db, 'users', userId);
+            const userSnap = await getDoc(userRef);
+            if (userSnap.exists()) {
+                const userData = userSnap.data();
+                await syncUserToCentral(userId, cleanCompanyId, {
+                    firstName:   userData.firstName,
+                    lastName:    userData.lastName,
+                    email:       userData.email,
+                    primaryRole: userData.primaryRole || userData.role,
+                    reportsTo:   userData.reportsTo || userData.managerUserId,
+                    status:      'active'
+                });
+            }
+        } catch (syncErr) {
+            console.warn('[unarchiveUser] Sync failed (non-fatal):', syncErr.message);
+        }
 
         return { ok: true };
     } catch (error) {

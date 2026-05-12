@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { doc, collection, query, where, orderBy, limit, onSnapshot } from 'firebase/firestore';
 import { db, auth } from '../firebase/client';
+import { useAuth } from './useAuth';
 import { getUserDisplayName, validateRequiredIds } from '../utils/dataParser';
 import { getRoleName } from '../utils/getRoleName';
 import { fetchCompanyDashboardData, getCachedCompanyDashboard } from '../services/dataCache';
@@ -39,6 +40,7 @@ const formatLabel = (value) => {
 };
 
 export function useCompanyDashboard(companyId) {
+    const { user: authUser } = useAuth();
     const [data, setData] = useState({
         teamMembers: [],
         totalUsers: 0,
@@ -94,17 +96,17 @@ export function useCompanyDashboard(companyId) {
         const companyRef = doc(db, 'companies', companyId);
         const usersQuery = query(
             collection(db, 'users'),
-            where('companyId', '==', `companies/${companyId}`),
+            where('companyId', 'in', [companyId, `companies/${companyId}`]),
             limit(DASHBOARD_LISTENER_MAX_USERS)
         );
         const profilesQuery = query(
             collection(db, 'userCompanyProfiles'),
-            where('companyId', '==', `companies/${companyId}`),
+            where('companyId', 'in', [companyId, `companies/${companyId}`]),
             limit(DASHBOARD_LISTENER_MAX_PROFILES)
         );
         const invitesQuery = query(
             collection(db, 'invites'),
-            where('companyId', '==', companyId),
+            where('companyId', 'in', [companyId, `companies/${companyId}`]),
             where('status', '==', 'pending'),
             limit(DASHBOARD_LISTENER_MAX_INVITES)
         );
@@ -152,15 +154,18 @@ export function useCompanyDashboard(companyId) {
                         const u = userMap.get(uid);
                         processedUserIds.add(uid);
 
-                        const rawStatus = (u && u.status) || p.status || '';
-                        let displayStatus = 'Inactive';
+                        const rawStatus = (u && u.status) || p.status || 'active';
+                        let displayStatus = 'Active';
                         const normalizedStatus = rawStatus.toLowerCase();
                         if (normalizedStatus === 'active') displayStatus = 'Active';
                         else if (normalizedStatus === 'archived') displayStatus = 'Archived';
                         else if (normalizedStatus === 'inactive') displayStatus = 'Inactive';
+                        else displayStatus = 'Active'; // Default to Active for any other value or if missing
 
                         const rawRole = p.primaryRole || (u && u.primaryRole) || 'Employee';
-                        if (rawRole.toLowerCase() === 'sitemanager') return null;
+                        // Do NOT exclude siteManager here, otherwise they aren't counted in totalUsers
+                        // If we want to hide them from the team list, we should do it in the UI filter
+                        // const isSiteAdmin = ['sitemanager', 'superuser', 'owner'].includes(rawRole.toLowerCase());
 
                         const name = u ? getUserDisplayName(u) : (p.displayName || p.email || 'Unknown');
 
@@ -174,21 +179,22 @@ export function useCompanyDashboard(companyId) {
                             roleCategory: ['teamManager', 'adminManager', 'hrManager'].includes(rawRole) ? 'Manager' : 'Employee',
                             status: displayStatus,
                             joinDate: u ? formatDisplayDate(u.createdAt) : '',
-                            isInvited: false
+                            isInvited: false,
+                            roleKey: rawRole
                         };
                     }).filter(Boolean);
 
                     // 3. Add orphan users
                     const orphanMembers = usersData
                         .filter(u => !processedUserIds.has(u.id))
-                        .filter(u => (u.primaryRole || '').toLowerCase() !== 'sitemanager')
                         .map(u => {
-                            const rawStatus = u.status || '';
+                            const rawStatus = u.status || 'active';
                             const normalizedStatus = rawStatus.toLowerCase();
-                            let displayStatus = 'Inactive';
+                            let displayStatus = 'Active';
                             if (normalizedStatus === 'active') displayStatus = 'Active';
                             else if (normalizedStatus === 'archived') displayStatus = 'Archived';
                             else if (normalizedStatus === 'inactive') displayStatus = 'Inactive';
+                            else displayStatus = 'Active';
 
                             return {
                                 id: u.id,
@@ -200,7 +206,8 @@ export function useCompanyDashboard(companyId) {
                                 roleCategory: ['teamManager', 'adminManager', 'hrManager'].includes(u.primaryRole) ? 'Manager' : 'Employee',
                                 status: displayStatus,
                                 joinDate: formatDisplayDate(u.createdAt),
-                                isInvited: false
+                                isInvited: false,
+                                roleKey: u.primaryRole
                             };
                         });
 
@@ -228,13 +235,28 @@ export function useCompanyDashboard(companyId) {
                         inviteId: inv.id
                     })).sort((a, b) => a.id.localeCompare(b.id));
 
-                    const combinedMembers = [...teamMembers, ...inviteMembers];
+                    const combinedMembers = [...teamMembers];
+                    
+                    // Deduplicate invites: Only add invites for emails that don't already have a user record
+                    inviteMembers.forEach(invite => {
+                        const emailLower = (invite.email || '').toLowerCase().trim();
+                        const exists = teamMembers.some(tm => (tm.email || '').toLowerCase().trim() === emailLower);
+                        if (!exists) {
+                            combinedMembers.push(invite);
+                        }
+                    });
+
                     const activeUsersCount = teamMembers.filter(m => m.status === 'Active').length;
                     const pendingInvitesCount = inviteMembers.length;
 
-                    const seatCount = Number.isFinite(companyDocData.billingSeatQuota)
+                    let seatCount = Number.isFinite(companyDocData.billingSeatQuota)
                         ? companyDocData.billingSeatQuota
                         : (companyDocData.seatCount || 0);
+
+                    // Trust the auth token if it has a higher seat count (Owner bypass)
+                    if (authUser?.seatCount && authUser.seatCount > seatCount) {
+                        seatCount = authUser.seatCount;
+                    }
 
                     const pricePerSeat = Number.isFinite(companyDocData.billingPricePerSeat)
                         ? companyDocData.billingPricePerSeat

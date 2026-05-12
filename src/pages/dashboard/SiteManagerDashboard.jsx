@@ -20,7 +20,6 @@ import { useAuth } from '../../hooks/useAuth';
 import { useDashboardPerformance } from '../../hooks/useDashboardPerformance';
 import { usePerformanceMonitor } from '../../hooks/usePerformanceMonitor';
 import { addUsersBySiteManager, updateUserBySiteManager } from '../../services/users';
-import { sendUserInvite } from '../../services/invitations';
 
 // Enhanced components for better error handling and loading states
 import DashboardLoadingState from '../../components/ui/DashboardLoadingState';
@@ -194,31 +193,6 @@ const SiteManagerDashboard = () => {
     }
   };
 
-  const handleSendInvites = async (users) => {
-    try {
-      const companyPath = user?.companyId || '';
-      const sitePath = user?.siteId || '';
-      const companyId = companyPath.includes('/') ? companyPath.split('/')[1] : companyPath;
-      const siteId = sitePath.includes('/') ? sitePath.split('/')[1] : sitePath;
-      for (const u of users) {
-        await sendUserInvite({
-          email: u.email,
-          displayName: u.fullName,
-          primaryRole: u.role,
-          companyId,
-          siteId,
-          reportsTo: u.reportsTo || '',
-          isOnboardingMandatory: u.isOnboardingMandatory || false,
-          inviteBaseUrl: window.location.origin + '/invite'
-        });
-      }
-      toast.success(`Invitation emails sent to ${users.length} user(s).`);
-    } catch (error) {
-      console.error('Failed to send invites:', error);
-      toast.error(error?.message || 'Failed to send invites');
-    }
-  };
-
   const handleEdit = (id) => {
     const member = dashboardData.teamMembers.find(m => m.id === id);
     setSelectedUser(member);
@@ -227,12 +201,35 @@ const SiteManagerDashboard = () => {
 
   const handleEditSave = async (updatedData) => {
     try {
-      // Map displayName + role + reportsTo to Firestore fields
+      const [firstName, ...lastNameParts] = (updatedData.name || '').trim().split(' ');
+      const lastName = lastNameParts.join(' ').trim();
+      const normalizeRoleKeyValue = (value) =>
+        String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+      const getCanonicalRole = (value) => {
+        const normalized = normalizeRoleKeyValue(value);
+        switch (normalized) {
+          case 'sitemanager': return 'siteManager';
+          case 'teammanager': return 'teamManager';
+          case 'seniormanager': return 'seniorManager';
+          case 'adminmanager': return 'adminManager';
+          case 'hrmanager': return 'hrManager';
+          case 'adminadvisor': return 'adminAdvisor';
+          case 'hradvisor': return 'hrAdvisor';
+          case 'contractmanager': return 'contractManager';
+          case 'superuser': return 'superUser';
+          case 'owner': return 'owner';
+          default: return 'employee';
+        }
+      };
+      const normalizedRole = getCanonicalRole(updatedData.role);
       const updates = {
         displayName: updatedData.name,
-        primaryRole: updatedData.role,
-        roles: [updatedData.role],
+        firstName: firstName || undefined,
+        lastName: lastName || undefined,
+        primaryRole: normalizedRole,
+        roles: [normalizedRole],
         reportsTo: updatedData.reportsTo,
+        managerUserId: updatedData.reportsTo || ''
       };
 
       await updateUserBySiteManager(selectedUser.id, updates);
@@ -466,7 +463,6 @@ const SiteManagerDashboard = () => {
         isOpen={showPaymentModal}
         onClose={() => setShowPaymentModal(false)}
         onConfirm={handlePaymentConfirm}
-        onSendInvites={handleSendInvites}
         users={pendingUsers}
       />
       <EditUserModal

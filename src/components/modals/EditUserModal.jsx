@@ -6,6 +6,43 @@ import { db } from '../../firebase/client';
 import { useAuth } from '../../hooks/useAuth';
 import { toast } from 'react-toastify';
 
+const normalizeRoleKeyValue = (value) =>
+  String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+const getCanonicalRole = (value) => {
+  const normalized = normalizeRoleKeyValue(value);
+  switch (normalized) {
+    case 'sitemanager': return 'siteManager';
+    case 'teammanager': return 'teamManager';
+    case 'seniormanager': return 'seniorManager';
+    case 'adminmanager': return 'adminManager';
+    case 'hrmanager': return 'hrManager';
+    case 'adminadvisor': return 'adminAdvisor';
+    case 'hradvisor': return 'hrAdvisor';
+    case 'contractmanager': return 'contractManager';
+    case 'superuser': return 'superUser';
+    case 'owner': return 'owner';
+    default: return 'employee';
+  }
+};
+
+const getRoleLabel = (role) => {
+  switch (getCanonicalRole(role)) {
+    case 'siteManager': return 'Site Manager';
+    case 'teamManager': return 'Team Manager';
+    case 'seniorManager': return 'Senior Manager';
+    case 'adminManager': return 'Admin Manager';
+    case 'hrManager': return 'HR Manager';
+    case 'adminAdvisor': return 'Admin Advisor';
+    case 'hrAdvisor': return 'HR Advisor';
+    case 'contractManager': return 'Contract Manager';
+    case 'superUser': return 'Super User';
+    case 'owner': return 'Owner';
+    case 'employee':
+    default: return 'Employee';
+  }
+};
+
 const EditUserModal = ({ isOpen, onClose, user, onSave }) => {
     const { user: authed } = useAuth();
     const [isLoading, setIsLoading] = useState(false);
@@ -21,8 +58,8 @@ const EditUserModal = ({ isOpen, onClose, user, onSave }) => {
         if (user) {
             setFormData({
                 name: user.displayName || `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.name || '',
-                role: user.primaryRole || user.role || 'employee',
-                reportsTo: user.reportsTo || ''
+                role: getCanonicalRole(user.primaryRole || user.role),
+                reportsTo: user.reportsTo || user.managerUserId || ''
             });
         }
     }, [user, isOpen]);
@@ -33,22 +70,40 @@ const EditUserModal = ({ isOpen, onClose, user, onSave }) => {
             if (!authed?.companyId || !isOpen) return;
             try {
                 const companyPath = authed.companyId;
-                const companyId = companyPath.includes('/') ? companyPath.split('/')[1] : companyPath;
-                const roles = ['teamManager', 'adminManager', 'hrManager', 'seniorManager', 'siteManager', 'superUser'];
+                const companyIdOnly = companyPath.includes('/') ? companyPath.split('/')[1] : companyPath;
+                const companyIdCandidates = [`companies/${companyIdOnly}`, companyIdOnly];
+                
+                const roles = ['teamManager', 'adminManager', 'hrManager', 'seniorManager', 'siteManager', 'superUser', 'owner', 'site_manager'];
                 const usersCol = collection(db, 'users');
                 
                 // fetch all potential managers for the company
-                const q = query(usersCol, where('companyId', '==', `companies/${companyId}`));
+                const q = query(usersCol, where('companyId', 'in', companyIdCandidates));
                 const snap = await getDocs(q);
                 
                 const opts = snap.docs
                     .map(d => ({ id: d.id, ...d.data() }))
-                    .filter(u => roles.includes(u.primaryRole) && u.id !== user?.id) // Don't include self
+                    .filter(u => {
+                        const r = getCanonicalRole(u.primaryRole || u.role);
+                        return roles.includes(r) && u.id !== user?.id;
+                    })
                     .map(u => ({ 
                         id: u.id, 
                         name: u.displayName || `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email, 
-                        role: u.primaryRole 
+                        role: getCanonicalRole(u.primaryRole || u.role)
                     }));
+                
+                // Ensure the current user is in the options if they have a manager role
+                const currentUserId = authed?.userId || authed?.uid;
+                if (currentUserId && !opts.find(o => o.id === currentUserId) && currentUserId !== user?.id) {
+                    const myRole = getCanonicalRole(authed?.primaryRole || authed?.role);
+                    if (roles.includes(myRole)) {
+                        opts.push({
+                            id: currentUserId,
+                            name: authed?.displayName || authed?.email || 'Me',
+                            role: myRole
+                        });
+                    }
+                }
                 
                 setManagerOptions(opts);
             } catch (e) {
@@ -72,7 +127,8 @@ const EditUserModal = ({ isOpen, onClose, user, onSave }) => {
 
         setIsLoading(true);
         try {
-            await onSave(formData);
+            const dataToSave = { ...formData, role: getCanonicalRole(formData.role) };
+            await onSave(dataToSave);
             onClose();
         } catch (error) {
             console.error('[EditUserModal] Save failed:', error);
@@ -83,7 +139,8 @@ const EditUserModal = ({ isOpen, onClose, user, onSave }) => {
     };
 
     const shouldShowReportsTo = (role) => {
-        return !['siteManager', 'superUser'].includes(role);
+        const r = getCanonicalRole(role);
+        return !['siteManager', 'superUser', 'owner'].includes(r);
     };
 
     if (!isOpen) return null;
@@ -166,7 +223,7 @@ const EditUserModal = ({ isOpen, onClose, user, onSave }) => {
                                     >
                                         <option value="">Select Manager</option>
                                         {managerOptions.map(m => (
-                                            <option key={m.id} value={m.id}>{m.name} ({m.role})</option>
+                                            <option key={m.id} value={m.id}>{m.name} ({getRoleLabel(m.role)})</option>
                                         ))}
                                     </select>
                                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-secondary pointer-events-none" />

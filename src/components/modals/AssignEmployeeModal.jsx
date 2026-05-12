@@ -128,6 +128,17 @@ const AssignEmployeeModal = ({ isOpen, onClose, onSave, employee }) => {
       } catch { }
 
       onSave({ employeeId, managerUserId: targetManagerId });
+      
+      // 4) Sync to Central Platform Postgres
+      try {
+        const { syncUserToCentral } = await import('../../services/users');
+        await syncUserToCentral(employeeId, companyId, {
+          reportsTo: targetManagerId
+        });
+      } catch (syncErr) {
+        console.warn('[Assign] Central sync failed:', syncErr.message);
+      }
+
       onClose();
     } catch (e) { console.error('Assign save failed', e); onClose(); }
   };

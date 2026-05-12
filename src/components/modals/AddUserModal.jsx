@@ -5,7 +5,6 @@ import { toast } from 'react-toastify';
 import { db } from '../../firebase/client';
 import { collection, getDocs, query, where, limit } from 'firebase/firestore';
 import { addUsersBySiteManager } from '../../services/users';
-import { sendUserInvite } from '../../services/invitations';
 import { useAuth } from '../../hooks/useAuth';
 
 // Email validation function
@@ -90,13 +89,33 @@ const validateEmail = (email) => {
     return { isValid: true, message: '' };
 };
 
+const normalizeRoleKeyValue = (value) =>
+  String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+const getCanonicalRole = (value) => {
+  const normalized = normalizeRoleKeyValue(value);
+  switch (normalized) {
+    case 'sitemanager': return 'siteManager';
+    case 'teammanager': return 'teamManager';
+    case 'seniormanager': return 'seniorManager';
+    case 'adminmanager': return 'adminManager';
+    case 'hrmanager': return 'hrManager';
+    case 'adminadvisor': return 'adminAdvisor';
+    case 'hradvisor': return 'hrAdvisor';
+    case 'contractmanager': return 'contractManager';
+    case 'superuser': return 'superUser';
+    case 'owner': return 'owner';
+    default: return 'employee';
+  }
+};
 
 const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
     const { user: authed } = useAuth();
     const [users, setUsers] = useState([
         {
             id: 1,
-            fullName: '',
+            firstName: '',
+            lastName: '',
             email: '',
             role: 'employee',
             reportsTo: '',
@@ -117,13 +136,13 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
     // Helper functions for role-based logic (moved inside to access hasSeniorManager)
     const isManagerRole = (role) => {
         const managerRoles = ['teamManager', 'adminManager', 'hrManager', 'seniorManager'];
-        return managerRoles.includes(role);
+        return managerRoles.includes(getCanonicalRole(role));
     };
 
     // Updated: Reports To visibility depends on role
     const shouldShowReportsTo = (role) => {
-        // Site Managers and Super Users are at the top and don't report to others here
-        if (['siteManager', 'superUser'].includes(role)) return false;
+        const canonicalRole = getCanonicalRole(role);
+        if (['siteManager', 'superUser', 'owner'].includes(canonicalRole)) return false;
 
         // Everyone else (including all other manager types) reports to someone
         return true;
@@ -132,7 +151,7 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
     // Check if form can be submitted (no validation errors and all required fields filled)
     const canSubmit = users.every(user => {
         // Check required fields
-        if (!user.fullName?.trim() || !user.email?.trim()) {
+        if (!user.firstName?.trim() || !user.lastName?.trim() || !user.email?.trim()) {
             return false;
         }
 
@@ -152,27 +171,32 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
 
     // Updated: Get allowed manager roles based on user role and hierarchy
     const getAllowedManagerRoles = (userRole) => {
+        const normalizedRole = getCanonicalRole(userRole);
         // If user is a mid-level manager, they report to Senior Manager (or fallback to Site Manager)
-        if (['teamManager', 'adminManager', 'hrManager', 'seniorManager'].includes(userRole)) {
+        if (['teamManager', 'adminManager', 'hrManager', 'seniorManager'].includes(normalizedRole)) {
             return ['seniorManager', 'siteManager', 'superUser'];
         }
 
         const roleMapping = {
-            'employee': ['teamManager', 'siteManager', 'superUser'],
-            'hrAdvisor': ['hrManager', 'siteManager', 'superUser'],
-            'adminAdvisor': ['adminManager', 'siteManager', 'superUser'],
-            'contractManager': ['teamManager', 'siteManager', 'superUser']
+            'employee': ['teamManager', 'siteManager', 'seniorManager'],
+            'hrAdvisor': ['hrManager', 'siteManager', 'seniorManager'],
+            'adminAdvisor': ['adminManager', 'siteManager', 'seniorManager'],
+            'contractManager': ['teamManager', 'siteManager', 'seniorManager']
         };
 
-        return roleMapping[userRole] || ['siteManager', 'superUser'];
+        return roleMapping[normalizedRole] || ['siteManager', 'superUser', 'seniorManager', 'owner', 'siteManager'];
     };
 
     // Filter managers based on user role
     const getFilteredManagers = (allManagers, userRole) => {
         const allowedRoles = getAllowedManagerRoles(userRole);
-        // If we expect specific roles (like seniorManager), strictly filter
+        const normalizedAllowed = allowedRoles.map(getCanonicalRole);
+
         if (allowedRoles.length > 0) {
-            return allManagers.filter(manager => allowedRoles.includes(manager.role));
+            return allManagers.filter(manager => {
+                const mRole = getCanonicalRole(manager.role);
+                return normalizedAllowed.includes(mRole);
+            });
         }
         return allManagers;
     };
@@ -182,7 +206,8 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
             ...users,
             {
                 id: users.length + 1,
-                fullName: '',
+                firstName: '',
+                lastName: '',
                 email: '',
                 password: '',
                 role: 'employee',
@@ -201,29 +226,29 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
                 // Validate email in real-time when email field changes
                 if (field === 'email') {
                     const validation = validateEmail(value);
-                    setEmailErrors(prev => ({
-                        ...prev,
-                        [id]: validation.isValid ? '' : validation.message
-                    }));
+                    if (validation.isValid) {
+                        setEmailErrors(prev => ({ ...prev, [id]: '' }));
+                        // Debounced check for existing user (optional, but let's do it on blur or just on submit to save reads)
+                    } else {
+                        setEmailErrors(prev => ({ ...prev, [id]: validation.message }));
+                    }
                 }
 
                 // Clear reportsTo field when switching roles if relationships change
                 if (field === 'role') {
-                    // Check if new role requires a specific manager type
-                    const allowedRoles = getAllowedManagerRoles(value);
-                    const shouldShow = shouldShowReportsTo(value);
+                    const normalizedValue = getCanonicalRole(value);
+                    const allowedRoles = getAllowedManagerRoles(normalizedValue);
+                    const shouldShow = shouldShowReportsTo(normalizedValue);
 
                     if (!shouldShow) {
-                        // If field shouldn't show, clear it
                         updatedUser.reportsTo = '';
                     } else {
-                        // Check if current reportsTo is still valid for new role
                         const currentManager = managerOptions.find(m => m.id === user.reportsTo);
-                        if (currentManager && !allowedRoles.includes(currentManager.role)) {
+                        if (currentManager && !allowedRoles.includes(getCanonicalRole(currentManager.role))) {
                             updatedUser.reportsTo = '';
                         }
-                        // Note: If newly showing, reportsTo keeps its old value (likely '') or stays if valid
                     }
+                    updatedUser.role = normalizedValue;
                 }
 
                 return updatedUser;
@@ -271,25 +296,32 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
             }
 
             // 2. Fallback: query sites collection for a site this user manages
-            try {
-                const uid = authed?.userId || authed?.uid;
-                if (!uid) return;
-                const sitesRef = collection(db, 'sites');
-                const q = query(sitesRef, where('managerUserId', '==', uid), limit(1));
-                const snap = await getDocs(q);
-                if (!snap.empty) {
-                    const siteId = snap.docs[0].id;
-                    console.log('[AddUserModal] Resolved siteId from sites collection:', siteId);
-                    setResolvedSiteId(siteId);
-                    return;
-                }
+            const uid = authed?.userId || authed?.uid;
+            const sitesRef = collection(db, 'sites');
 
-                // 3. Also try matching by companyId + primaryRole as a last resort
-                const companyPath = authed?.companyId || '';
-                if (companyPath) {
+            if (uid) {
+                try {
+                    const q = query(sitesRef, where('managerUserId', '==', uid), limit(1));
+                    const snap = await getDocs(q);
+                    if (!snap.empty) {
+                        const siteId = snap.docs[0].id;
+                        console.log('[AddUserModal] Resolved siteId from sites collection:', siteId);
+                        setResolvedSiteId(siteId);
+                        return;
+                    }
+                } catch (e) {
+                    console.error('[AddUserModal] Failed to resolve siteId by managerUserId:', e);
+                }
+            }
+
+            // 3. Also try matching by companyId + primaryRole as a last resort
+            const companyPath = authed?.companyId || '';
+            if (companyPath) {
+                try {
+                    const companyIdRaw = companyPath.replace('companies/', '');
                     const q2 = query(
                         sitesRef,
-                        where('companyId', '==', companyPath),
+                        where('companyId', 'in', [companyIdRaw, `companies/${companyIdRaw}`]),
                         limit(1)
                     );
                     const snap2 = await getDocs(q2);
@@ -298,9 +330,9 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
                         console.log('[AddUserModal] Resolved siteId from company sites:', siteId);
                         setResolvedSiteId(siteId);
                     }
+                } catch (e) {
+                    console.error('[AddUserModal] Failed to resolve siteId by companyId:', e);
                 }
-            } catch (e) {
-                console.error('[AddUserModal] Failed to resolve siteId from Firestore:', e);
             }
         };
         resolveSiteId();
@@ -349,15 +381,35 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
                 const companyPath = authed.companyId;
                 const companyId = companyPath.includes('/') ? companyPath.split('/')[1] : companyPath;
                 const companyIdRaw = companyPath.replace('companies/', '');
-                const roles = ['teamManager', 'adminManager', 'hrManager', 'seniorManager', 'siteManager', 'superUser'];
+                const roles = ['teamManager', 'adminManager', 'hrManager', 'seniorManager', 'siteManager', 'superUser', 'owner', 'site_manager'];
                 const usersCol = collection(db, 'users');
                 // fetch all potential managers for the company - handle both formats
                 const q = query(usersCol, where('companyId', 'in', [companyIdRaw, `companies/${companyIdRaw}`]));
                 const snap = await getDocs(q);
                 const opts = snap.docs
                     .map(d => ({ id: d.id, ...d.data() }))
-                    .filter(u => roles.includes(u.primaryRole))
-                    .map(u => ({ id: u.id, name: u.displayName || `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email, role: u.primaryRole }));
+                    .filter(u => roles.includes(getCanonicalRole(u.primaryRole || u.role)))
+                    .map(u => ({
+                        id: u.id,
+                        name: u.displayName || `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email,
+                        role: getCanonicalRole(u.primaryRole || u.role),
+                        siteId: u.siteId
+                    }));
+
+                // Ensure the current user is in the options if they have a manager role
+                const currentUserId = authed?.userId || authed?.uid;
+                if (currentUserId && !opts.find(o => o.id === currentUserId)) {
+                    const myRole = getCanonicalRole(authed?.primaryRole || authed?.role);
+                    if (roles.includes(myRole)) {
+                        opts.push({
+                            id: currentUserId,
+                            name: authed?.displayName || authed?.email || 'Me',
+                            role: myRole,
+                            siteId: authed?.siteId
+                        });
+                    }
+                }
+
                 setManagerOptions(opts);
             } catch (e) {
                 console.error('Failed to load managers', e);
@@ -371,8 +423,8 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
         try {
             // Comprehensive validation
             for (const u of users) {
-                if (!u.fullName?.trim()) {
-                    toast.error('Full name is required for all users');
+                if (!u.firstName?.trim() || !u.lastName?.trim()) {
+                    toast.error('First and last name are required for all users');
                     return;
                 }
 
@@ -394,7 +446,7 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
             const companyId = companyPath.includes('/') ? companyPath.split('/')[1] : companyPath;
 
             // Use the resolved siteId (from profile or fetched from Firestore)
-            const siteId = resolvedSiteId || '';
+            let baseSiteId = resolvedSiteId || '';
 
             // Validate required fields before sending invites
             if (!companyId) {
@@ -403,37 +455,116 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
                 return;
             }
 
-            if (!siteId) {
-                toast.error('Site ID could not be determined. Please contact your administrator to ensure your account is assigned to a site.');
+            // 1. Check for duplicates within the form itself
+            const emailsInForm = users.map(u => u.email.toLowerCase().trim());
+            const duplicateInForm = emailsInForm.find((email, index) => emailsInForm.indexOf(email) !== index);
+            if (duplicateInForm) {
+                toast.error(`The email ${duplicateInForm} is entered multiple times in the form.`);
                 setIsSubmitting(false);
                 return;
             }
-            // New flow: send invites instead of creating users immediately
-            for (const u of users) {
-                const inviteData = {
-                    email: u.email,
-                    displayName: u.fullName,
-                    primaryRole: u.role,
-                    companyId,
-                    siteId,
-                    inviteBaseUrl: window.location.origin + '/invite'
-                };
 
-                // Only include reportsTo for non-manager roles and ensure it's not empty
-                if (shouldShowReportsTo(u.role) && u.reportsTo?.trim()) {
-                    inviteData.reportsTo = u.reportsTo.trim();
+            // 2. Check for existing users or invites in Firestore to prevent duplicates
+            // We do this sequentially to avoid overwhelming Firestore but we could use Promise.all
+            for (const u of users) {
+                const emailLower = u.email.toLowerCase().trim();
+
+                // Check if user is already an active member of the company
+                const usersRef = collection(db, 'users');
+                const userQuery = query(
+                    usersRef,
+                    where('email', '==', emailLower),
+                    where('companyId', 'in', [companyId, `companies/${companyId}`])
+                );
+                const userSnap = await getDocs(userQuery);
+
+                if (!userSnap.empty) {
+                    toast.error(`User ${u.email} is already in the company. You can update their role and line manager from the Users list.`);
+                    setIsSubmitting(false);
+                    return;
                 }
 
-                // Include onboarding mandatory settings - Unified Checkbox
-                // When enabled, it triggers both User Self-Onboarding and HR Onboarding Profile creation
-                inviteData.isOnboardingMandatory = u.enableOnboarding || false;
-                inviteData.requiresHROnboarding = u.enableOnboarding || false;
+                // Check if there is already a pending invitation
+                const invitesRef = collection(db, 'invites');
+                const inviteQuery = query(
+                    invitesRef,
+                    where('email', '==', emailLower),
+                    where('companyId', '==', companyId),
+                    where('status', '==', 'pending')
+                );
+                const inviteSnap = await getDocs(inviteQuery);
 
-                inviteData.isTrainingMandatory = u.isTrainingMandatory || false;
-
-                await sendUserInvite(inviteData);
+                if (!inviteSnap.empty) {
+                    toast.error(`An invitation for ${u.email} is already pending. Please revoke the existing invite if you need to resend it.`);
+                    setIsSubmitting(false);
+                    return;
+                }
             }
-            toast.success(`Invitation emails sent to ${users.length} user(s)`);
+
+            // If we passed all checks, proceed with submission
+            // We will check siteId per user if baseSiteId is missing
+
+            // New flow: send invites instead of creating users immediately
+            for (const u of users) {
+                let userSiteId = baseSiteId;
+
+                // Fallback to manager's siteId if not resolved
+                if (!userSiteId && u.reportsTo) {
+                    const manager = managerOptions.find(m => m.id === u.reportsTo);
+                    if (manager && manager.siteId) {
+                        userSiteId = manager.siteId.includes('/') ? manager.siteId.split('/')[1] : manager.siteId;
+                    }
+                }
+
+                // Ultimate fallback so the user can be invited even if no site is found
+                if (!userSiteId) {
+                    userSiteId = 'unassigned';
+                }
+
+                const firstName = (u.firstName || '').trim();
+                const lastName = (u.lastName || '').trim();
+                const payload = {
+                    email: u.email.toLowerCase().trim(),
+                    firstName,
+                    lastName,
+                    hrRole: u.role,
+                    reportsTo: shouldShowReportsTo(u.role) && u.reportsTo?.trim() ? u.reportsTo.trim() : null,
+                    skipInviteEmail: false
+                };
+
+                // 1. Perfect Sync: Add user to Central Platform Postgres
+                // This ensures the user is created in Central and triggers the Central reset-password email flow.
+                try {
+                    const centralApiUrl = import.meta.env.VITE_CENTRAL_API_URL || 'http://localhost:5000';
+                    const centralToken = localStorage.getItem('mprar_central_token');
+
+                    if (!centralToken) {
+                        throw new Error('Central authentication token not found. Cannot create user through Central platform.');
+                    }
+
+                    const response = await fetch(`${centralApiUrl}/companies/${companyId}/users`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${centralToken}`
+                        },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        const errData = await response.json().catch(() => ({}));
+                        if (response.status !== 409) {
+                            throw new Error(errData.error || `Central sync failed with status ${response.status}`);
+                        }
+                    } else {
+                        console.log(`[AddUserModal] Successfully synced ${u.email} to Central Platform`);
+                    }
+                } catch (syncErr) {
+                    console.error('[AddUserModal] Central sync failed:', syncErr);
+                    throw new Error(`Unable to create ${u.email} through Central platform. ${syncErr.message}`);
+                }
+            }
+            toast.success(`Users created successfully. Central platform will send password reset and welcome emails.`);
             resetForm();
             onClose();
         } catch (e) {
@@ -480,50 +611,60 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
                             className="flex flex-col gap-6 rounded-base"
                         >
                             <h3 className="text-xl font-semibold text-text-primary">User {index + 1}</h3>
-
-                            {/* Full Name and Email Row */}
-                            <div className="grid grid-cols-1 gap-4">
+                            <div className="grid grid-cols-2 gap-4">
                                 <div className="flex flex-col gap-2">
                                     <label className="text-md text-text-primary">
-                                        Full name <span className="text-red-500">*</span>
+                                        First name <span className="text-red-500">*</span>
                                     </label>
                                     <input
                                         type="text"
-                                        value={user.fullName}
-                                        onChange={(e) => handleUserChange(user.id, 'fullName', e.target.value)}
-                                        placeholder="John Thomas"
-                                        className="w-full h-12 px-4 border border-border-secondary rounded-lg text-sm text-text-secondary placeholder:text-text-secondary focus:outline-none focus:border-border-accent-purple"
+                                        value={user.firstName}
+                                        onChange={(e) => handleUserChange(user.id, 'firstName', e.target.value)}
+                                        placeholder="e.g. John"
+                                        className="w-full h-12 px-4 border border-border-secondary rounded-lg text-sm text-text-secondary placeholder:text-text-secondary focus:outline-none focus:border-purple-500"
                                     />
                                 </div>
-
                                 <div className="flex flex-col gap-2">
                                     <label className="text-md text-text-primary">
-                                        Email <span className="text-red-500">*</span>
+                                        Last name <span className="text-red-500">*</span>
                                     </label>
-                                    <div className="relative w-full">
-                                        <input
-                                            type="email"
-                                            value={user.email}
-                                            onChange={(e) => handleUserChange(user.id, 'email', e.target.value)}
-                                            placeholder="John@gmail.com"
-                                            className={`w-full h-12 px-4 border rounded-lg text-sm text-text-secondary placeholder:text-text-secondary focus:outline-none focus:border-border-accent-purple ${emailErrors[user.id]
-                                                ? 'border-red-300 bg-red-50 focus:border-red-500'
-                                                : 'border-border-secondary'
-                                                }`}
-                                        />
-                                        {emailErrors[user.id] && (
-                                            <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                                                <AlertTriangle className="h-4 w-4 text-red-500" />
-                                            </div>
-                                        )}
-                                    </div>
+                                    <input
+                                        type="text"
+                                        value={user.lastName}
+                                        onChange={(e) => handleUserChange(user.id, 'lastName', e.target.value)}
+                                        placeholder="e.g. Thomas"
+                                        className="w-full h-12 px-4 border border-border-secondary rounded-lg text-sm text-text-secondary placeholder:text-text-secondary focus:outline-none focus:border-purple-500"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="flex flex-col gap-2">
+                                <label className="text-md text-text-primary">
+                                    Email Address <span className="text-red-500">*</span>
+                                </label>
+                                <div className="relative w-full">
+                                    <input
+                                        type="email"
+                                        value={user.email}
+                                        onChange={(e) => handleUserChange(user.id, 'email', e.target.value)}
+                                        placeholder="user@company.com"
+                                        className={`w-full h-12 px-4 border rounded-lg text-sm text-text-secondary placeholder:text-text-secondary focus:outline-none focus:border-purple-500 ${emailErrors[user.id]
+                                            ? 'border-red-300 bg-red-50 focus:border-red-500'
+                                            : 'border-border-secondary'
+                                            }`}
+                                    />
                                     {emailErrors[user.id] && (
-                                        <p className="text-xs text-red-600 flex items-center gap-1 mt-1">
-                                            <AlertTriangle className="h-3 w-3" />
-                                            {emailErrors[user.id]}
-                                        </p>
+                                        <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                                            <AlertTriangle className="h-4 w-4 text-red-500" />
+                                        </div>
                                     )}
                                 </div>
+                                {emailErrors[user.id] && (
+                                    <p className="text-xs text-red-600 flex items-center gap-1 mt-1">
+                                        <AlertTriangle className="h-3 w-3" />
+                                        {emailErrors[user.id]}
+                                    </p>
+                                )}
                             </div>
 
                             {/* Role and Reports To Row */}

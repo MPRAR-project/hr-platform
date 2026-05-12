@@ -3,12 +3,14 @@ import { useSearchParams, useNavigate } from "react-router-dom";
 import { auth, db } from "../../firebase/client";
 import {
   doc,
+  getDoc,
   setDoc,
   collection,
   query,
   where,
   getDocs,
   updateDoc,
+  arrayUnion,
 } from "firebase/firestore";
 import { createUserWithEmailAndPassword } from "firebase/auth";
 import { getCompanyOnboardingSettings, getOnboardingRedirectPath, retryOperation } from "../../utils/onboardingUtils";
@@ -24,35 +26,6 @@ const InviteSignupPage = () => {
   const [cpass, setCpass] = useState("");
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(true);
-
-
-  // useEffect(() => {
-
-
-  //   const fetchCompanyData = async (companyId) => {
-  //     try {
-  //       // Reference to the document
-  //       const companyRef = doc(db, "companies", companyId);
-
-  //       // Get document snapshot
-  //       const companySnap = await getDoc(companyRef);
-
-  //       if (companySnap.exists()) {
-  //         console.log("Company Data:", companySnap.data());
-  //         return companySnap.data();
-  //       } else {
-  //         console.log("No such company!");
-  //         return null;
-  //       }
-  //     } catch (error) {
-  //       console.error("Error fetching company:", error);
-  //       throw error;
-  //     }
-  //   };
-
-  //   fetchCompanyData(invite.companyId);
-  // }, []);
-
 
   useEffect(() => {
     const verify = async () => {
@@ -112,14 +85,12 @@ const InviteSignupPage = () => {
 
   const processUserSetup = async (uid) => {
     try {
-      // Ensure Firebase Auth state is available before any Firestore writes.
-      // Firestore security rules rely on `request.auth.uid`.
       if (!auth.currentUser || auth.currentUser.uid !== uid) {
         throw new Error("Authentication not ready. Please try again.");
       }
       await auth.currentUser.getIdToken(true);
 
-      const { getDoc } = await import("firebase/firestore");
+
       const userRef = doc(db, "users", uid);
       const userSnap = await getDoc(userRef);
 
@@ -134,24 +105,20 @@ const InviteSignupPage = () => {
 
       if (userSnap.exists()) {
         isExistingUser = true;
-        // Merge with existing data, updating only necessary fields for the context of this invite
-        // We do NOT overwrite name if it exists, unless it's a placeholder
         const existing = userSnap.data();
         userData = {
           ...existing,
-          primaryCompanyId: `companies/${invite.companyId}`, // Switch context to this company
-          // We can optionally update other fields if they are missing
+          status: "active",
+          primaryCompanyId: `companies/${invite.companyId}`,
           updatedAt: now
         };
       } else {
-        // New user
         userData = {
           ...userData,
           firstName: invite.displayName?.split(' ')[0] || '',
           lastName: invite.displayName?.split(' ').slice(1).join(' ') || '',
-          primaryRole: invite.primaryRole, // Default role for global user doc (can be overwritten by profile)
+          primaryRole: invite.primaryRole,
           roles: [invite.primaryRole],
-          // Legacy fields for backward compatibility
           role: invite.primaryRole,
           companyId: `companies/${invite.companyId}`,
           primaryCompanyId: `companies/${invite.companyId}`,
@@ -169,16 +136,12 @@ const InviteSignupPage = () => {
         };
       }
 
-      // 1. Update/Create Global User Doc
       if (isExistingUser) {
         await updateDoc(userRef, userData);
       } else {
         await setDoc(userRef, userData);
       }
 
-      // 2. Create/Update Company Profile (Idempotent check inside service or just create)
-      // The service createUserCompanyProfile creates a new doc. 
-      // We should check if one exists first to avoid duplicates if user clicks twice.
       const { createUserCompanyProfile, hasCompanyProfile } = await import('../../services/userCompanyProfiles');
 
       const existingProfile = await hasCompanyProfile(uid, invite.companyId);
@@ -191,17 +154,39 @@ const InviteSignupPage = () => {
           reportsTo: invite.reportsTo || null,
           teamId: invite.reportsTo || null,
           managerUserId: invite.reportsTo || null,
-          // Ensure status is active
           status: 'active'
         });
-        console.log('Company profile created for invited user:', uid);
+
+        const reportsToRaw = invite.reportsTo || '';
+        const managerRoleTags = new Set(['teamManager', 'adminManager', 'hrManager', 'seniorManager', 'siteManager', 'superUser']);
+        const isManagerId = reportsToRaw && !managerRoleTags.has(reportsToRaw);
+
+        if (isManagerId) {
+          try {
+            const assignmentRef = doc(collection(db, 'assignments'));
+            await setDoc(assignmentRef, {
+              employeeId: uid,
+              managerId: reportsToRaw,
+              companyId: invite.companyId,
+              siteId: invite.siteId,
+              createdAt: now,
+              updatedAt: now,
+              source: 'inviteAccept'
+            });
+
+            const managerRef = doc(db, 'users', reportsToRaw);
+            await updateDoc(managerRef, {
+              managedEmployees: arrayUnion(uid),
+              updatedAt: now
+            });
+          } catch (assignErr) {
+            console.warn('Failed to create manager assignment (non-fatal):', assignErr);
+          }
+        }
       } else {
-        // If profile exists (maybe archived?), we should update it to active?
-        // The user expects to be "re-invited" essentially.
         const { unarchiveCompanyProfile } = await import('../../services/userCompanyProfiles');
         if (existingProfile.status !== 'active') {
           await unarchiveCompanyProfile(uid, invite.companyId);
-          console.log('Existing profile reactivated for invited user:', uid);
         }
       }
 
@@ -209,30 +194,46 @@ const InviteSignupPage = () => {
         status: "accepted",
         updatedAt: new Date(),
       });
+
+      try {
+        const idToken = await auth.currentUser.getIdToken();
+        const centralApiUrl = import.meta.env.VITE_CENTRAL_API_URL || 'http://localhost:5000';
+        
+        const syncRes = await fetch(`${centralApiUrl}/auth/finalize-invite`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ idToken, password })
+        });
+
+        if (!syncRes.ok) {
+          const errData = await syncRes.json().catch(() => ({}));
+          console.warn('[InviteSignup] Central finalization returned error:', errData.error || syncRes.status);
+        }
+      } catch (syncErr) {
+        console.error('[InviteSignup] Failed to sync with Central platform:', syncErr);
+      }
+
       setLoading(false);
 
-      // Use user-specific onboarding logic to determine redirect path
       try {
-        const redirectPath = getOnboardingRedirectPath(userDoc, null);
+        const { getOnboardingRedirectPath } = await import("../../utils/onboardingUtils");
+        const redirectPath = getOnboardingRedirectPath(userData, null);
 
-        console.log('Redirecting new user to:', redirectPath);
         navigate(redirectPath);
       } catch (redirectError) {
         console.error('Error determining redirect path for new user:', redirectError);
 
-        // For new users, if onboarding is mandatory, redirect to onboarding
-        // Otherwise, go to dashboard
-        if (userDoc.isOnboardingMandatory) {
-          console.log('Onboarding is mandatory for this user, redirecting to onboarding');
+        if (userData.isOnboardingMandatory) {
           navigate('/emp/onboarding');
         } else {
-          console.log('Onboarding not mandatory, redirecting to dashboard');
           navigate('/');
         }
       }
     } catch (error) {
       console.error("Error in processUserSetup:", error);
-      throw error; // Re-throw to be caught by onSubmit
+      throw error;
     }
   };
 
@@ -249,13 +250,11 @@ const InviteSignupPage = () => {
       let uid;
 
       if (isSignInMode) {
-        // Sign In Flow
         const { signInWithEmailAndPassword } = await import("firebase/auth");
         const cred = await signInWithEmailAndPassword(auth, email, password);
         uid = cred.user.uid;
         await cred.user.getIdToken(true);
       } else {
-        // Sign Up Flow
         try {
           const cred = await createUserWithEmailAndPassword(auth, email, password);
           uid = cred.user.uid;

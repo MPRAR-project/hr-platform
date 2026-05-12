@@ -32,7 +32,8 @@ const COMPANY_WIDE_ACCESS_ROLE_KEYS = new Set([
   'superuser',
   'seniorManager',
   'hrAdvisor',
-  'hrManager'
+  'hrManager',
+  'owner'
 ].map(normalizeRoleKey));
 
 const TimesheetManagementPage = ({ userRole = 'employee' }) => {
@@ -66,7 +67,7 @@ const TimesheetManagementPage = ({ userRole = 'employee' }) => {
   const [isLoadingEmployees, setIsLoadingEmployees] = useState(false);
   const [userCache, setUserCache] = useState({}); // Cache for user data to avoid repeated fetches
 
-  const SITE_OWNER_ROLE_KEYS = new Set(['superuser', 'siteowner', 'sitemanager', 'siteManager']);
+  const SITE_OWNER_ROLE_KEYS = new Set(['superuser', 'siteowner', 'sitemanager', 'siteManager', 'owner']);
 
   const isSiteOwnerOrManager = (rawRole) => {
     const key = normalizeRoleKey(rawRole);

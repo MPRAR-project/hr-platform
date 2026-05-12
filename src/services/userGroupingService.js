@@ -74,17 +74,17 @@ export async function fetchEnhancedUserGroups(companyId, viewMode = 'active') {
     const [profilesSnap, invitesSnapResult, assignSnapResult] = await Promise.all([
       getDocs(query(
         collection(db, 'userCompanyProfiles'),
-        where('companyId', '==', `companies/${companyId}`),
+        where('companyId', 'in', [companyId, `companies/${companyId}`]),
         limit(MAX_GROUPING_PROFILES)
       )),
       getDocs(query(
         collection(db, 'invites'),
-        where('companyId', '==', companyId),
+        where('companyId', 'in', [companyId, `companies/${companyId}`]),
         where('status', '==', 'pending')
       )).catch(() => ({ docs: [] })),
       getDocs(query(
         collection(db, 'assignments'),
-        where('companyId', '==', companyId)
+        where('companyId', 'in', [companyId, `companies/${companyId}`])
       )).catch(() => ({ docs: [] }))
     ]);
 

@@ -440,69 +440,135 @@ export async function syncPersonalInfoToHRProfile(userId, personalInfoData) {
         console.log('[hrOnboarding] Personal info data:', personalInfoData);
 
         const profile = await getHROnboardingProfile(userId);
-        if (!profile) {
-            console.log('[hrOnboarding] No HR profile found for user:', userId);
-            return null;
+        
+        // 1. Update HR Onboarding Profile (if it exists)
+        if (profile) {
+            console.log('[hrOnboarding] Found HR profile:', profile.id);
+
+            // Map ALL personal info fields to completion status
+            const fields = {};
+
+            // Map fields with potential name variations
+            const fieldMappings = {
+                firstName: personalInfoData.firstName,
+                lastName: personalInfoData.lastName,
+                email: personalInfoData.email,
+                phone: personalInfoData.phone,
+                dateOfBirth: personalInfoData.dateOfBirth,
+                gender: personalInfoData.gender,
+                maritalStatus: personalInfoData.maritalStatus,
+                nationality: personalInfoData.nationality,
+                addressLine1: personalInfoData.addressLine1 || personalInfoData.address,
+                addressLine2: personalInfoData.addressLine2,
+                city: personalInfoData.city,
+                postcode: personalInfoData.postcode,
+                country: personalInfoData.country,
+                nationalInsurance: personalInfoData.nationalInsurance,
+                taxCode: personalInfoData.taxCode,
+                passportNumber: personalInfoData.passportNumber,
+                issuingCountry: personalInfoData.issuingCountry,
+                passportExpiryDate: personalInfoData.passportExpiryDate || personalInfoData.passportExpiry,
+                rightToWorkStatus: personalInfoData.rightToWorkStatus || personalInfoData.rightToWork
+            };
+
+            const requiredFieldsList = ['firstName', 'lastName', 'dateOfBirth', 'phone', 'email', 'addressLine1', 'city', 'country'];
+
+            Object.entries(fieldMappings).forEach(([key, value]) => {
+                if (value !== undefined && value !== null) {
+                    fields[key] = {
+                        completed: Boolean(value),
+                        value: value,
+                        required: requiredFieldsList.includes(key)
+                    };
+                }
+            });
+
+            console.log('[hrOnboarding] Mapped fields:', fields);
+
+            // Check if all required fields are completed
+            const allCompleted = requiredFieldsList.every(field => Boolean(fieldMappings[field]));
+
+            console.log('[hrOnboarding] All required fields completed:', allCompleted);
+
+            await updateHROnboardingSection({
+                profileId: profile.id,
+                section: 'personalInfo',
+                data: {
+                    fields,
+                    status: allCompleted ? 'completed' : 'in_progress'
+                },
+                updatedBy: userId
+            });
+
+            console.log('[hrOnboarding] Successfully synced personal info to HR profile');
+        } else {
+            console.log('[hrOnboarding] No HR onboarding profile found (skipping section update)');
         }
+        
+        // 2. --- SYNC TO CENTRAL PLATFORM POSTGRES ---
+        try {
+            const centralApiUrl = import.meta.env.VITE_CENTRAL_API_URL || 'http://localhost:5000';
+            const centralToken = localStorage.getItem('mprar_central_token');
+            const auth = (await import('../firebase/client')).auth;
+            const currentUserId = auth.currentUser?.uid;
 
-        console.log('[hrOnboarding] Found HR profile:', profile.id);
-
-        // Map ALL personal info fields to completion status
-        const fields = {};
-
-        // Map fields with potential name variations
-        const fieldMappings = {
-            firstName: personalInfoData.firstName,
-            lastName: personalInfoData.lastName,
-            email: personalInfoData.email,
-            phone: personalInfoData.phone,
-            dateOfBirth: personalInfoData.dateOfBirth,
-            gender: personalInfoData.gender,
-            maritalStatus: personalInfoData.maritalStatus,
-            nationality: personalInfoData.nationality,
-            addressLine1: personalInfoData.addressLine1 || personalInfoData.address,
-            addressLine2: personalInfoData.addressLine2,
-            city: personalInfoData.city,
-            postcode: personalInfoData.postcode,
-            country: personalInfoData.country,
-            nationalInsurance: personalInfoData.nationalInsurance,
-            taxCode: personalInfoData.taxCode,
-            passportNumber: personalInfoData.passportNumber,
-            issuingCountry: personalInfoData.issuingCountry,
-            passportExpiryDate: personalInfoData.passportExpiryDate || personalInfoData.passportExpiry,
-            rightToWorkStatus: personalInfoData.rightToWorkStatus || personalInfoData.rightToWork
-        };
-
-        const requiredFieldsList = ['firstName', 'lastName', 'dateOfBirth', 'phone', 'email', 'addressLine1', 'city', 'country'];
-
-        Object.entries(fieldMappings).forEach(([key, value]) => {
-            if (value !== undefined && value !== null) {
-                fields[key] = {
-                    completed: Boolean(value),
-                    value: value,
-                    required: requiredFieldsList.includes(key)
+            if (centralToken && centralApiUrl) {
+                const normalizedUserId = userId.includes('/') ? userId.split('/').pop() : userId;
+                const isSelfUpdate = currentUserId === normalizedUserId;
+                
+                let syncUrl = `${centralApiUrl}/auth/profile`;
+                let syncBody = {
+                    firstName: personalInfoData.firstName,
+                    lastName: personalInfoData.lastName,
+                    email: personalInfoData.email
                 };
+
+                if (!isSelfUpdate) {
+                    // Manager updating someone else
+                    // Try to get companyId from onboarding profile, or from user document as fallback
+                    let companyIdRaw = profile?.companyId;
+                    
+                    if (!companyIdRaw) {
+                        try {
+                            const { doc, getDoc } = await import('firebase/firestore');
+                            const { db } = await import('../firebase/client');
+                            const userSnap = await getDoc(doc(db, 'users', normalizedUserId));
+                            if (userSnap.exists()) {
+                                companyIdRaw = userSnap.data().primaryCompanyId || userSnap.data().companyId;
+                            }
+                        } catch (e) {
+                            console.warn('[HR Onboarding Sync] Failed to fetch companyId from user doc:', e);
+                        }
+                    }
+
+                    const cleanCompanyId = (companyIdRaw || '').replace('companies/', '');
+                    
+                    if (cleanCompanyId) {
+                        syncUrl = `${centralApiUrl}/companies/${cleanCompanyId}/users/${normalizedUserId}`;
+                    } else {
+                        console.warn('[HR Onboarding Sync] No companyId found for sync');
+                        syncUrl = null;
+                    }
+                }
+
+                if (syncUrl) {
+                    console.log(`[HR Onboarding Sync] Syncing to: ${syncUrl}`);
+                    fetch(syncUrl, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${centralToken}`
+                        },
+                        body: JSON.stringify(syncBody)
+                    }).then(res => {
+                        if (!res.ok) console.warn('[HR Onboarding Sync] Central sync failed:', res.status);
+                        else console.info('[HR Onboarding Sync] Central sync success');
+                    }).catch(err => console.warn('[HR Onboarding Sync] Central sync error:', err));
+                }
             }
-        });
-
-        console.log('[hrOnboarding] Mapped fields:', fields);
-
-        // Check if all required fields are completed
-        const allCompleted = requiredFieldsList.every(field => Boolean(fieldMappings[field]));
-
-        console.log('[hrOnboarding] All required fields completed:', allCompleted);
-
-        await updateHROnboardingSection({
-            profileId: profile.id,
-            section: 'personalInfo',
-            data: {
-                fields,
-                status: allCompleted ? 'completed' : 'in_progress'
-            },
-            updatedBy: userId
-        });
-
-        console.log('[hrOnboarding] Successfully synced personal info to HR profile');
+        } catch (syncErr) {
+            console.warn('[HR Onboarding Sync] Central sync non-fatal error:', syncErr);
+        }
 
         return { success: true };
     } catch (error) {

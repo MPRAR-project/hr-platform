@@ -342,6 +342,7 @@ export const PersonalTab = ({ data = { basic: {}, identification: {} }, isLoadin
         isOpen={showEditModal}
         onClose={() => setShowEditModal(false)}
         userId={user?.uid}
+        companyId={user?.companyId}
         currentData={data}
         onSave={(updatedData) => {
           if (onUpdate) {

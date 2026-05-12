@@ -3,7 +3,7 @@ import { Landmark, Pencil, Phone, User } from "lucide-react";
 import Button from "../../../components/ui/Button";
 import EditPersonalInformationModal from "../../../components/modals/EditPersonalInformationModal";
 
-const PersonalInformationTab = ({ data, userId, onUpdate }) => {
+const PersonalInformationTab = ({ data, userId, companyId, onUpdate }) => {
   const [showEditModal, setShowEditModal] = useState(false);
 
   return (
@@ -61,6 +61,7 @@ const PersonalInformationTab = ({ data, userId, onUpdate }) => {
         isOpen={showEditModal}
         onClose={() => setShowEditModal(false)}
         userId={userId}
+        companyId={companyId}
         currentData={data}
         onSave={() => {
           if (onUpdate) {

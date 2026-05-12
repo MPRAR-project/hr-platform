@@ -55,7 +55,7 @@ export const AuthProvider = ({ children }) => {
 
     // 1. Listen for Firebase Auth state changes (Run once)
     useEffect(() => {
-        const unsubscribe = onAuthStateChanged(auth, (user) => {
+        const unsubscribe = onAuthStateChanged(auth, async (user) => {
             const isCreatingUsers = localStorage.getItem('isCreatingUsers') === 'true';
             const signupInProgress = localStorage.getItem('signupInProgress') === 'true';
 
@@ -63,10 +63,8 @@ export const AuthProvider = ({ children }) => {
                 return;
             }
 
-            setFirebaseUser(user);
-            setAuthInitialized(true);
-
             if (!user) {
+                claimsRef.current = null;
                 // Clear state and all caches when logged out (or session ended)
                 setAuthedUser(null);
                 setRole(null);
@@ -80,6 +78,17 @@ export const AuthProvider = ({ children }) => {
                     console.warn('AuthContext: Failed to clear caches on auth state clear', e);
                 }
                 setIsLoading(false);
+            } else {
+                try {
+                    // Fetch claims immediately to ensure seatCount is available
+                    const idTokenResult = await user.getIdTokenResult();
+                    claimsRef.current = idTokenResult.claims || {};
+                } catch (err) {
+                    console.warn('AuthContext: Failed to fetch claims', err);
+                }
+                
+                setFirebaseUser(user);
+                setAuthInitialized(true);
             }
         });
 
@@ -89,6 +98,7 @@ export const AuthProvider = ({ children }) => {
     // 2. Real-time Firestore Subscription (Ref-Guarded)
     const activeListenerUid = useRef(null);
     const lastActiveUpdateRef = useRef(0); // Track last active update locally
+    const claimsRef = useRef(null); // Store auth claims (e.g. seatCount) to override stale Firestore docs
 
     useEffect(() => {
         if (!authInitialized) return;
@@ -149,6 +159,7 @@ export const AuthProvider = ({ children }) => {
                         isOnboardingMandatory: baseUserData.isOnboardingMandatory ?? false,
                         isTrainingMandatory: baseUserData.isTrainingMandatory ?? false,
                         shift: baseUserData.shift || 'day',
+                        seatCount: claimsRef.current?.seat_count || baseUserData.seatCount || 10,
                         firebaseUser: firebaseUser,
 
                         // Store raw data for debugging/advanced usage
@@ -238,6 +249,7 @@ export const AuthProvider = ({ children }) => {
                         // Get custom claims from the token
                         const idTokenResult = await fbUser.getIdTokenResult();
                         const claims = idTokenResult.claims || {};
+                        claimsRef.current = claims;
 
                         // Map Central roles to HR roles
                         // Central 'admin' or 'owner' usually maps to 'siteManager' in HR
@@ -267,7 +279,8 @@ export const AuthProvider = ({ children }) => {
                             createdAt: existingData?.createdAt || serverTimestamp(),
                             updatedAt: serverTimestamp(),
                             _autoRepaired: true,
-                            _bridgedFromCentral: true
+                            _bridgedFromCentral: true,
+                            seatCount: claims.seat_count || 10
                         };
 
                         await setDoc(userDocRef, repairData);
@@ -303,6 +316,9 @@ export const AuthProvider = ({ children }) => {
 
                 // Unblock UI immediately with user doc (companyId/role from user); profile merges in when listener fires
                 let initialUserData = userDocSnap.data();
+                if (claimsRef.current && claimsRef.current.seat_count) {
+                    initialUserData.seatCount = claimsRef.current.seat_count;
+                }
 
                 // Fallback: doc at users/uid may be minimal (only updatedAt/lastActive) if full record lives under another id (e.g. legacy site manager)
                 const hasEssentialFields = initialUserData.email && (initialUserData.primaryRole != null || initialUserData.role != null);
@@ -561,16 +577,14 @@ export const AuthProvider = ({ children }) => {
     const logout = useCallback(async () => {
         try {
             await authLogout();
-            // Clear all caches so next user never sees previous user's data
+            // Clear EVERYTHING from local storage for a complete fresh start (incognito-like)
             try {
-                localStorage.removeItem(AUTH_CACHE_KEY);
-                localStorage.removeItem('mprar_global_cache_v1');
+                localStorage.clear();
                 clearAllCache();
-                // Clear timesheet user cache
-                localStorage.removeItem('mprar_timesheet_user_cache');
                 eventBus.emit('cache:company:invalidated', { all: true });
+                console.log('AuthContext: Local storage and cache cleared');
             } catch (e) {
-                console.warn('AuthContext: Failed to clear some caches on logout', e);
+                console.warn('AuthContext: Failed to clear caches on logout', e);
             }
             setAuthedUser(null);
             setRole(null);
@@ -758,6 +772,20 @@ export const AuthProvider = ({ children }) => {
         return u;
     }, []);
 
+    const refreshClaims = useCallback(async () => {
+        if (!auth.currentUser) return;
+        try {
+            const idTokenResult = await auth.currentUser.getIdTokenResult(true);
+            claimsRef.current = idTokenResult.claims || {};
+            // Trigger user data refresh to pick up new claims
+            await refreshUserData();
+            return claimsRef.current;
+        } catch (error) {
+            console.error('AuthContext: Error refreshing claims:', error);
+            return null;
+        }
+    }, [refreshUserData]);
+
     const value = useMemo(() => ({
         user,
         role,
@@ -770,12 +798,13 @@ export const AuthProvider = ({ children }) => {
         logout,
         checkOnboardingRequirement,
         refreshUserData,
+        refreshClaims,
         companySettings,
         isCompanyLoading,
         weekStartDay,
         refreshWeekStartDay,
         isWeekStartLoading
-    }), [user, role, authedUser, isLoading, companySettings, isCompanyLoading, weekStartDay, isWeekStartLoading, refreshWeekStartDay, switchRole, login, loginWithToken, logout, checkOnboardingRequirement, refreshUserData]);
+    }), [user, role, authedUser, isLoading, companySettings, isCompanyLoading, weekStartDay, isWeekStartLoading, refreshWeekStartDay, switchRole, login, loginWithToken, logout, checkOnboardingRequirement, refreshUserData, refreshClaims]);
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }; 

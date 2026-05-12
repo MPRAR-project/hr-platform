@@ -35,14 +35,35 @@ import { ConfigurationErrorState, NetworkErrorState, EmptyTeamState } from '../.
 import { getBillingSummary, recordSeatTopUp } from '../../services/billing';
 import { trackUserAction, dashboardLogger } from '../../utils/logger';
 import { invalidateCompanyCache } from '../../services/cacheInvalidationService';
-import { sendUserInvite } from '../../services/invitations';
 import { useCache } from '../../contexts/CacheContext';
 import { useCompanyDashboard } from '../../hooks/useCompanyDashboard';
 
 // Removed duplicate normalizeRoleKey definition
 
+const normalizeRoleKeyValue = (value) =>
+  String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+
+const getCanonicalRole = (value) => {
+  const normalized = normalizeRoleKeyValue(value);
+  switch (normalized) {
+    case 'sitemanager': return 'siteManager';
+    case 'teammanager': return 'teamManager';
+    case 'seniormanager': return 'seniorManager';
+    case 'adminmanager': return 'adminManager';
+    case 'hrmanager': return 'hrManager';
+    case 'adminadvisor': return 'adminAdvisor';
+    case 'hradvisor': return 'hrAdvisor';
+    case 'contractmanager': return 'contractManager';
+    case 'superuser': return 'superUser';
+    case 'owner': return 'owner';
+    default: return 'employee';
+  }
+};
+
 const roleToJobTitle = (role) => {
-  switch (role) {
+  switch (getCanonicalRole(role)) {
     case 'siteManager': return 'Site Manager';
     case 'teamManager': return 'Team Manager';
     case 'seniorManager': return 'Senior Manager';
@@ -51,16 +72,18 @@ const roleToJobTitle = (role) => {
     case 'adminAdvisor': return 'Admin Advisor';
     case 'hrAdvisor': return 'HR Advisor';
     case 'contractManager': return 'Contract Manager';
+    case 'superUser': return 'Super User';
+    case 'owner': return 'Owner';
     case 'employee':
     default: return 'Employee';
   }
 };
-const roleToCategory = (role) => ['siteManager', 'teamManager', 'seniorManager', 'adminManager', 'hrManager'].includes(role) ? 'Manager' : 'Employee';
+const roleToCategory = (role) => ['siteManager', 'teamManager', 'seniorManager', 'adminManager', 'hrManager'].includes(getCanonicalRole(role)) ? 'Manager' : 'Employee';
 
 const ROLES_CAN_VIEW_USER_DETAILS = ['siteManager', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor'];
 
 const UserListPage = () => {
-  const { user } = useAuth();
+  const { user, refreshClaims } = useAuth();
   const navigate = useNavigate();
   const { getItem, setItem, clearItem } = useCache();
   const companyId = parseCompanyId(user?.companyId);
@@ -117,7 +140,7 @@ const UserListPage = () => {
       .toLowerCase()
       .replace(/[\s_-]+/g, '');
 
-  const SITE_OWNER_ROLE_KEYS = new Set(['superuser', 'siteowner', 'sitemanager']);
+  const SITE_OWNER_ROLE_KEYS = new Set(['superuser', 'siteowner', 'sitemanager', 'owner']);
 
   const isSiteOwnerOrManager = (rawRole) => SITE_OWNER_ROLE_KEYS.has(normalizeRoleKey(rawRole));
 
@@ -379,14 +402,15 @@ const UserListPage = () => {
     }
   };
 
-  const handleEditLocal = (user) => {
-    const roleKey = normalizeRoleKey(user?.primaryRole || user?.role);
-    // Prevent editing Senior Manager profiles from the Users route
-    if (roleKey === 'seniormanager') {
+  const handleEditLocal = (userToEdit) => {
+    const roleKey = normalizeRoleKey(userToEdit?.primaryRole || userToEdit?.role);
+    const userRoleKey = normalizeRoleKey(user?.primaryRole || user?.role);
+    // Prevent editing Senior Manager profiles from the Users route unless Super User/Owner
+    if (roleKey === 'seniormanager' && !['superuser', 'siteowner', 'sitemanager', 'owner'].includes(userRoleKey)) {
       toast.error('Senior Manager profile cannot be edited from this view.');
       return;
     }
-    setSelectedUser(user);
+    setSelectedUser(userToEdit);
     setShowEditModal(true);
   };
 
@@ -405,11 +429,17 @@ const UserListPage = () => {
       }
 
       const { userId: _uid, ...dataToSave } = updatedData || {};
+      const [firstName, ...lastNameParts] = (dataToSave.name || '').trim().split(' ');
+      const lastName = lastNameParts.join(' ').trim();
+      const normalizedRole = normalizeRoleKey(dataToSave.role);
       const updates = {
         displayName: dataToSave.name,
-        primaryRole: dataToSave.role,
-        roles: [dataToSave.role],
+        firstName: firstName || undefined,
+        lastName: lastName || undefined,
+        primaryRole: normalizedRole,
+        roles: [normalizedRole],
         reportsTo: dataToSave.reportsTo || '',
+        managerUserId: dataToSave.reportsTo || ''
       };
       // [FIX] Pass companyId to ensure we update the correct company profile
       const effectiveCompanyId = companyId || user?.companyId;
@@ -564,9 +594,23 @@ const UserListPage = () => {
   };
 
   const handleAddUsersClickTM = async () => {
-    const seatUsage = dashboardData.seatUsageCount ?? dashboardData.totalUsers ?? 0;
-    if ((seatUsage || 0) >= (dashboardData.totalSeats || 0)) {
-      // Check if company is in trial period
+    let seatUsage = dashboardData.seatUsageCount ?? dashboardData.totalUsers ?? 0;
+    let totalSeats = dashboardData.totalSeats || 0;
+
+    // Smart refresh: If limit reached, try refreshing claims first to see if they bought seats
+    if (seatUsage >= totalSeats && refreshClaims) {
+      try {
+        const freshClaims = await refreshClaims();
+        if (freshClaims && freshClaims.seat_count > totalSeats) {
+          totalSeats = freshClaims.seat_count;
+        }
+      } catch (e) {
+        console.warn('[UserListPage] Failed to refresh claims on add user click:', e);
+      }
+    }
+
+    if (seatUsage >= totalSeats) {
+      // Still exceeded, check for trial or show payment modal
       try {
         const companyId = parseCompanyId(user?.companyId);
         if (companyId) {
@@ -649,7 +693,9 @@ const UserListPage = () => {
       const cSnap = await getDoc(companyRef);
       if (cSnap.exists()) {
         const data = cSnap.data();
-        const seat = data.seatCount || 0;
+        
+        // Use the most authoritative seat count (prefer claims/authedUser)
+        const seat = Math.max(data.seatCount || 0, user?.seatCount || 0);
         const curr = data.currentEmployeeCount || 0;
         const toAdd = pendingUsers.length;
         if (curr + toAdd > seat) {
@@ -670,31 +716,6 @@ const UserListPage = () => {
     }
   };
 
-  const handleSendInvites = async (users) => {
-    try {
-      const companyPath = user?.companyId || '';
-      const sitePath = user?.siteId || '';
-      const companyId = companyPath.includes('/') ? companyPath.split('/')[1] : companyPath;
-      const siteId = sitePath.includes('/') ? sitePath.split('/')[1] : sitePath;
-      for (const u of users) {
-        await sendUserInvite({
-          email: u.email,
-          displayName: u.fullName,
-          primaryRole: u.role,
-          companyId,
-          siteId,
-          reportsTo: u.reportsTo || '',
-          isOnboardingMandatory: u.isOnboardingMandatory || false,
-          inviteBaseUrl: window.location.origin + '/invite'
-        });
-      }
-      toast.success(`Invitation emails sent to ${users.length} user(s).`);
-    } catch (error) {
-      console.error('Failed to send invites:', error);
-      toast.error(error?.message || 'Failed to send invites');
-    }
-  };
-
   const handleEditTM = (memberOrId) => {
     const member = memberOrId && typeof memberOrId === 'object'
       ? memberOrId
@@ -706,7 +727,7 @@ const UserListPage = () => {
       // Prevent editing Senior Manager profiles from the Team Management view
       // HR Managers, Team Managers, and lower roles cannot edit Senior Managers
       if (roleKey === 'seniormanager' &&
-        !['superuser', 'siteowner', 'sitemanager'].includes(userRoleKey)) {
+        !['superuser', 'siteowner', 'sitemanager', 'owner'].includes(userRoleKey)) {
         toast.error('Senior Manager profile cannot be edited from this view.');
         return;
       }
@@ -721,15 +742,16 @@ const UserListPage = () => {
       if (!userId) {
         throw new Error('No user selected for update');
       }
-      // Map displayName + role + reportsTo to Firestore fields
+      const normalizedRole = normalizeRoleKey(updatedData.role);
       const updates = {
         displayName: updatedData.name,
-        primaryRole: updatedData.role,
-        roles: [updatedData.role],
+        primaryRole: normalizedRole,
+        roles: [normalizedRole],
         reportsTo: updatedData.reportsTo,
+        managerUserId: updatedData.reportsTo || ''
       };
 
-      await updateUserBySiteManager(userId, updates);
+      await updateUserBySiteManager(userId, updates, companyId);
 
       // No need to manually update state as the real-time subscription will handle it
       setShowEditModal(false);
@@ -841,12 +863,20 @@ const UserListPage = () => {
     }
     const currentUserId = user?.userId || user?.uid || user?.id;
     const currentUserEmail = user?.email?.toLowerCase();
-    const filteredTeamMembers = dashboardData.teamMembers.filter(m => 
-      m.id !== currentUserId && 
-      m.userId !== currentUserId &&
-      m.email?.toLowerCase() !== currentUserEmail &&
-      m.centralRole !== 'owner'
-    );
+    const isHighLevelAdmin = ['owner', 'siteManager', 'superUser', 'site_manager'].includes(user?.role);
+    
+    const filteredTeamMembers = dashboardData.teamMembers.filter(m => {
+      const isMe = m.id === currentUserId || m.userId === currentUserId || m.email?.toLowerCase() === currentUserEmail;
+      if (isMe) return false;
+      
+      const memberRole = (m.roleKey || '').toLowerCase();
+      const isMemberAdmin = ['owner', 'sitemanager', 'site_manager', 'superuser', 'seniormanager'].includes(memberRole);
+      
+      // HR Managers and lower roles should not see Site Managers/Owners/Senior Managers in their team list
+      if (isMemberAdmin && !isHighLevelAdmin) return false;
+      
+      return true;
+    });
 
     return (
       <>
@@ -1096,7 +1126,6 @@ const UserListPage = () => {
         isOpen={showPaymentModal}
         onClose={() => setShowPaymentModal(false)}
         onConfirm={activeTab === 'users' ? handlePaymentConfirmLocal : handlePaymentConfirmTM}
-        onSendInvites={handleSendInvites}
         users={pendingUsers}
       />
 

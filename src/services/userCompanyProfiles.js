@@ -9,6 +9,7 @@ import {
     query,
     where,
     serverTimestamp,
+    increment,
     writeBatch
 } from 'firebase/firestore';
 

@@ -33,14 +33,14 @@ ProfilePicture.displayName = 'ProfilePicture';
 // Memoized table row component to prevent unnecessary re-renders
 const TeamMemberRow = memo(({ member, onEdit, onDeactivate, onActivate, onDeleteForever, onRevokeInvite, onViewDetails, getRoleBadgeVariant, getStatusBadgeVariant, activatingUserId, currentUserRole }) => {
   const isUnarchiving = activatingUserId === member.id;
-  
+
   // Check if Edit button should be disabled
   const memberRole = member.primaryRole || member.role;
   const currentUserRoleNormalized = (currentUserRole || '').toLowerCase().replace(/\s/g, '');
-  const isEditDisabled = 
+  const isEditDisabled =
     (currentUserRoleNormalized === 'adminmanager' && (member.role === 'Site Manager' || memberRole === 'siteManager')) ||
     ((member.role === 'Senior Manager' || memberRole === 'seniorManager') && !['superuser', 'siteowner', 'sitemanager'].includes(currentUserRoleNormalized));
-  
+
   return (
     <TableRow>
       <TableCell>
@@ -90,12 +90,12 @@ const TeamMemberRow = memo(({ member, onEdit, onDeactivate, onActivate, onDelete
                   onClick={() => onEdit(member)}
                   disabled={isEditDisabled}
                   title={
-    isEditDisabled 
-      ? (member.role === 'Senior Manager' || memberRole === 'seniorManager')
-        ? "Senior Manager profile cannot be edited from this view"
-        : "Admin Manager cannot edit Site Manager"
-      : undefined
-  }
+                    isEditDisabled
+                      ? (member.role === 'Senior Manager' || memberRole === 'seniorManager')
+                        ? "Senior Manager profile cannot be edited from this view"
+                        : "Admin Manager cannot edit Site Manager"
+                      : undefined
+                  }
                 >
                   Edit
                 </Button>
@@ -134,23 +134,23 @@ const OptimizedTeamTable = memo(({ teamMembers, onEdit, onDeactivate, onActivate
   // Memoize badge variant functions to prevent recreation on each render
   const getRoleBadgeVariant = useMemo(() => (role) => {
     switch (role) {
-      case 'Site Manager': 
+      case 'Site Manager':
       case 'siteManager': return 'success';
-      case 'Senior Manager': 
+      case 'Senior Manager':
       case 'seniorManager': return 'role';
-      case 'HR Manager': 
+      case 'HR Manager':
       case 'hrManager': return 'role';
-      case 'Contract Manager': 
+      case 'Contract Manager':
       case 'contractManager': return 'role';
-      case 'Admin Manager': 
+      case 'Admin Manager':
       case 'adminManager': return 'role';
-      case 'Team Manager': 
+      case 'Team Manager':
       case 'teamManager': return 'role';
-      case 'HR Advisor': 
+      case 'HR Advisor':
       case 'hrAdvisor': return 'info';
-      case 'Admin Advisor': 
+      case 'Admin Advisor':
       case 'adminAdvisor': return 'info';
-      case 'Employee': 
+      case 'Employee':
       case 'employee': return 'info';
       default: return 'info';
     }

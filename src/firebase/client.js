@@ -74,6 +74,25 @@ export const auth = getAuthService();
 export const functions = getFunctionsService();
 export const storage = getStorageService();
 
+/**
+ * Forcefully clears all Firestore local persistence (IndexedDB).
+ * This is critical when switching accounts via Bridge to prevent 
+ * "Missing or insufficient permissions" errors caused by stale cached metadata.
+ */
+export async function clearFirestorePersistence() {
+    const { terminate, clearIndexedDbPersistence } = await import('firebase/firestore');
+    try {
+        await terminate(db);
+        await clearIndexedDbPersistence(db);
+        console.log('[Firebase] Firestore persistence cleared successfully');
+        // Note: The app will need to reload or re-initialize db after this
+        return true;
+    } catch (err) {
+        console.error('[Firebase] Failed to clear Firestore persistence:', err);
+        return false;
+    }
+}
+
 // Temporary hash for demo only. Replace with proper auth or backend hashing.
 export function weakClientHash(password, salt) {
     try {

@@ -765,6 +765,7 @@ const UserDetailsPage = () => {
                             <PersonalInformationTab
                                 data={personalData}
                                 userId={selectedUserId}
+                                companyId={employee.companyId}
                                 onUpdate={() => {
                                     // Reload personal data after update
                                     const load = async () => {
