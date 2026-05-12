@@ -11,13 +11,12 @@
     },
     "dependencies": {
         "@dhiwise/component-tagger": "^1.0.10",
-        "@firebase/firestore": "^4.7.5",
         "@google-cloud/pubsub": "^5.2.3",
         "@tailwindcss/typography": "^0.5.16",
         "algoliasearch": "^5.48.1",
+        "axios": "^1.6.0",
         "class-variance-authority": "^0.7.1",
         "date-fns": "^4.1.0",
-        "firebase": "^12.13.0",
         "framer-motion": "^12.23.22",
         "jspdf": "^2.5.1",
         "jspdf-autotable": "^3.5.35",
@@ -39,7 +38,6 @@
         "@faker-js/faker": "^10.3.0",
         "@vitejs/plugin-react": "4.3.4",
         "autoprefixer": "10.4.2",
-        "firebase-admin": "^13.6.1",
         "postcss": "^8.5.6",
         "tailwindcss": "3.4.6",
         "vite": "^5.4.20"

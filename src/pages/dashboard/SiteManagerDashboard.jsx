@@ -12,10 +12,8 @@ import PaymentConfirmationModal from '../../components/modals/PaymentConfirmatio
 import SeatPaymentConfirmationModal from '../../components/modals/SeatPaymentConfirmationModal';
 import Button from '../../components/ui/Button';
 
-import { collection, deleteDoc, doc, getDoc } from 'firebase/firestore';
 import OptimizedTeamTable from '../../components/shared/OptimizedTable';
 import SectionContainer from '../../components/shared/SectionContainer';
-import { db } from '../../firebase/client';
 import { useAuth } from '../../hooks/useAuth';
 import { useDashboardPerformance } from '../../hooks/useDashboardPerformance';
 import { usePerformanceMonitor } from '../../hooks/usePerformanceMonitor';
@@ -163,13 +161,11 @@ const SiteManagerDashboard = () => {
         return;
       }
 
-      // seat availability check
-      const companyRef = doc(db, 'companies', companyId);
-      const cSnap = await getDoc(companyRef);
-      if (cSnap.exists()) {
-        const data = cSnap.data();
-        const seat = data.seatCount || 0;
-        const curr = data.currentEmployeeCount || 0;
+      // seat availability check via billing
+      const billingSummary = await getBillingSummary(companyId);
+      if (billingSummary) {
+        const seat = billingSummary.seatCount || 0;
+        const curr = billingSummary.currentEmployeeCount || 0;
         const toAdd = pendingUsers.length;
         if (curr + toAdd > seat) {
           toast.error(`Seat limit exceeded: attempting to add ${toAdd} users would exceed ${seat} seats (current ${curr}).`);
@@ -260,9 +256,12 @@ const SiteManagerDashboard = () => {
       return;
     }
     try {
-      await deleteDoc(doc(collection(db, 'invites'), member.inviteId));
-      const { invalidateCompanyCache } = await import('../../services/cacheInvalidationService');
-      await invalidateCompanyCache(companyId);
+      const { revokeUserInvite } = await import('../../services/invitations');
+      await revokeUserInvite(member.inviteId, {
+        revokedBy: user?.uid || null,
+        revokedByEmail: user?.email || null,
+        reason: 'Invite revoked from dashboard'
+      });
       toast.success(`Invite revoked for ${member.email || 'user'}.`);
     } catch (error) {
       console.error('Failed to revoke invite:', error);

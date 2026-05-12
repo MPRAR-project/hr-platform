@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { getFirestore, collection, addDoc, Timestamp } from 'firebase/firestore';
 import { AlertCircle, CheckCircle, Loader2, Users, Calendar, Clock, Download } from 'lucide-react';
+import apiClient from '../api/apiClient';
 
 const DummyTimesheetGenerator = () => {
   const [config, setConfig] = useState({
@@ -57,24 +57,15 @@ const DummyTimesheetGenerator = () => {
     const effectiveSec = grossSec - lunchBreakSec;
     
     return {
-      autoLunchApplied: true,
-      autoLunchBreakSec: lunchBreakSec,
-      autoLunchThresholdHours: 6,
+      id: `entry_${dateStr}_${Math.random().toString(36).substr(2, 9)}`,
       date: dateStr,
-      effectiveSec: effectiveSec,
-      grossSec: grossSec,
-      lunchBreakMinutes: 60,
-      manualBreakSec: 0,
-      notes: null,
-      overtimeSec: 0,
-      rawDurationSec: rawDurationSec,
-      rawEffectiveSec: rawDurationSec,
-      rawEnd: rawEnd,
-      rawStart: rawStart,
-      roundedEnd: roundedEnd,
-      roundedStart: roundedStart,
-      sessionIds: [`session_${dateStr}_${Math.random().toString(36).substr(2, 9)}`],
-      source: "clock"
+      effectiveSec,
+      grossSec,
+      rawStart,
+      rawEnd,
+      roundedStart,
+      roundedEnd,
+      notes: "Auto-generated dummy entry"
     };
   };
 
@@ -85,98 +76,86 @@ const DummyTimesheetGenerator = () => {
     setError(null);
 
     try {
-      // Get Firestore instance
-      const db = getFirestore();
-      
-      const documents = [];
       const today = new Date();
+      const cleanCompanyId = config.companyId.replace('companies/', '');
       
-      // Generate daily timesheets for last 14 days (Mon-Fri only)
+      const payloadList = [];
+      
       config.users.forEach(user => {
+        // Group entries by week to match our new Timesheet model (week-based)
+        const weeklyGroups = {};
+
         for (let day = 13; day >= 0; day--) {
           const date = new Date(today);
           date.setDate(today.getDate() - day);
           
-          // Skip weekends
           const dayOfWeek = date.getDay();
           if (dayOfWeek === 0 || dayOfWeek === 6) continue;
           
           const entry = generateDayEntry(date);
-          const periodDate = date.toISOString().split('T')[0];
-          
-          const document = {
-            approvals: {
-              hrManager: null,
-              siteManager: null,
-              teamManager: null
-            },
-            companyId: config.companyId,
-            createdAt: Timestamp.now(),
-            entries: [entry],
-            managerUserId: "",
-            period: periodDate,
-            siteId: config.siteId,
-            status: "pending",
-            teamId: null,
-            totals: {
-              effectiveSec: entry.effectiveSec,
-              grossSec: entry.grossSec,
-              overtimeSec: 0
-            },
-            updatedAt: Timestamp.now(),
-            userId: user.id
-          };
-          
-          documents.push({
-            data: document,
-            userName: user.name,
-            period: periodDate
-          });
+          // Find the Monday of this week
+          const monday = new Date(date);
+          monday.setDate(date.getDate() - ((date.getDay() + 6) % 7));
+          const weekStart = monday.toISOString().split('T')[0];
+
+          if (!weeklyGroups[weekStart]) {
+            weeklyGroups[weekStart] = {
+              userId: user.id,
+              companyId: cleanCompanyId,
+              siteId: config.siteId,
+              weekStartDate: weekStart,
+              entries: [],
+              status: 'pending'
+            };
+          }
+          weeklyGroups[weekStart].entries.push(entry);
         }
+
+        Object.values(weeklyGroups).forEach(group => {
+            payloadList.push({
+                data: group,
+                userName: user.name,
+                period: group.weekStartDate
+            });
+        });
       });
 
-      // Add to Firestore one by one
       let successCount = 0;
       let errorCount = 0;
       const resultsList = [];
 
-      for (const doc of documents) {
+      for (const item of payloadList) {
         try {
-          // Add document to Firestore
-          const docRef = await addDoc(collection(db, 'timesheets'), doc.data);
+          const response = await apiClient.post(`/hr/${cleanCompanyId}/timesheets`, item.data);
           
           resultsList.push({
             status: 'success',
-            userName: doc.userName,
-            period: doc.period,
-            docId: docRef.id
+            userName: item.userName,
+            period: item.period,
+            docId: response.data.id
           });
           successCount++;
-          
-          // Update UI progressively
           setResults([...resultsList]);
           
         } catch (err) {
-          // Error adding document:
           resultsList.push({
             status: 'error',
-            userName: doc.userName,
-            period: doc.period,
-            error: err.message
+            userName: item.userName,
+            period: item.period,
+            error: err.response?.data?.error || err.message
           });
           errorCount++;
+          setResults([...resultsList]);
         }
       }
 
-      setResults(resultsList);
       setSummary({ 
-        total: documents.length, 
+        total: payloadList.length, 
         success: successCount, 
         error: errorCount 
       });
 
     } catch (err) {
-      // Fatal error:
       setError(err.message);
     } finally {
       setGenerating(false);
@@ -184,51 +163,13 @@ const DummyTimesheetGenerator = () => {
   };
 
   const downloadJSON = () => {
-    const documents = [];
-    const today = new Date();
-    
-    config.users.forEach(user => {
-      for (let day = 13; day >= 0; day--) {
-        const date = new Date(today);
-        date.setDate(today.getDate() - day);
-        
-        const dayOfWeek = date.getDay();
-        if (dayOfWeek === 0 || dayOfWeek === 6) continue;
-        
-        const entry = generateDayEntry(date);
-        const periodDate = date.toISOString().split('T')[0];
-        
-        documents.push({
-          approvals: {
-            hrManager: null,
-            siteManager: null,
-            teamManager: null
-          },
-          companyId: config.companyId,
-          createdAt: new Date().toISOString(),
-          entries: [entry],
-          managerUserId: "",
-          period: periodDate,
-          siteId: config.siteId,
-          status: "pending",
-          teamId: null,
-          totals: {
-            effectiveSec: entry.effectiveSec,
-            grossSec: entry.grossSec,
-            overtimeSec: 0
-          },
-          updatedAt: new Date().toISOString(),
-          userId: user.id
-        });
-      }
-    });
-
-    const dataStr = JSON.stringify(documents, null, 2);
+    // Keep legacy JSON export if needed, but updated for new structure
+    const dataStr = JSON.stringify(results, null, 2);
     const dataBlob = new Blob([dataStr], { type: 'application/json' });
     const url = URL.createObjectURL(dataBlob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `dummy-timesheets-${new Date().toISOString().split('T')[0]}.json`;
+    link.download = `dummy-results-${new Date().toISOString().split('T')[0]}.json`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -239,13 +180,13 @@ const DummyTimesheetGenerator = () => {
         <div className="bg-white rounded-2xl shadow-xl p-6 sm:p-8">
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h1 className="text-2xl sm:text-3xl font-bold text-gray-800 mb-2">Daily Timesheet Generator</h1>
-              <p className="text-gray-600 text-sm sm:text-base">Generate daily dummy timesheets for the last 2 weeks (10 working days)</p>
+              <h1 className="text-2xl sm:text-3xl font-bold text-gray-800 mb-2">Daily Timesheet Generator (V2)</h1>
+              <p className="text-gray-600 text-sm sm:text-base">Genuinely migrated to Central Backend. Generates weekly timesheets with daily entries.</p>
             </div>
             <button
               onClick={downloadJSON}
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-              title="Download as JSON"
+              title="Download results"
             >
               <Download size={20} />
               <span className="hidden sm:inline">JSON</span>
@@ -259,7 +200,6 @@ const DummyTimesheetGenerator = () => {
           )}
 
           <div className="space-y-6">
-            {/* Configuration Section */}
             <div className="bg-blue-50 p-4 rounded-lg">
               <h2 className="text-lg font-semibold text-gray-800 mb-3">Configuration</h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -274,7 +214,7 @@ const DummyTimesheetGenerator = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Site ID</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Site ID (Optional)</label>
                   <input
                     type="text"
                     value={config.siteId}
@@ -286,11 +226,10 @@ const DummyTimesheetGenerator = () => {
               </div>
             </div>
 
-            {/* Users Section */}
             <div className="bg-green-50 p-4 rounded-lg">
               <h2 className="text-lg font-semibold text-gray-800 mb-3 flex items-center gap-2">
                 <Users size={20} />
-                Users
+                Users (Central User IDs)
               </h2>
               
               <div className="space-y-2 mb-4">
@@ -322,7 +261,7 @@ const DummyTimesheetGenerator = () => {
                 />
                 <input
                   type="text"
-                  placeholder="User ID"
+                  placeholder="User UUID"
                   value={newUser.id}
                   onChange={(e) => setNewUser({...newUser, id: e.target.value})}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
@@ -338,25 +277,6 @@ const DummyTimesheetGenerator = () => {
               </div>
             </div>
 
-            {/* Summary Info */}
-            <div className="bg-indigo-50 p-4 rounded-lg">
-              <div className="flex items-center gap-4 text-sm flex-wrap">
-                <div className="flex items-center gap-2">
-                  <Users size={16} className="text-indigo-600" />
-                  <span className="font-medium">{config.users.length} Users</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Calendar size={16} className="text-indigo-600" />
-                  <span className="font-medium">10 Working Days</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Clock size={16} className="text-indigo-600" />
-                  <span className="font-medium">{config.users.length * 10} Documents</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Generate Button */}
             <button
               onClick={generateTimesheets}
               disabled={generating || config.users.length === 0}
@@ -365,18 +285,17 @@ const DummyTimesheetGenerator = () => {
               {generating ? (
                 <>
                   <Loader2 className="animate-spin" size={24} />
-                  Generating... ({results.length}/{config.users.length * 10})
+                  Generating... ({results.length}/{summary?.total || '?'})
                 </>
               ) : (
                 <>
                   <Clock size={24} />
-                  Generate Dummy Timesheets
+                  Generate Central Timesheets
                 </>
               )}
             </button>
           </div>
 
-          {/* Results Section */}
           {(results.length > 0 || summary) && (
             <div className="mt-8 space-y-4">
               {summary && (
@@ -385,7 +304,7 @@ const DummyTimesheetGenerator = () => {
                   <div className="grid grid-cols-3 gap-4">
                     <div className="text-center">
                       <p className="text-3xl font-bold text-gray-800">{summary.total}</p>
-                      <p className="text-sm text-gray-600">Total</p>
+                      <p className="text-sm text-gray-600">Total Weeks</p>
                     </div>
                     <div className="text-center">
                       <p className="text-3xl font-bold text-green-600">{summary.success}</p>
@@ -414,10 +333,10 @@ const DummyTimesheetGenerator = () => {
                     )}
                     <div className="flex-1 min-w-0">
                       <p className="font-medium text-gray-800">
-                        {result.userName} - {result.period}
+                        {result.userName} - Week of {result.period}
                       </p>
                       {result.status === 'success' ? (
-                        <p className="text-sm text-gray-600 truncate">Document ID: {result.docId}</p>
+                        <p className="text-sm text-gray-600 truncate">Timesheet ID: {result.docId}</p>
                       ) : (
                         <p className="text-sm text-red-600">{result.error}</p>
                       )}

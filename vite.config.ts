@@ -19,10 +19,6 @@ export default defineConfig(({ mode }) => ({
                         if (id.includes('react') || id.includes('react-dom') || id.includes('react-router')) {
                             return 'vendor-react';
                         }
-                        // Firebase
-                        if (id.includes('firebase')) {
-                            return 'vendor-firebase';
-                        }
                         // UI libraries
                         if (id.includes('lucide-react') || id.includes('class-variance-authority') || id.includes('tailwind-merge')) {
                             return 'vendor-ui';
@@ -81,6 +77,11 @@ export default defineConfig(({ mode }) => ({
             '@assets': '/src/assets',
             '@constants': '/src/constants',
             '@styles': '/src/styles',
+            'firebase/app': '/src/firebase/auth-shim.js',
+            'firebase/firestore': '/src/firebase/firestore-shim.js',
+            'firebase/auth': '/src/firebase/auth-shim.js',
+            'firebase/functions': '/src/firebase/functions-shim.js',
+            'firebase/storage': '/src/firebase/storage-shim.js',
         },
     },
     server: {

@@ -11,11 +11,9 @@ import DeleteConfirmationModal from '../../components/modals/DeleteConfirmationM
 import { UserPlus, RefreshCw } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { usePaginatedUsers } from '../../hooks/usePaginatedUsers';
-import { addUsersBySiteManager, updateUserBySiteManager, subscribeToCompanyUsers, deleteUser } from '../../services/users';
+import { getEmployeeCount, addUsersBySiteManager, updateUserBySiteManager, subscribeToCompanyUsers, deleteUser } from '../../services/users';
 import { getClients } from '../../services/clients';
 import { getSites } from '../../services/sites';
-import { doc, getDoc, deleteDoc, collection, getCountFromServer, query, where } from 'firebase/firestore';
-import { db } from '../../firebase/client';
 import { usePerformanceMonitor, measureAsync } from '../../hooks/usePerformanceMonitor';
 import { LoadingSkeleton } from '../../components/ui/LoadingSkeleton';
 import { toast } from 'react-toastify';
@@ -267,13 +265,7 @@ const UserListPage = () => {
     let cancelled = false;
     const fetchTotalCount = async () => {
       try {
-        const companyIdCandidates = [`companies/${companyId}`, companyId];
-        const q = query(
-          collection(db, 'users'),
-          where('companyId', 'in', companyIdCandidates)
-        );
-        const snap = await getCountFromServer(q);
-        const count = snap.data().count ?? 0;
+        const count = await getEmployeeCount(companyId);
         if (!cancelled) {
           setTotalUsersCount(count);
           setItem?.(cacheKey, count, 2 * 60 * 1000); // 2 min cache
@@ -350,13 +342,11 @@ const UserListPage = () => {
       const sitePath = user?.siteId || '';
       const siteId = sitePath.split('/')[1];
 
-      // pre-check seat availability
-      const companyRef = doc(db, 'companies', companyId);
-      const cSnap = await getDoc(companyRef);
-      if (cSnap.exists()) {
-        const data = cSnap.data();
-        const seat = data.seatCount || 0;
-        const curr = data.currentEmployeeCount || 0;
+      // pre-check seat availability via billing service
+      const billingSummary = await getBillingSummary(companyId);
+      if (billingSummary) {
+        const seat = billingSummary.seatCount || 0;
+        const curr = billingSummary.currentEmployeeCount || 0;
         const toAdd = users.length;
         if (curr + toAdd > seat) {
           alert(`Seat limit exceeded: attempting to add ${toAdd} users would exceed ${seat} seats (current ${curr}).`);
@@ -379,13 +369,11 @@ const UserListPage = () => {
       const sitePath = user?.siteId || '';
       const siteId = sitePath.split('/')[1];
 
-      // pre-check seat limit to show friendly alert
-      const companyRef = doc(db, 'companies', companyId);
-      const cSnap = await getDoc(companyRef);
-      if (cSnap.exists()) {
-        const data = cSnap.data();
-        const seat = data.seatCount || 0;
-        const curr = data.currentEmployeeCount || 0;
+      // pre-check seat limit via billing
+      const billingSummary = await getBillingSummary(companyId);
+      if (billingSummary) {
+        const seat = billingSummary.seatCount || 0;
+        const curr = billingSummary.currentEmployeeCount || 0;
         const toAdd = pendingUsers.length;
         if (curr + toAdd > seat) {
           alert(`Seat limit exceeded: attempting to add ${toAdd} users would exceed ${seat} seats (current ${curr}).`);
@@ -688,15 +676,11 @@ const UserListPage = () => {
         return;
       }
 
-      // seat availability check
-      const companyRef = doc(db, 'companies', companyId);
-      const cSnap = await getDoc(companyRef);
-      if (cSnap.exists()) {
-        const data = cSnap.data();
-        
-        // Use the most authoritative seat count (prefer claims/authedUser)
-        const seat = Math.max(data.seatCount || 0, user?.seatCount || 0);
-        const curr = data.currentEmployeeCount || 0;
+      // seat availability check via billing
+      const billingSummary = await getBillingSummary(companyId);
+      if (billingSummary) {
+        const seat = billingSummary.seatCount || 0;
+        const curr = billingSummary.currentEmployeeCount || 0;
         const toAdd = pendingUsers.length;
         if (curr + toAdd > seat) {
           toast.error(`Seat limit exceeded: attempting to add ${toAdd} users would exceed ${seat} seats (current ${curr}).`);
@@ -779,7 +763,11 @@ const UserListPage = () => {
       return;
     }
     try {
-      await deleteDoc(doc(collection(db, 'invites'), member.inviteId));
+      await revokeUserInvite(member.inviteId, {
+        revokedBy: user?.uid || null,
+        revokedByEmail: user?.email || null,
+        reason: 'Invite revoked from team management'
+      });
       toast.success(`Invite revoked for ${member.email || 'user'}.`);
     } catch (error) {
       console.error('Failed to revoke invite:', error);
