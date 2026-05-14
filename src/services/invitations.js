@@ -1,55 +1,47 @@
-import { httpsCallable } from 'firebase/functions';
-import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import hrApiClient from '../lib/hrApiClient';
 
-import { functions, db } from '../firebase/client';
+/**
+ * Invitations Service (Phase 4 — REST Migration)
+ * 
+ * Handles user invitations via the HR REST API.
+ * Replaces Firebase Functions and Firestore with centralized Node.js/Prisma logic.
+ */
 
+/**
+ * Send a user invite
+ */
 export async function sendUserInvite(payload) {
   try {
-    const fn = httpsCallable(functions, 'sendUserInvite');
-    const res = await fn(payload);
-    return res?.data || { ok: true };
+    const { data } = await hrApiClient.post('/hr/invites', payload);
+    return data;
   } catch (error) {
-    console.error('[invitations.js] Invite failed:', error);
+    console.error('[invitations] Invite failed:', error);
     throw error;
   }
 }
 
 /**
- * Revoke/cancel a pending user invite.
- * Marks the invite as revoked so the recipient can no longer complete signup.
- * @param {string} inviteId - Firestore document ID of the invite.
- * @param {Object} metadata - Optional metadata about who revoked the invite.
- * @param {string} metadata.revokedBy - User ID who revoked the invite.
- * @param {string} metadata.revokedByEmail - Email of the user who revoked the invite.
- * @param {string} metadata.reason - Optional reason shown in audit trail.
+ * Revoke/cancel a pending user invite
  */
 export async function revokeUserInvite(inviteId, metadata = {}) {
-  if (!inviteId) {
-    throw new Error('Invite ID is required to revoke an invite.');
-  }
-
   try {
-    const inviteRef = doc(db, 'invites', inviteId);
-    const now = serverTimestamp();
-
-    const updatePayload = {
-      status: 'revoked',
-      updatedAt: now,
-      revokedAt: now,
-      revokedBy: metadata.revokedBy || null,
-      revokedByEmail: metadata.revokedByEmail || null,
-      revokedReason:
-        metadata.reason ||
-        metadata.revokedReason ||
-        'Invite revoked by administrator'
-    };
-
-    await updateDoc(inviteRef, updatePayload);
-    return { ok: true };
+    const { data } = await hrApiClient.delete(`/hr/invites/${inviteId}`);
+    return { ok: true, data };
   } catch (error) {
-    console.error('Failed to revoke invite:', error);
-    throw new Error(error?.message || 'Failed to revoke invitation');
+    console.error('[invitations] Revoke failed:', error);
+    throw error;
   }
 }
 
-
+/**
+ * List all invites for the company
+ */
+export async function listInvites() {
+  try {
+    const { data } = await hrApiClient.get('/hr/invites');
+    return data || [];
+  } catch (error) {
+    console.error('[invitations] List failed:', error);
+    return [];
+  }
+}

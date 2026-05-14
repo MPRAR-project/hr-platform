@@ -1,177 +1,67 @@
-import { db } from '../firebase/client';
-import { doc, updateDoc, getDoc, getDocs, query, where, collection, serverTimestamp, writeBatch } from 'firebase/firestore';
+import hrApiClient from '../lib/hrApiClient';
 import { toast } from 'react-toastify';
 
 /**
- * Suspend a company and all its users (except site managers)
- * @param {string} companyId - The company ID to suspend
- * @returns {Promise<void>}
+ * Company Management Service (Phase 4 — REST Migration)
+ * 
+ * Handles company-level administrative tasks via HR REST API.
+ */
+
+/**
+ * Suspend a company and all its users
  */
 export async function suspendCompany(companyId) {
-  if (!companyId) {
-    throw new Error('Company ID is required');
-  }
-
   try {
-    const normalizedId = companyId.includes('/') ? companyId.split('/').pop() : companyId;
-    const companyRef = doc(db, 'companies', normalizedId);
-    const companySnap = await getDoc(companyRef);
-
-    if (!companySnap.exists()) {
-      throw new Error('Company not found');
-    }
-
-    // Update company status to suspended
-    await updateDoc(companyRef, {
-      status: 'suspended',
-      updatedAt: serverTimestamp()
-    });
-
-    // Get all users for this company
-    const usersQuery = query(
-      collection(db, 'users'),
-      where('companyId', '==', `companies/${normalizedId}`)
-    );
-    const usersSnap = await getDocs(usersQuery);
-
-    // Use batch to update all users at once (including site managers)
-    const batch = writeBatch(db);
-    let userCount = 0;
-
-    usersSnap.forEach((userDoc) => {
-      // Suspend all users including site managers
-      batch.update(userDoc.ref, {
-        status: 'inactive',
-        suspendedByCompany: true,
-        updatedAt: serverTimestamp()
-      });
-      userCount++;
-    });
-
-    // Commit all user updates
-    if (userCount > 0) {
-      await batch.commit();
-    }
-
-    console.log(`[companyManagementService] Suspended company ${normalizedId} and ${userCount} users`);
-    toast.success(`Company suspended successfully. ${userCount} users have been deactivated.`);
+    const { data } = await hrApiClient.post('/hr/company/suspend');
+    toast.success('Company suspended successfully.');
+    return data;
   } catch (error) {
     console.error('[companyManagementService] Failed to suspend company:', error);
-    toast.error(error?.message || 'Failed to suspend company');
+    toast.error(error?.response?.data?.error || 'Failed to suspend company');
     throw error;
   }
 }
 
 /**
- * Activate a company and reactivate all its previously suspended users
- * @param {string} companyId - The company ID to activate
- * @returns {Promise<void>}
+ * Activate a company
  */
 export async function activateCompany(companyId) {
-  if (!companyId) {
-    throw new Error('Company ID is required');
-  }
-
   try {
-    const normalizedId = companyId.includes('/') ? companyId.split('/').pop() : companyId;
-    const companyRef = doc(db, 'companies', normalizedId);
-    const companySnap = await getDoc(companyRef);
-
-    if (!companySnap.exists()) {
-      throw new Error('Company not found');
-    }
-
-    // Update company status to active
-    await updateDoc(companyRef, {
-      status: 'active',
-      updatedAt: serverTimestamp()
-    });
-
-    // Get all users for this company that were suspended by company
-    const usersQuery = query(
-      collection(db, 'users'),
-      where('companyId', '==', `companies/${normalizedId}`)
-    );
-    const usersSnap = await getDocs(usersQuery);
-
-    // Use batch to reactivate all users that were suspended by company
-    const batch = writeBatch(db);
-    let userCount = 0;
-
-    usersSnap.forEach((userDoc) => {
-      const userData = userDoc.data();
-
-      // Reactivate users that were suspended by company
-      if (userData.suspendedByCompany === true) {
-        batch.update(userDoc.ref, {
-          status: 'active',
-          suspendedByCompany: false,
-          updatedAt: serverTimestamp()
-        });
-        userCount++;
-      }
-    });
-
-    // Commit all user updates
-    if (userCount > 0) {
-      await batch.commit();
-    }
-
-    console.log(`[companyManagementService] Activated company ${normalizedId} and reactivated ${userCount} users`);
-    toast.success(`Company activated successfully. ${userCount} users have been reactivated.`);
+    const { data } = await hrApiClient.post('/hr/company/activate');
+    toast.success('Company activated successfully.');
+    return data;
   } catch (error) {
     console.error('[companyManagementService] Failed to activate company:', error);
-    toast.error(error?.message || 'Failed to activate company');
+    toast.error(error?.response?.data?.error || 'Failed to activate company');
     throw error;
   }
 }
 
 /**
- * Fetch all active companies for the dropdown
- * @returns {Promise<Array<{value: string, label: string}>>}
+ * Fetch all companies (SuperUser only)
  */
 export async function getAllCompanies() {
   try {
-    const q = query(
-      collection(db, 'companies'),
-      where('status', '==', 'active')
-    );
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({
-      value: doc.id,
-      label: doc.data().name || 'Unnamed Company'
-    })).sort((a, b) => a.label.localeCompare(b.label));
+    const { data } = await hrApiClient.get('/hr/platform/companies'); // Need this endpoint
+    return (data || []).map(c => ({
+      value: c.id,
+      label: c.name || 'Unnamed Company'
+    }));
   } catch (error) {
     console.error('[companyManagementService] Failed to fetch companies:', error);
-    toast.error('Failed to load companies');
     return [];
   }
 }
 
 /**
  * Update a specific plugin setting for a company
- * @param {string} companyId - The company ID to update
- * @param {string} pluginKey - The plugin key (e.g., 'scheduling', 'payslipAndInvoice')
- * @param {boolean} isEnabled - Whether the plugin should be enabled
- * @returns {Promise<void>}
  */
 export async function updateCompanyPlugin(companyId, pluginKey, isEnabled) {
-  if (!companyId) throw new Error('Company ID is required');
-  if (!pluginKey) throw new Error('Plugin key is required');
-
   try {
-    const normalizedId = companyId.includes('/') ? companyId.split('/').pop() : companyId;
-    const companyRef = doc(db, 'companies', normalizedId);
-
-    // Use dot notation to update only the specific plugin field
-    // This prevents overwriting other plugins or the entire map
-    const updateData = {
-      [`plugins.${pluginKey}`]: isEnabled,
-      updatedAt: serverTimestamp()
-    };
-
-    await updateDoc(companyRef, updateData);
-    console.log(`[companyManagementService] Updated plugin ${pluginKey} for ${normalizedId} to ${isEnabled}`);
+    const { data } = await hrApiClient.put('/hr/company/plugins', {
+      [pluginKey]: isEnabled
+    });
+    return data;
   } catch (error) {
     console.error(`[companyManagementService] Failed to update plugin ${pluginKey}:`, error);
     toast.error(`Failed to update ${pluginKey} settings`);
@@ -180,24 +70,12 @@ export async function updateCompanyPlugin(companyId, pluginKey, isEnabled) {
 }
 
 /**
- * Update all plugin settings for a company (Legacy - try to avoid using this)
- * @param {string} companyId 
- * @param {Object} plugins 
+ * Update all plugin settings
  */
 export async function updateCompanyPlugins(companyId, plugins) {
-  if (!companyId) throw new Error('Company ID is required');
-
   try {
-    const normalizedId = companyId.includes('/') ? companyId.split('/').pop() : companyId;
-    const companyRef = doc(db, 'companies', normalizedId);
-
-    // Convert object to dot notation updates to be safe
-    const updateData = { updatedAt: serverTimestamp() };
-    Object.keys(plugins).forEach(key => {
-      updateData[`plugins.${key}`] = plugins[key];
-    });
-
-    await updateDoc(companyRef, updateData);
+    const { data } = await hrApiClient.put('/hr/company/plugins', plugins);
+    return data;
   } catch (error) {
     console.error('[companyManagementService] Failed to update plugins:', error);
     throw error;
@@ -206,19 +84,16 @@ export async function updateCompanyPlugins(companyId, plugins) {
 
 /**
  * Get plugin settings for a company
- * @param {string} companyId 
- * @returns {Promise<{payslipAndInvoice: boolean, scheduling: boolean}>}
  */
 export async function getCompanyPlugins(companyId) {
-  if (!companyId) throw new Error('Company ID is required');
   try {
-    const normalizedId = companyId.includes('/') ? companyId.split('/').pop() : companyId;
-    const companyRef = doc(db, 'companies', normalizedId);
-    const snap = await getDoc(companyRef);
-    if (snap.exists()) {
-      return snap.data().plugins || {};
-    }
-    return {};
+    const { data } = await hrApiClient.get('/hr/company');
+    return {
+      scheduling: data.pluginScheduling,
+      payslipAndInvoice: data.pluginPayslipAndInvoice,
+      hiring: data.pluginHiring,
+      assets: data.pluginAssets
+    };
   } catch (error) {
     console.error('[companyManagementService] Failed to fetch plugins:', error);
     return {};
@@ -226,42 +101,16 @@ export async function getCompanyPlugins(companyId) {
 }
 
 /**
- * Update company profile (name, website, etc) via Central Backend
- * @param {string} companyId 
- * @param {Object} updateData 
+ * Update company profile
  */
 export async function updateCompanyProfile(companyId, updateData) {
-    if (!companyId) throw new Error('Company ID is required');
-    const centralApiUrl = import.meta.env.VITE_CENTRAL_API_URL || 'http://localhost:5000';
-    const token = localStorage.getItem('mprar_central_token');
-
-    if (!token) {
-        throw new Error('Authentication token missing. Please log in again.');
-    }
-
     try {
-        const normalizedId = companyId.replace('companies/', '');
-        const response = await fetch(`${centralApiUrl}/companies/${normalizedId}`, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
-            },
-            body: JSON.stringify(updateData)
-        });
-
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || 'Failed to update company profile');
-        }
-
-        const result = await response.json();
-        console.log(`[companyManagementService] Profile updated for ${normalizedId}`);
+        const { data } = await hrApiClient.put('/hr/company', updateData);
         toast.success('Company profile updated successfully');
-        return result.company;
+        return data;
     } catch (error) {
         console.error('[companyManagementService] Profile update failed:', error);
-        toast.error(error.message || 'Failed to update company profile');
+        toast.error(error.response?.data?.error || 'Failed to update company profile');
         throw error;
     }
 }

@@ -1,57 +1,58 @@
-import { db } from '../firebase/client';
-import { collection, addDoc, updateDoc, deleteDoc, doc, query, where, getDocs, serverTimestamp, getDoc } from 'firebase/firestore';
+import hrApiClient from '../lib/hrApiClient';
 
-const COLLECTION = 'clients';
+/**
+ * Clients Service (Phase 4 — REST Migration)
+ * 
+ * Replaces Firestore CRUD with HR REST API calls.
+ * All method signatures preserved for compatibility.
+ */
 
 export async function addClient(companyId, data) {
-    if (!companyId) throw new Error('Company ID is required');
-
-    const payload = {
-        ...data,
-        companyId, // Link to parent company
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-    };
-
-    const ref = await addDoc(collection(db, COLLECTION), payload);
-    return { id: ref.id, ...payload };
+    try {
+        const { data: res } = await hrApiClient.post('/hr/clients', data);
+        return res;
+    } catch (error) {
+        console.error('[clients] Error adding client:', error);
+        throw error;
+    }
 }
 
 export async function updateClient(clientId, data) {
-    if (!clientId) throw new Error('Client ID is required');
-
-    const ref = doc(db, COLLECTION, clientId);
-    const payload = {
-        ...data,
-        updatedAt: serverTimestamp()
-    };
-
-    await updateDoc(ref, payload);
-    return { id: clientId, ...payload };
+    try {
+        const { data: res } = await hrApiClient.put(`/hr/clients/${clientId}`, data);
+        return res;
+    } catch (error) {
+        console.error('[clients] Error updating client:', error);
+        throw error;
+    }
 }
 
 export async function deleteClient(clientId) {
-    if (!clientId) throw new Error('Client ID is required');
-    await deleteDoc(doc(db, COLLECTION, clientId));
-    return true;
+    try {
+        await hrApiClient.delete(`/hr/clients/${clientId}`);
+        return true;
+    } catch (error) {
+        console.error('[clients] Error deleting client:', error);
+        throw error;
+    }
 }
 
 export async function getClients(companyId) {
-    if (!companyId) return [];
-
-    // Handle full path vs ID
-    const compKey = companyId.includes('/') ? companyId.split('/')[1] : companyId;
-
-    // Query mostly by companyId string, but handle legacy formats if needed
-    // Assuming clients refer to companyId as string key
-    const q = query(collection(db, COLLECTION), where('companyId', '==', compKey));
-    const snap = await getDocs(q);
-    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    try {
+        const { data } = await hrApiClient.get('/hr/clients');
+        return data || [];
+    } catch (error) {
+        console.error('[clients] Error fetching clients:', error);
+        return [];
+    }
 }
 
 export async function getClient(clientId) {
-    if (!clientId) return null;
-    const snap = await getDoc(doc(db, COLLECTION, clientId));
-    if (snap.exists()) return { id: snap.id, ...snap.data() };
-    return null;
+    try {
+        const { data } = await hrApiClient.get(`/hr/clients/${clientId}`);
+        return data;
+    } catch (error) {
+        console.error('[clients] Error fetching client:', error);
+        return null;
+    }
 }

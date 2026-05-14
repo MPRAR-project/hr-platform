@@ -1,48 +1,34 @@
-import { db } from '../firebase/client';
-import {
-    collection,
-    doc,
-    setDoc,
-    getDoc,
-    updateDoc,
-    serverTimestamp
-} from 'firebase/firestore';
+import hrApiClient from '../lib/hrApiClient';
 
 /**
- * HR Onboarding Configuration Service
- * Manages company-level HR onboarding settings
+ * HR Onboarding Configuration Service (Phase 4 — REST Migration)
+ * 
+ * Replaces Firestore storage for company-level onboarding settings with HR REST API.
  */
-
-const COLLECTION_NAME = 'hrOnboardingConfigs';
 
 /**
  * Get company HR onboarding configuration
- * Returns default config if none exists
  */
 export async function getCompanyHROnboardingConfig(companyId) {
     try {
-        if (!companyId) {
-            throw new Error('companyId is required');
-        }
-
-        // Normalize company ID
-        const normalizedCompanyId = companyId.includes('/') ? companyId : `companies/${companyId}`;
-
-        const configRef = doc(db, COLLECTION_NAME, normalizedCompanyId);
-        const configSnap = await getDoc(configRef);
-
-        if (configSnap.exists()) {
+        const { data } = await hrApiClient.get('/hr/onboarding-policies');
+        // If the backend returns a list, find the active one or return default
+        const policies = data.policies || data || [];
+        const active = policies.find(p => p.isActive) || policies[0];
+        
+        if (active) {
             return {
-                id: configSnap.id,
-                ...configSnap.data()
+                id: active.id,
+                ...active,
+                // Ensure sections structure matches what the frontend expects
+                sections: active.sections || active.steps || getDefaultConfig(companyId).sections
             };
         }
 
-        // Return default configuration
-        return getDefaultConfig(normalizedCompanyId);
+        return getDefaultConfig(companyId);
     } catch (error) {
         console.error('[hrOnboardingConfig] Error getting config:', error);
-        throw new Error(`Failed to get HR onboarding config: ${error.message}`);
+        return getDefaultConfig(companyId);
     }
 }
 
@@ -51,44 +37,23 @@ export async function getCompanyHROnboardingConfig(companyId) {
  */
 export async function updateCompanyHROnboardingConfig(companyId, config, updatedBy) {
     try {
-        if (!companyId || !config) {
-            throw new Error('companyId and config are required');
-        }
+        const payload = {
+            title: 'Company Onboarding Policy',
+            description: 'Main onboarding workflow',
+            sections: config.sections,
+            steps: config.sections, // Backward compat for backend schema
+            isActive: true
+        };
 
-        // Normalize company ID
-        const normalizedCompanyId = companyId.includes('/') ? companyId : `companies/${companyId}`;
-
-        const configRef = doc(db, COLLECTION_NAME, normalizedCompanyId);
-        const configSnap = await getDoc(configRef);
-
-        const now = serverTimestamp();
-
-        if (configSnap.exists()) {
-            // Update existing config
-            await updateDoc(configRef, {
-                ...config,
-                updatedAt: now,
-                updatedBy: updatedBy || null
-            });
-        } else {
-            // Create new config
-            await setDoc(configRef, {
-                id: normalizedCompanyId,
-                companyId: normalizedCompanyId,
-                ...config,
-                createdAt: now,
-                updatedAt: now,
-                updatedBy: updatedBy || null
-            });
-        }
-
+        const { data } = await hrApiClient.post('/hr/onboarding-policies', payload);
         return {
-            id: normalizedCompanyId,
-            ...config
+            id: data.id,
+            ...data,
+            sections: data.sections || data.steps
         };
     } catch (error) {
         console.error('[hrOnboardingConfig] Error updating config:', error);
-        throw new Error(`Failed to update HR onboarding config: ${error.message}`);
+        throw error;
     }
 }
 
@@ -103,14 +68,8 @@ function getDefaultConfig(companyId) {
             personalInfo: {
                 enabled: true,
                 requiredFields: [
-                    'firstName',
-                    'lastName',
-                    'dateOfBirth',
-                    'phone',
-                    'email',
-                    'addressLine1',
-                    'city',
-                    'country'
+                    'firstName', 'lastName', 'dateOfBirth', 'phone', 'email',
+                    'addressLine1', 'city', 'country'
                 ],
                 assignedRole: 'employee',
                 displayName: 'Personal Information'
@@ -118,12 +77,8 @@ function getDefaultConfig(companyId) {
             employmentDetails: {
                 enabled: true,
                 requiredFields: [
-                    'startDate',
-                    'jobTitle',
-                    'department',
-                    'salary',
-                    'employmentType',
-                    'probationPeriod'
+                    'startDate', 'jobTitle', 'department', 'salary',
+                    'employmentType', 'probationPeriod'
                 ],
                 assignedRole: 'hrManager',
                 displayName: 'Employment Details'
@@ -147,60 +102,44 @@ function getDefaultConfig(companyId) {
                 assignedRole: 'adminManager',
                 displayName: 'Allowances'
             }
-        },
-        createdAt: null,
-        updatedAt: null
+        }
     };
 }
 
-/**
- * Initialize HR onboarding profile sections from config
- */
 export function initializeProfileSectionsFromConfig(config) {
     const sections = {};
+    const cfgSections = config.sections || config.steps || {};
 
-    if (config.sections.personalInfo?.enabled) {
+    if (cfgSections.personalInfo?.enabled) {
         sections.personalInfo = {
             status: 'pending',
             completedBy: null,
             completedAt: null,
             fields: {}
         };
-
-        // Initialize fields
-        config.sections.personalInfo.requiredFields.forEach(field => {
-            sections.personalInfo.fields[field] = {
-                completed: false,
-                value: null,
-                required: true
-            };
+        (cfgSections.personalInfo.requiredFields || []).forEach(field => {
+            sections.personalInfo.fields[field] = { completed: false, value: null, required: true };
         });
     }
 
-    if (config.sections.employmentDetails?.enabled) {
+    if (cfgSections.employmentDetails?.enabled) {
         sections.employmentDetails = {
             status: 'pending',
             completedBy: null,
             completedAt: null,
             fields: {}
         };
-
-        // Initialize fields
-        config.sections.employmentDetails.requiredFields.forEach(field => {
-            sections.employmentDetails.fields[field] = {
-                completed: false,
-                value: null,
-                required: true
-            };
+        (cfgSections.employmentDetails.requiredFields || []).forEach(field => {
+            sections.employmentDetails.fields[field] = { completed: false, value: null, required: true };
         });
     }
 
-    if (config.sections.contractDocuments?.enabled) {
+    if (cfgSections.contractDocuments?.enabled) {
         sections.contractDocuments = {
             status: 'pending',
             completedBy: null,
             completedAt: null,
-            documents: config.sections.contractDocuments.requiredDocuments.map((doc, index) => ({
+            documents: (cfgSections.contractDocuments.requiredDocuments || []).map((doc, index) => ({
                 id: `doc_${index}`,
                 name: doc.name,
                 required: doc.required,
@@ -212,12 +151,12 @@ export function initializeProfileSectionsFromConfig(config) {
         };
     }
 
-    if (config.sections.allowances?.enabled) {
+    if (cfgSections.allowances?.enabled) {
         sections.allowances = {
             status: 'pending',
             completedBy: null,
             completedAt: null,
-            allowances: config.sections.allowances.requiredAllowances.map(allowance => ({
+            allowances: (cfgSections.allowances.requiredAllowances || []).map(allowance => ({
                 type: allowance.type,
                 name: allowance.name,
                 required: allowance.required,

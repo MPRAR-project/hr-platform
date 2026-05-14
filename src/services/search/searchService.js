@@ -1,9 +1,8 @@
-import { db } from '../../firebase/client';
-import { collection, query, where, getDocs, orderBy, limit, startAfter } from 'firebase/firestore';
+import hrApiClient from '../../lib/hrApiClient';
+import algoliasearch from 'algoliasearch/lite';
 
 /**
  * Interface definition for Search Service
- * Allows for swapping backend implementation (Firestore -> Algolia) transparently.
  */
 class SearchServiceInterface {
     async searchUsers(params) { throw new Error('Not implemented'); }
@@ -11,43 +10,47 @@ class SearchServiceInterface {
 }
 
 /**
- * Firestore Implementation (Current Default)
- * Uses native Firestore queries. Best for < 50k users.
+ * REST Implementation (Phase 4 — Postgres-backed)
+ * Uses the HR REST API which queries PostgreSQL.
  */
-class FirestoreSearchService extends SearchServiceInterface {
-    async searchUsers({ companyId, searchTerm, role, limitCount = 20, lastDoc = null }) {
-        const usersRef = collection(db, 'users');
-        let q = query(usersRef, where('companyId', '==', `companies/${companyId}`));
+class RESTSearchService extends SearchServiceInterface {
+    async searchUsers({ companyId, searchTerm, role, limitCount = 20, page = 1 }) {
+        try {
+            const { data } = await hrApiClient.get('/hr/employees', {
+                params: {
+                    search: searchTerm,
+                    hrRole: role,
+                    limit: limitCount,
+                    page
+                }
+            });
 
-        if (role) {
-            q = query(q, where('roles', 'array-contains', role));
+            return {
+                hits: data.employees || [],
+                nbHits: data.total || 0,
+                lastDoc: null // REST uses numeric pagination
+            };
+        } catch (error) {
+            console.error('[RESTSearch] Search failed:', error);
+            return { hits: [], nbHits: 0 };
         }
+    }
 
-        // Note: Firestore doesn't support full-text search natively.
-        // We simulate prefix search for simple cases, but strictly this requires 
-        // external services for 1M+ users as 'searchTerm' won't scale well here 
-        // without a dedicated 'keywords' array.
-        if (searchTerm) {
-            // Basic prefix match (case-sensitive unfortunately in Firestore)
-            // For 1M+ users, this method is NOT recommended.
-            q = query(q,
-                where('displayName', '>=', searchTerm),
-                where('displayName', '<=', searchTerm + '\uf8ff')
-            );
+    async searchTimesheets({ employeeId, status, searchTerm, limitCount = 20 }) {
+        try {
+            const { data } = await hrApiClient.get('/hr/timesheets', {
+                params: {
+                    employeeId,
+                    status,
+                    search: searchTerm,
+                    limit: limitCount
+                }
+            });
+            return { hits: data.timesheets || [], nbHits: data.total || 0 };
+        } catch (error) {
+            console.error('[RESTSearch] Timesheet search failed:', error);
+            return { hits: [], nbHits: 0 };
         }
-
-        q = query(q, orderBy('displayName'), limit(limitCount));
-
-        if (lastDoc) {
-            q = query(q, startAfter(lastDoc));
-        }
-
-        const snap = await getDocs(q);
-        return {
-            hits: snap.docs.map(d => ({ id: d.id, ...d.data() })),
-            lastDoc: snap.docs[snap.docs.length - 1],
-            nbHits: snap.size // This is only for the page, not total
-        };
     }
 }
 
@@ -56,10 +59,8 @@ const ALGOLIA_APP_ID = 'GYXI7HW7AB';
 const ALGOLIA_SEARCH_KEY = '0e48fcdfe01c9b0e1c915e4158cde254';
 const ALGOLIA_INDEX_NAME = 'users';
 
-import algoliasearch from 'algoliasearch/lite';
-
 /**
- * Algolia Implementation for 1M+ Users
+ * Algolia Implementation for 1M+ Users (Optional fallback)
  */
 class AlgoliaSearchService extends SearchServiceInterface {
     constructor() {
@@ -70,7 +71,6 @@ class AlgoliaSearchService extends SearchServiceInterface {
 
     async searchUsers({ companyId, searchTerm, role, limitCount = 20 }) {
         try {
-            // Build filter string
             let filters = `companyId:${companyId}`;
             if (role) filters += ` AND role:${role}`;
 
@@ -82,7 +82,7 @@ class AlgoliaSearchService extends SearchServiceInterface {
             return {
                 hits: result.hits.map(h => ({ ...h, id: h.objectID })),
                 nbHits: result.nbHits,
-                lastDoc: null // Algolia uses pages, not cursors
+                lastDoc: null
             };
         } catch (error) {
             console.error('[Algolia] Search failed:', error);
@@ -92,8 +92,10 @@ class AlgoliaSearchService extends SearchServiceInterface {
 }
 
 // Factory
-const USE_EXTERNAL_SEARCH = true; // Enabled for 1M+ Scale
+// Default to REST (Postgres) for Zero-Firebase compliance. 
+// Can be toggled to Algolia for massive scale.
+const SEARCH_PROVIDER = 'rest'; 
 
-export const searchService = USE_EXTERNAL_SEARCH
-    ? new AlgoliaSearchService()
-    : new FirestoreSearchService();
+export const searchService = SEARCH_PROVIDER === 'rest' 
+    ? new RESTSearchService() 
+    : new AlgoliaSearchService();
