@@ -1,9 +1,4 @@
-import apiClient from '../api/apiClient';
-
-/**
- * Genuinely refactored Onboarding Service
- * Communicates with the Central Backend (Postgres) instead of Firebase Firestore.
- */
+import hrApiClient from '../lib/hrApiClient';
 
 export const ONBOARDING_STATUS = {
   PENDING: 'pending',
@@ -23,66 +18,98 @@ export const ONBOARDING_STEPS = {
 };
 
 export async function createOnboardingApplication({ userId, companyId, siteId, assignedTo = null }) {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const response = await apiClient.post(`/hr/${cleanCompanyId}/onboarding`, {
-        userId,
-        siteId,
-        assignedTo
+  try {
+    const { data } = await hrApiClient.post('/hr/onboarding', {
+      employeeId: userId,
+      siteId,
+      assignedTo
     });
-    return response.data;
+    return data;
+  } catch (error) {
+    console.error('Error creating onboarding application:', error);
+    throw error;
+  }
 }
 
 export async function submitOnboardingStep(applicationId, stepNumber, stepData) {
-    // We assume the companyId is available in context or we can use a generic route
-    const response = await apiClient.post(`/hr/onboarding/${applicationId}/step`, {
-        stepNumber,
-        stepData
+  try {
+    // We use the application ID or userId. The backend uses employeeId (which is userId in frontend)
+    // For consistency with other HR services, let's assume applicationId passed here is the userId/employeeId
+    // If not, we'd need to fetch the application first to get the employeeId.
+    // In MPRAR HR, usually applicationId == docId == employeeId for onboarding.
+    const { data } = await hrApiClient.post(`/hr/onboarding/${applicationId}/step`, {
+      stepNumber,
+      stepData
     });
-    return response.data;
+    return data;
+  } catch (error) {
+    console.error('Error submitting onboarding step:', error);
+    throw error;
+  }
 }
 
-export async function completeOnboardingApplication(applicationId, userId) {
-    const response = await apiClient.post(`/hr/onboarding/${applicationId}/complete`);
-    return response.data;
+export async function completeOnboardingApplication(applicationId, userId, employmentDetails = {}) {
+  try {
+    const { data } = await hrApiClient.post(`/hr/onboarding/${userId}/complete`, {
+      employmentDetails
+    });
+    return data;
+  } catch (error) {
+    console.error('Error completing onboarding application:', error);
+    throw error;
+  }
 }
 
-export async function getOnboardingApplications({ companyId, status = null, assignedTo = null }) {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const response = await apiClient.get(`/hr/${cleanCompanyId}/onboarding`, {
-        params: { status, assignedTo }
-    });
-    return {
-        applications: response.data,
-        hasMore: false,
-        lastDoc: null
-    };
+export async function getOnboardingApplications(filters = {}) {
+  try {
+    const { data } = await hrApiClient.get('/hr/onboarding', { params: filters });
+    return data;
+  } catch (error) {
+    console.error('Error getting onboarding applications:', error);
+    throw error;
+  }
 }
 
 export async function getOnboardingApplication(applicationId) {
-    const response = await apiClient.get(`/hr/onboarding/${applicationId}`);
-    return response.data;
+  try {
+    const { data } = await hrApiClient.get(`/hr/onboarding/${applicationId}`);
+    return data;
+  } catch (error) {
+    console.error('Error getting onboarding application:', error);
+    throw error;
+  }
 }
 
 export async function getUserOnboardingApplication(userId) {
-    // We need companyId for this route in our current structure, 
-    // but we can also have a generic one if we want.
-    // For now, assume we can fetch by userId from a generic endpoint
-    const response = await apiClient.get(`/hr/onboarding/user/${userId}`);
-    return response.data;
+  try {
+    const { data } = await hrApiClient.get(`/hr/onboarding/${userId}`);
+    return data;
+  } catch (error) {
+    if (error.response?.status === 404) return null;
+    console.error('Error getting user onboarding application:', error);
+    throw error;
+  }
 }
 
-export async function updateOnboardingStatus(applicationId, status, notes = '') {
-    const response = await apiClient.post(`/hr/onboarding/${applicationId}/status`, { status, notes });
-    return response.data;
+export async function updateOnboardingStatus(applicationId, status, updatedBy, notes = '') {
+  try {
+    const { data } = await hrApiClient.put(`/hr/onboarding/${applicationId}`, {
+      status,
+      statusNotes: notes
+    });
+    return data;
+  } catch (error) {
+    console.error('Error updating onboarding status:', error);
+    throw error;
+  }
 }
 
-export async function assignOnboardingManager(applicationId, managerId) {
-    const response = await apiClient.post(`/hr/onboarding/${applicationId}/assign`, { managerId });
-    return response.data;
-}
-
-export async function getOnboardingStatistics(companyId) {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const response = await apiClient.get(`/hr/${cleanCompanyId}/onboarding/stats`);
-    return response.data;
+export async function deleteOnboardingApplication(applicationId) {
+  try {
+    await hrApiClient.delete(`/hr/onboarding/${applicationId}`);
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting onboarding application:', error);
+    throw error;
+  }
 }

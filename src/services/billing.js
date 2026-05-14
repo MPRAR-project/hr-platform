@@ -1,62 +1,89 @@
-import apiClient from '../api/apiClient';
-
-/**
- * Genuinely refactored Billing Service
- * Communicates with the Central Backend (Postgres) instead of Firebase Firestore/Functions.
- */
+import hrApiClient from '../lib/hrApiClient';
 
 export const BILLING_EVENT_NAME = 'billing:updated';
+export const BILLING_CONSTANTS = {
+  PRICE_PER_SEAT: 5,
+  TRIAL_DAYS: 14,
+  CURRENCY: 'GBP'
+};
+
+const emitBillingEvent = () => {
+  if (typeof window !== 'undefined' && window?.dispatchEvent) {
+    window.dispatchEvent(new CustomEvent(BILLING_EVENT_NAME));
+  }
+};
 
 export const getBillingSummary = async (companyId) => {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    // In our new architecture, we'll fetch the summary from the backend
-    const response = await apiClient.get(`/billing/company/${cleanCompanyId}/summary`);
-    return response.data;
+  try {
+    const { data } = await hrApiClient.get('/hr/billing/summary');
+    return data;
+  } catch (error) {
+    console.error('Error fetching billing summary:', error);
+    throw error;
+  }
 };
 
 export const startTrial = async (companyId, seatCount) => {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const response = await apiClient.post(`/billing/company/${cleanCompanyId}/trial`, { seatCount });
-    return response.data;
+  try {
+    const { data } = await hrApiClient.post('/hr/billing/trial', { seatCount });
+    emitBillingEvent();
+    return data;
+  } catch (error) {
+    console.error('Error starting trial:', error);
+    throw error;
+  }
+};
+
+export const recordSubscriptionPayment = async (companyId, seatCountOverride = null) => {
+  // This is now handled server-side or via Stripe
+  return getBillingSummary(companyId);
 };
 
 export const recordSeatTopUp = async (companyId, addedSeats = 1, requestId = null) => {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const response = await apiClient.post(`/billing/company/${cleanCompanyId}/seats`, { addedSeats, requestId });
-    return response.data;
+  try {
+    const { data } = await hrApiClient.post('/hr/billing/checkout', {
+      seatCount: addedSeats,
+      requestId,
+      successUrl: `${window.location.origin}/billing?action=seat_added`,
+      cancelUrl: `${window.location.origin}/billing?canceled=true`
+    });
+    
+    if (data.url) {
+      return { requiresCheckout: true, checkoutUrl: data.url };
+    }
+    
+    emitBillingEvent();
+    return data;
+  } catch (error) {
+    console.error('Error in seat top-up:', error);
+    throw error;
+  }
 };
 
-export const addPluginService = async (companyId, addonKey) => {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const response = await apiClient.post(`/billing/addons/purchase`, { companyId: cleanCompanyId, addonKey });
-    return response.data;
+export const addPluginService = async (companyId, addonType) => {
+  try {
+    const { data } = await hrApiClient.post('/hr/billing/plugins', { type: addonType, enabled: true });
+    emitBillingEvent();
+    return data;
+  } catch (error) {
+    console.error('Error adding plugin:', error);
+    throw error;
+  }
 };
 
-export const removePluginService = async (companyId, addonKey) => {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const response = await apiClient.post(`/billing/addons/remove`, { companyId: cleanCompanyId, addonKey });
-    return response.data;
+export const removePluginService = async (companyId, addonType) => {
+  try {
+    const { data } = await hrApiClient.post('/hr/billing/plugins', { type: addonType, enabled: false });
+    emitBillingEvent();
+    return data;
+  } catch (error) {
+    console.error('Error removing plugin:', error);
+    throw error;
+  }
 };
 
-export const getInvoices = async (companyId) => {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const response = await apiClient.get(`/billing/company/${cleanCompanyId}/invoices`);
-    return response.data.invoices;
+export const isSubscriptionExpired = (companyData) => {
+  if (!companyData) return false;
+  return companyData.isExpired || false;
 };
 
-export const createStripePortalSession = async (companyId) => {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const response = await apiClient.post(`/billing/company/${cleanCompanyId}/portal`);
-    return response.data.url;
-};
-
-export const BILLING_CONSTANTS = {
-    PLATFORM_FEE: 10,
-    SEAT_PRICE: 2
-};
-
-export const recordSubscriptionPayment = async (companyId, amount, description) => {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const response = await apiClient.post(`/billing/company/${cleanCompanyId}/payments`, { amount, description });
-    return response.data;
-};

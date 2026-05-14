@@ -18,6 +18,7 @@ node_modules
 
 # Local env files
 .env
+<<<<<<< HEAD
 .env.local
 .env.development.local
 .env.test.local
@@ -37,3 +38,7 @@ yarn-error.log*
 *.njsproj
 *.sln
 *.sw?
+=======
+build
+*.log
+>>>>>>> 101b2ff (Phase 3-4 Migration: Migrated 86+ HR service files to REST API and updated AuthContext to JWT)

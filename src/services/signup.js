@@ -1,68 +1,66 @@
-const CENTRAL_API_URL = import.meta.env.VITE_CENTRAL_API_URL || 'http://localhost:5000';
+import hrApiClient from '../lib/hrApiClient';
 
 export async function submitSignup(form) {
     try {
         console.log('Starting signup process for:', form.email);
-
-        const payload = {
-            firstName: form.firstName,
-            lastName: form.lastName,
+        
+        // The backend /hr/auth/register now handles everything:
+        // 1. Creating user in Central
+        // 2. Creating company in HR PostgreSQL
+        // 3. Creating employee in HR PostgreSQL
+        // 4. Returning tokens
+        const { data } = await hrApiClient.post('/hr/auth/register', {
             email: form.email,
             password: form.password,
+            firstName: form.firstName,
+            lastName: form.lastName,
             companyName: form.companyName,
-            industry: form.industry || '',
-            phoneNumber: form.phone || null,
-            website: form.website || null,
-            address: form.addressRaw || null,
-            weekStart: form.weekStartDay || 'monday',
-            selectedPlatforms: ['hr'],
-            teamSize: form.teamSize || 5,
-            shiftRosterAddon: false,
-        };
-
-        const response = await fetch(`${CENTRAL_API_URL}/auth/register`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
+            industry: form.industry,
+            phone: form.phone,
+            website: form.website,
+            addressRaw: form.addressRaw,
+            weekStartDay: form.weekStartDay || 'monday'
         });
 
-        if (!response.ok) {
-            const data = await response.json().catch(() => ({}));
-            throw new Error(data.error || 'Registration failed. Please try again.');
-        }
-
-        return await response.json();
+        console.log('Signup process completed successfully via REST');
+        
+        return {
+            companyId: data.employee.companyId,
+            userId: data.employee.id,
+            accessToken: data.accessToken,
+            employee: data.employee
+        };
     } catch (error) {
         console.error('Signup error details:', error);
-        throw error;
+        const msg = error.response?.data?.error || error.message;
+        throw new Error(msg);
     }
 }
 
 export async function submitTeamSize(companyId, seatCount, addOns = {}) {
-    const centralToken = localStorage.getItem('mprar_central_token');
-    if (!centralToken) {
-        throw new Error('Missing central authentication token. Please sign in through the HR portal bridge.');
+    try {
+        console.log('submitTeamSize called with companyId:', companyId, 'seatCount:', seatCount, 'addOns:', addOns);
+        
+        // Use the billing summary update or a specific team-size endpoint
+        // Let's use the startTrial endpoint if they are just starting, 
+        // or a generic update endpoint.
+        const { data } = await hrApiClient.post('/hr/billing/trial', {
+            seatCount
+        });
+
+        // Also update plugins
+        if (Object.keys(addOns).length > 0) {
+            await Promise.all(Object.entries(addOns).map(([type, enabled]) => 
+                hrApiClient.put('/hr/billing/plugins', { type, enabled })
+            ));
+        }
+
+        console.log('submitTeamSize completed successfully via REST');
+        return { ok: true };
+    } catch (error) {
+        console.error('Error in submitTeamSize:', error);
+        throw error;
     }
-
-    const response = await fetch(`${CENTRAL_API_URL}/companies/${companyId}`, {
-        method: 'PUT',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${centralToken}`,
-        },
-        body: JSON.stringify({
-            seatCount,
-            billingSeatQuota: seatCount,
-            plugins: addOns,
-        }),
-    });
-
-    if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Failed to update team size.');
-    }
-
-    return { ok: true };
 }
 
 

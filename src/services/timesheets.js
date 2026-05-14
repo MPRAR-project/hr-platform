@@ -1,244 +1,596 @@
-import apiClient from '../api/apiClient';
-import { formatISODate as formatISODateUtil, getWeekRangeForDate, DEFAULT_WEEK_START_DAY } from '../utils/weekStartUtils';
-import { roundSessionRange } from '../utils/timeRounding';
-import { generateEntryId } from '../utils/idUtils';
-
 /**
- * Genuinely refactored Timesheets Service
- * Communicates with the Central Backend (Postgres) instead of Firebase Firestore.
+ * timesheets.js — Phase 5 Migration (REST Primary, Firebase Shim for complex paths)
+ *
+ * Strategy:
+ *   1. All API functions → hrApiClient REST calls
+ *   2. All pure computation functions (getWeekRange, formatISODate, getTimesheetId,
+ *      computeTargetSecondsForDay, etc.) are KEPT INTACT — zero Firebase needed
+ *   3. getUserWeekContext → REST via /hr/employees/me (cached in-memory)
+ *   4. upsertDailyEntry / saveWeekEdits → REST via /hr/timesheets/*
+ *   5. Submit / Approve / Decline → REST
+ *   6. Subscriptions → REST + focus-event polling stub
+ *
+ * Exports preserved (complete list used across 30+ files):
+ *   getTimesheetsByWeek, getUserTimesheetsByWeek, getTimesheetId,
+ *   ensureWeeklyTimesheet, getUserWeekContext, invalidateUserWeekContext,
+ *   getCompanyWorkSchedule, computeTargetSecondsForDay, upsertDailyEntry,
+ *   updateTimeEntry, deleteTimeEntry, addManualTimeEntry, submitWeek,
+ *   approveTimesheet, declineTimesheet, fetchWeekDetails, saveWeekEdits,
+ *   recomputeTimesheetsSafe, invalidateTimesheetCache, triggerTimesheetArchive,
+ *   reconcileTimesheetForWeek, getWeekRange, formatISODate,
+ *   updateEntryDescription
  */
 
-export async function getTimesheetsByWeek(companyId, weekStartStr) {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const response = await apiClient.get(`/hr/${cleanCompanyId}/timesheets`, {
-        params: { weekStart: weekStartStr }
-    });
-    return response.data;
+import hrApiClient from '../lib/hrApiClient';
+import wsClient from '../lib/wsClient';
+import {
+  DEFAULT_WEEK_START_DAY,
+  formatISODate as formatISODateUtil,
+  getOrderedWeekDates,
+  getWeekRangeForDate,
+  STORAGE_ANCHOR_DAY,
+  isMondayAnchorEnabled,
+} from '../utils/weekStartUtils';
+import { getDefaultRoundingRules, roundSessionRange } from '../utils/timeRounding';
+import { generateEntryId } from '../utils/idUtils';
+
+// ── Re-export utility functions that other files import from here ─────────────
+export { formatISODateUtil as formatISODate };
+
+export function getWeekRange(dateStr, weekStartDay = DEFAULT_WEEK_START_DAY) {
+  const { start, end } = getWeekRangeForDate(dateStr, weekStartDay);
+  return { start, end };
 }
 
-export async function getUserTimesheetsByWeek(userId, companyId, weekStartStr) {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const response = await apiClient.get(`/hr/${cleanCompanyId}/users/${userId}/timesheets`, {
-        params: { weekStart: weekStartStr }
-    });
-    return Array.isArray(response.data) ? response.data : [response.data];
+// ── Timesheet ID (deterministic — pure, no Firebase) ─────────────────────────
+export function getTimesheetId(userId, dateStr) {
+  if (!dateStr || !userId) return null;
+  const { start } = getWeekRangeForDate(dateStr, DEFAULT_WEEK_START_DAY);
+  if (!start) return null;
+  const ds = formatISODateUtil(start);
+  return `${userId}_${ds}`;
 }
 
-export async function upsertDailyEntry(params) {
-    const { companyId, userId, dateStr } = params;
-    const cleanCompanyId = companyId.replace('companies/', '');
-    
-    // We fetch the current timesheet, add the entry, and send it back
-    const weekStart = formatISODateUtil(getWeekRangeForDate(dateStr, DEFAULT_WEEK_START_DAY).start);
-    const existing = await getUserTimesheetsByWeek(userId, cleanCompanyId, weekStart);
-    const timesheet = existing[0] || { userId, companyId: cleanCompanyId, weekStartDate: weekStart, entries: [], status: 'draft' };
-    
-    const entryData = {
-        id: params.sessionId || generateEntryId(),
-        date: dateStr,
-        grossSec: params.grossSec,
-        effectiveSec: params.effectiveSec,
-        notes: params.notes,
-        rawStart: params.rawStart,
-        rawEnd: params.rawEnd,
-        roundedStart: params.roundedStart,
-        roundedEnd: params.roundedEnd
+// ── Compute target seconds for a day (pure) ───────────────────────────────────
+export function computeTargetSecondsForDay(dateStr, schedule) {
+  if (!schedule || !dateStr) return 8 * 3600;
+  try {
+    const d       = new Date(dateStr.includes('T') ? dateStr : dateStr + 'T12:00:00');
+    const dayName = d.toLocaleDateString('en-US', { weekday: 'long' });
+    const sch     = schedule[dayName] || schedule[dayName.toLowerCase()];
+    if (!sch || sch.enabled === false) return 0;
+    if (typeof sch.durationMin === 'number' && sch.durationMin > 0) return sch.durationMin * 60;
+    if (sch.start && sch.end) {
+      const [sH, sM] = sch.start.split(':').map(Number);
+      const [eH, eM] = sch.end.split(':').map(Number);
+      return Math.max(0, ((eH || 17) * 60 + (eM || 0)) - ((sH || 9) * 60 + (sM || 0))) * 60;
+    }
+  } catch { /* fall through */ }
+  return 8 * 3600;
+}
+
+// ── In-memory caches (session-lived) ─────────────────────────────────────────
+const _userWeekCtxCache = new Map();
+const _companyScheduleCache = new Map();
+const _timesheetMemCache   = new Map();
+
+// ── getUserWeekContext ────────────────────────────────────────────────────────
+export async function getUserWeekContext(userId, options = {}) {
+  const { forceRefresh = false } = options;
+  if (!userId) return { companyIdPath: '', siteIdPath: '', weekStartDay: DEFAULT_WEEK_START_DAY };
+
+  if (!forceRefresh && _userWeekCtxCache.has(userId)) {
+    return _userWeekCtxCache.get(userId);
+  }
+
+  try {
+    const { data } = await hrApiClient.get('/hr/employees/me');
+    const ctx = {
+      companyIdPath: data.companyId || '',
+      siteIdPath:    data.siteId    || '',
+      weekStartDay:  data.weekStartDay || DEFAULT_WEEK_START_DAY,
     };
+    _userWeekCtxCache.set(userId, ctx);
+    return ctx;
+  } catch {
+    const fallback = { companyIdPath: '', siteIdPath: '', weekStartDay: DEFAULT_WEEK_START_DAY };
+    _userWeekCtxCache.set(userId, fallback);
+    return fallback;
+  }
+}
 
-    const newEntries = [...(timesheet.entries || [])];
-    const idx = newEntries.findIndex(e => e.id === entryData.id);
-    if (idx >= 0) newEntries[idx] = entryData;
-    else newEntries.push(entryData);
+export function invalidateUserWeekContext(userId) {
+  if (userId) _userWeekCtxCache.delete(userId);
+  else _userWeekCtxCache.clear();
+}
 
-    const response = await apiClient.post(`/hr/${cleanCompanyId}/timesheets`, {
-        ...timesheet,
-        entries: newEntries
+// ── Get company work schedule ─────────────────────────────────────────────────
+export async function getCompanyWorkSchedule(companyIdPath) {
+  const key = (companyIdPath || '').replace('companies/', '');
+  if (!key) return {};
+  if (_companyScheduleCache.has(key)) return _companyScheduleCache.get(key);
+
+  try {
+    const { data } = await hrApiClient.get(`/hr/companies/${key}/schedule`);
+    const schedule = data.workSchedule || data || {};
+    _companyScheduleCache.set(key, schedule);
+    return schedule;
+  } catch {
+    return {};
+  }
+}
+
+// ── Cache helpers ─────────────────────────────────────────────────────────────
+export function invalidateTimesheetCache(userId, weekStr, datesToInvalidate = [], opts = {}) {
+  const key = `${userId}_${weekStr}`;
+  _timesheetMemCache.delete(key);
+  if (opts.cascade) {
+    // Invalidate surrounding weeks too
+    _timesheetMemCache.forEach((_, k) => { if (k.startsWith(`${userId}_`)) _timesheetMemCache.delete(k); });
+  }
+}
+
+// ── Normalize timesheet from REST ─────────────────────────────────────────────
+function normalizeTimesheet(ts) {
+  if (!ts) return null;
+  return {
+    ...ts,
+    id:       ts.id       || ts.timesheetId,
+    userId:   ts.userId   || ts.employeeId,
+    companyId: ts.companyId,
+    period:   ts.period   || ts.weekStart,
+    start:    ts.start    || ts.weekStart,
+    end:      ts.end      || ts.weekEnd,
+    status:   ts.status   || 'draft',
+    entries:  (ts.entries || ts.timeEntries || []).map(normalizeEntry),
+    totals:   ts.totals   || { grossSec: 0, effectiveSec: 0, overtimeSec: 0 },
+  };
+}
+
+function normalizeEntry(e) {
+  if (!e) return e;
+  return {
+    ...e,
+    id:           e.id          || e.entryId,
+    sessionId:    e.sessionId   || e.id,
+    date:         e.date        || (e.clockIn ? e.clockIn.split('T')[0] : null),
+    grossSec:     e.grossSec    || e.durationGrossSec     || 0,
+    effectiveSec: e.effectiveSec || e.durationEffectiveSec || 0,
+    overtimeSec:  e.overtimeSec  || 0,
+    source:       e.source       || 'clock',
+  };
+}
+
+// ── Get timesheets by week (manager view) ─────────────────────────────────────
+export async function getTimesheetsByWeek(companyId, weekStartStr) {
+  const cacheKey = `all_${companyId}_${weekStartStr}`;
+  if (_timesheetMemCache.has(cacheKey)) return _timesheetMemCache.get(cacheKey);
+
+  try {
+    const { data } = await hrApiClient.get('/hr/timesheets', {
+      params: {
+        weekStart: weekStartStr,
+        companyId: companyId.replace('companies/', ''),
+      },
     });
-    return response.data;
+    const sheets = (data.timesheets || data || []).map(normalizeTimesheet);
+    _timesheetMemCache.set(cacheKey, sheets);
+    setTimeout(() => _timesheetMemCache.delete(cacheKey), 30_000); // 30s TTL
+    return sheets;
+  } catch (err) {
+    if (err.response?.status === 403) return [];
+    throw new Error(err.response?.data?.error || 'Failed to fetch timesheets');
+  }
 }
 
-export async function updateTimeEntry({ userId, dateStr, entryId, updates, companyId }) {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const weekStart = formatISODateUtil(getWeekRangeForDate(dateStr, DEFAULT_WEEK_START_DAY).start);
-    const existing = await getUserTimesheetsByWeek(userId, cleanCompanyId, weekStart);
-    const timesheet = existing[0];
-    if (!timesheet) throw new Error('Timesheet not found');
+// ── Get user timesheets by week (employee view) ────────────────────────────────
+export async function getUserTimesheetsByWeek(userId, companyId, weekStartStr) {
+  const cacheKey = `${userId}_${weekStartStr}`;
+  if (_timesheetMemCache.has(cacheKey)) return _timesheetMemCache.get(cacheKey);
 
-    const newEntries = timesheet.entries.map(e => {
-        if (e.id === entryId) {
-            return { ...e, ...updates };
-        }
-        return e;
+  try {
+    const { data } = await hrApiClient.get('/hr/timesheets', {
+      params: {
+        weekStart:  weekStartStr,
+        employeeId: userId,
+      },
     });
+    const sheets = (data.timesheets || data || []).map(normalizeTimesheet);
+    _timesheetMemCache.set(cacheKey, sheets);
+    setTimeout(() => _timesheetMemCache.delete(cacheKey), 30_000);
+    return sheets;
+  } catch (err) {
+    if (err.response?.status === 404) return [];
+    throw new Error(err.response?.data?.error || 'Failed to fetch timesheets');
+  }
+}
 
-    const response = await apiClient.post(`/hr/${cleanCompanyId}/timesheets`, {
-        ...timesheet,
-        entries: newEntries
+// ── Ensure weekly timesheet exists ────────────────────────────────────────────
+export async function ensureWeeklyTimesheet(userId, dateStr, companyIdPath) {
+  if (!dateStr || !userId) return null;
+  const { start: weekStart, end: weekEnd } = getWeekRangeForDate(dateStr, DEFAULT_WEEK_START_DAY);
+  const weekStartStr = formatISODateUtil(weekStart);
+  const weekEndStr   = formatISODateUtil(weekEnd);
+
+  try {
+    const { data } = await hrApiClient.post('/hr/timesheets/ensure', {
+      employeeId: userId,
+      weekStart:  weekStartStr,
+      weekEnd:    weekEndStr,
+      companyId:  companyIdPath ? companyIdPath.replace('companies/', '') : null,
     });
-    return response.data;
+    return data?.id || getTimesheetId(userId, dateStr);
+  } catch (err) {
+    // If already exists (409), that's fine
+    if (err.response?.status === 409) return getTimesheetId(userId, dateStr);
+    console.warn('[ensureWeeklyTimesheet]', err.message);
+    return getTimesheetId(userId, dateStr);
+  }
 }
 
-// ... more refactored methods as needed
-export const formatISODate = formatISODateUtil;
-export const getWeekRange = getWeekRangeForDate;
+// ── Upsert daily entry (called from timeClock.js after clock-out) ─────────────
+// Server handles the actual persistence via /hr/time-entries/clock-out.
+// This function now acts as a client-side cache invalidator + confirmation.
+export async function upsertDailyEntry({
+  userId, companyId, siteId, dateStr, sessionId,
+  grossSec, effectiveSec, overtimeSec = 0,
+  roundedStart = null, roundedEnd = null,
+  rawStart = null, rawEnd = null,
+  rawDurationSec = 0, rawEffectiveSec = 0,
+  breakMeta = {}, location, clockOutLocation,
+  deviceInfo, clockOutDeviceInfo,
+  pupilCount, notes, status = 'closed', autoClockOut = false,
+}) {
+  // Server already persisted the time entry via clock-out endpoint.
+  // Invalidate local cache so next fetch gets fresh data.
+  const { start } = getWeekRangeForDate(dateStr, DEFAULT_WEEK_START_DAY);
+  const weekStr   = formatISODateUtil(start);
+  invalidateTimesheetCache(userId, weekStr, [dateStr], { cascade: false });
 
-export async function fetchWeekDetails(companyId, weekStart) {
-    return await getTimesheetsByWeek(companyId, weekStart);
+  // Return a synthetic entry ID for backward compat (callers only use this for logging)
+  return sessionId || generateEntryId();
 }
 
-export async function getUserWeekContext(userId, companyId, weekStart) {
-    const sheets = await getUserTimesheetsByWeek(userId, companyId, weekStart);
-    return sheets[0] || null;
+// ── Update a time entry ───────────────────────────────────────────────────────
+export async function updateTimeEntry({ userId, dateStr, sessionId, entryId, updates, originalClockIn }) {
+  if (!userId) throw new Error('UserId is required');
+
+  const payload = {
+    clockIn:  updates?.clockIn  || null,
+    clockOut: updates?.clockOut || null,
+    breakMin: updates?.breakMin ?? null,
+    notes:    updates?.notes    ?? null,
+    date:     dateStr,
+  };
+
+  const id = entryId || sessionId;
+  if (!id) throw new Error('entryId or sessionId is required');
+
+  try {
+    const { data } = await hrApiClient.put(`/hr/time-entries/${id}`, payload);
+    invalidateTimesheetCache(userId, dateStr, [dateStr], { cascade: true });
+    return { success: true, updatedTimesheet: data };
+  } catch (err) {
+    if (err.response?.status === 404) throw new Error('Time entry not found');
+    throw new Error(err.response?.data?.error || 'Failed to update time entry');
+  }
 }
 
-export async function deleteTimeEntry(userId, dateStr, entryId, companyId) {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const weekStart = formatISODate(getWeekRange(dateStr).start);
-    const existing = await getUserTimesheetsByWeek(userId, cleanCompanyId, weekStart);
-    const timesheet = existing[0];
-    if (!timesheet) return;
+// ── Update entry description/notes only ──────────────────────────────────────
+export async function updateEntryDescription(userId, dateStr, entryId, description) {
+  return updateTimeEntry({ userId, dateStr, entryId, updates: { notes: description } });
+}
 
-    const newEntries = timesheet.entries.filter(e => e.id !== entryId);
-    return await apiClient.post(`/hr/${cleanCompanyId}/timesheets`, {
-        ...timesheet,
-        entries: newEntries
+// ── Delete a time entry ───────────────────────────────────────────────────────
+export async function deleteTimeEntry(userId, dateStr, entryId, sessionId) {
+  const id = entryId || sessionId;
+  if (!id) throw new Error('entryId or sessionId is required');
+
+  try {
+    await hrApiClient.delete(`/hr/time-entries/${id}`);
+    invalidateTimesheetCache(userId, dateStr, [dateStr], { cascade: true });
+    return { success: true };
+  } catch (err) {
+    if (err.response?.status === 404) throw new Error('Time entry not found');
+    throw new Error(err.response?.data?.error || 'Failed to delete time entry');
+  }
+}
+
+// ── Add manual time entry ─────────────────────────────────────────────────────
+export async function addManualTimeEntry({
+  userId, companyId, siteId, date, clockIn, clockOut,
+  breakMin = 0, notes = '', source = 'manual',
+}) {
+  const payload = {
+    date,
+    clockIn,
+    clockOut,
+    breakMinutes: breakMin,
+    notes,
+    source,
+    siteId: siteId || null,
+  };
+
+  try {
+    const { data } = await hrApiClient.post('/hr/time-entries', payload);
+    invalidateTimesheetCache(userId, date, [date], { cascade: true });
+    return normalizeEntry(data);
+  } catch (err) {
+    if (err.response?.status === 409) throw new Error('A time entry already exists for this period');
+    throw new Error(err.response?.data?.error || 'Failed to add time entry');
+  }
+}
+
+// ── Submit week for approval ───────────────────────────────────────────────────
+export async function submitWeek(userId, companyId, weekStartStr) {
+  try {
+    const { data } = await hrApiClient.post('/hr/timesheets/submit', {
+      weekStart: weekStartStr,
     });
+    invalidateTimesheetCache(userId, weekStartStr, [], { cascade: true });
+    return { success: true, ...data };
+  } catch (err) {
+    if (err.response?.status === 404) throw new Error('Timesheet not found for this week');
+    throw new Error(err.response?.data?.error || 'Failed to submit timesheet');
+  }
 }
 
-export async function submitWeek(userId, companyId, weekStart) {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const existing = await getUserTimesheetsByWeek(userId, cleanCompanyId, weekStart);
-    const timesheet = existing[0];
-    if (!timesheet) return;
-
-    return await apiClient.post(`/hr/${cleanCompanyId}/timesheets`, {
-        ...timesheet,
-        status: 'pending'
+// ── Approve timesheet ─────────────────────────────────────────────────────────
+export async function approveTimesheet(timesheetId, approverId, approverName) {
+  try {
+    const { data } = await hrApiClient.post(`/hr/timesheets/${timesheetId}/approve`, {
+      approverId,
+      approverName: approverName || null,
     });
+    _timesheetMemCache.clear(); // Clear all caches on approval
+    return { success: true, ...data };
+  } catch (err) {
+    if (err.response?.status === 404) throw new Error('Timesheet not found');
+    if (err.response?.status === 403) throw new Error('Permission denied');
+    throw new Error(err.response?.data?.error || 'Failed to approve timesheet');
+  }
 }
 
-export async function updateEntryDescription(userId, dateStr, entryId, description, companyId) {
-    return await updateTimeEntry({ userId, dateStr, entryId, updates: { notes: description }, companyId });
-}
-
-export async function updateDayDescription(userId, dateStr, description, companyId) {
-    // In our new model, we might store day notes differently, but for now we find an entry or the timesheet itself
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const weekStart = formatISODate(getWeekRange(dateStr).start);
-    const existing = await getUserTimesheetsByWeek(userId, cleanCompanyId, weekStart);
-    const timesheet = existing[0];
-    if (!timesheet) return;
-
-    return await apiClient.post(`/hr/${cleanCompanyId}/timesheets`, {
-        ...timesheet,
-        notes: (timesheet.notes || '') + `\n[${dateStr}]: ${description}`
+// ── Decline timesheet ─────────────────────────────────────────────────────────
+export async function declineTimesheet(timesheetId, reason, declinerId) {
+  try {
+    const { data } = await hrApiClient.post(`/hr/timesheets/${timesheetId}/reject`, {
+      reason,
+      declinerId: declinerId || null,
     });
+    _timesheetMemCache.clear();
+    return { success: true, ...data };
+  } catch (err) {
+    if (err.response?.status === 404) throw new Error('Timesheet not found');
+    if (err.response?.status === 403) throw new Error('Permission denied');
+    throw new Error(err.response?.data?.error || 'Failed to decline timesheet');
+  }
 }
 
-export async function addManualTimeEntry(params) {
-    return await upsertDailyEntry(params);
+// ── Fetch week details (used by EditTimesheetModal, TimesheetArchivePage) ──────
+export async function fetchWeekDetails(userId, companyId, weekStartStr) {
+  const timesheets = await getUserTimesheetsByWeek(userId, companyId, weekStartStr);
+  const ts         = timesheets.find((t) => t.period === weekStartStr || t.start === weekStartStr);
+  if (!ts) return null;
+
+  return {
+    ...ts,
+    weekDays: getOrderedWeekDates(weekStartStr, ts.weekStartDay || DEFAULT_WEEK_START_DAY),
+  };
 }
 
-export async function invalidateTimesheetCache() {
-    // No-op for now as we use fresh API calls
-    return true;
-}
+// ── Save week edits (UnifiedTimesheetEditor, TimesheetUpdateManager) ──────────
+export async function saveWeekEdits(userId, dayEdits, createDateTimeFromStrings) {
+  if (!dayEdits?.length) return { success: true, affected: 0 };
 
-export async function deleteTimesheet(companyId, timesheetId) {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    return await apiClient.delete(`/hr/${cleanCompanyId}/timesheets/${timesheetId}`);
-}
+  const results = await Promise.allSettled(
+    dayEdits.map(async (edit) => {
+      let clockInISO  = null;
+      let clockOutISO = null;
+      if (edit.clockIn  && createDateTimeFromStrings) {
+        const d = createDateTimeFromStrings(edit.date, edit.clockIn);
+        if (!isNaN(d?.getTime())) clockInISO = d.toISOString();
+      }
+      if (edit.clockOut && createDateTimeFromStrings) {
+        const d = createDateTimeFromStrings(edit.date, edit.clockOut);
+        if (!isNaN(d?.getTime())) clockOutISO = d.toISOString();
+      }
 
-export async function fetchWeeklySummaries(companyId, weekStart) {
-    return await getTimesheetsByWeek(companyId, weekStart);
-}
-
-export async function fetchTimesheetsForUsers(companyId, userIds, weekStart) {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const response = await apiClient.post(`/hr/${cleanCompanyId}/timesheets/bulk-fetch`, {
-        userIds,
-        weekStart
-    });
-    return response.data;
-}
-
-export async function fetchPendingApprovalsForManager(managerId, companyId) {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const response = await apiClient.get(`/hr/${cleanCompanyId}/approvals/pending`, {
-        params: { managerId }
-    });
-    return response.data;
-}
-
-export async function prefetchAdjacentWeeks() {
-    return true;
-}
-
-export async function approveTimesheet(companyId, timesheetId) {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    return await apiClient.post(`/hr/${cleanCompanyId}/timesheets/${timesheetId}/approve`);
-}
-
-export async function declineTimesheet(companyId, timesheetId, reason) {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    return await apiClient.post(`/hr/${cleanCompanyId}/timesheets/${timesheetId}/decline`, { reason });
-}
-
-export async function ensureWeeklyTimesheet(userId, companyId, weekStart) {
-    const sheets = await getUserTimesheetsByWeek(userId, companyId, weekStart);
-    if (sheets.length > 0) return sheets[0];
-    
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const res = await apiClient.post(`/hr/${cleanCompanyId}/timesheets`, {
+      return updateTimeEntry({
         userId,
-        companyId: cleanCompanyId,
-        weekStartDate: weekStart,
-        entries: [],
-        status: 'draft'
+        dateStr:   edit.date,
+        entryId:   edit.entryId,
+        sessionId: edit.sessionId,
+        updates: {
+          clockIn:  clockInISO,
+          clockOut: clockOutISO,
+          breakMin: edit.breakMin,
+          notes:    edit.notes || edit.description,
+        },
+      });
+    })
+  );
+
+  const failed = results.filter((r) => r.status === 'rejected');
+  if (failed.length) {
+    throw new Error(failed[0].reason?.message || 'Failed to save some edits');
+  }
+
+  return { success: true, affected: dayEdits.length, updatedTimesheet: null };
+}
+
+// ── Trigger PDF archive ───────────────────────────────────────────────────────
+export async function triggerTimesheetArchive(timesheetId, userId, weekStartStr) {
+  try {
+    await hrApiClient.post(`/hr/timesheets/${timesheetId}/archive`);
+    return true;
+  } catch {
+    // Non-fatal
+    return false;
+  }
+}
+
+// ── Recompute timesheets safe (called from SettingsPage) ──────────────────────
+export async function recomputeTimesheetsSafe(companyId, options = {}) {
+  try {
+    const { data } = await hrApiClient.post('/hr/timesheets/recompute', { companyId });
+    _timesheetMemCache.clear();
+    return { success: true, ...data };
+  } catch {
+    return { success: false };
+  }
+}
+
+// ── Reconcile timesheet for week ──────────────────────────────────────────────
+export async function reconcileTimesheetForWeek(userId, companyId, weekStartStr, weekStartDay, weekEndStr) {
+  try {
+    const { data } = await hrApiClient.post('/hr/timesheets/reconcile', {
+      employeeId: userId,
+      weekStart:  weekStartStr,
+      weekEnd:    weekEndStr   || null,
+      weekStartDay: weekStartDay || DEFAULT_WEEK_START_DAY,
     });
-    return res.data;
+    invalidateTimesheetCache(userId, weekStartStr, [], { cascade: true });
+    return normalizeTimesheet(data);
+  } catch {
+    return null;
+  }
 }
 
-export async function saveWeekEdits(userId, companyId, weekStart, updates) {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    return await apiClient.post(`/hr/${cleanCompanyId}/timesheets`, {
-        userId,
-        companyId: cleanCompanyId,
-        weekStartDate: weekStart,
-        ...updates
+// ── Fetch week details for modal ──────────────────────────────────────────────
+export { fetchWeekDetails as fetchWeekDetailsForModal };
+
+// ── Delete timesheet (used by ViewTimesheetModal delete confirmation) ──────────
+export async function deleteTimesheet(timesheetId, userId) {
+  try {
+    await hrApiClient.delete(`/hr/timesheets/${timesheetId}`);
+    _timesheetMemCache.clear();
+    return { success: true };
+  } catch (err) {
+    if (err.response?.status === 404) throw new Error('Timesheet not found');
+    if (err.response?.status === 403) throw new Error('Permission denied');
+    throw new Error(err.response?.data?.error || 'Failed to delete timesheet');
+  }
+}
+
+// ── Prime user week context (internal helper used by timesheetCreation etc.) ──
+export function primeUserWeekContext(userId, companyIdPath, siteIdPath, weekStartDay) {
+  if (!userId) return;
+  _userWeekCtxCache.set(userId, {
+    companyIdPath: companyIdPath || '',
+    siteIdPath:    siteIdPath    || '',
+    weekStartDay:  weekStartDay  || DEFAULT_WEEK_START_DAY,
+  });
+}
+
+
+export async function updateDayDescription(userId, dateStr, description) {
+  return updateEntryDescription(userId, dateStr, null, description);
+}
+
+// ── Subscribe to timesheets ────────────────────────────────────────────────────
+
+// Phase 6: WS integration
+export function subscribeToTimesheets(userId, companyId, weekStartStr, callback) {
+  const fetch = () =>
+    getUserTimesheetsByWeek(userId, companyId, weekStartStr)
+      .then(callback)
+      .catch((err) => console.warn('[timesheets] subscription fetch failed:', err));
+
+  fetch(); // Initial fetch
+  
+  const onFocus = () => fetch();
+  window.addEventListener('focus', onFocus);
+
+  // WebSocket handler
+  const wsHandler = () => fetch();
+  wsClient.on('timesheet:updated', wsHandler);
+
+  return () => {
+    window.removeEventListener('focus', onFocus);
+    wsClient.off('timesheet:updated', wsHandler);
+  };
+}
+
+// ── Re-export reconcileTimesheetForWeek to callers who import it from here ────
+export { reconcileTimesheetForWeek as default };
+
+// ── Backward-compat aliases ───────────────────────────────────────────────────
+// submitCurrentWeek → submitWeek (used by TimesheetTab.jsx)
+export const submitCurrentWeek = submitWeek;
+
+// ── Bulk / manager utilities (used by useTimesheetData.js hook) ───────────────
+
+/**
+ * Fetch weekly summaries for a user (replaces Firestore "summary" collection)
+ */
+export async function fetchWeeklySummaries(userId, maxWeeks = 12) {
+  try {
+    const { data } = await hrApiClient.get('/hr/timesheets', {
+      params: { employeeId: userId, limit: maxWeeks },
     });
+    return (data.timesheets || data || []).map(normalizeTimesheet);
+  } catch (err) {
+    if (err.response?.status === 404 || err.response?.status === 403) return [];
+    throw new Error(err.response?.data?.error || 'Failed to fetch weekly summaries');
+  }
 }
 
-export function getTimesheetId(userId, weekStart) {
-    return `ts_${userId}_${weekStart}`;
+/**
+ * Fetch timesheets for multiple users (manager batch view)
+ */
+export async function fetchTimesheetsForUsers(userIds, options = {}) {
+  const { maxWeeks = 4 } = options;
+  const results = {};
+  await Promise.allSettled(
+    userIds.map(async (uid) => {
+      try {
+        const sheets = await fetchWeeklySummaries(uid, maxWeeks);
+        results[uid] = sheets;
+      } catch {
+        results[uid] = [];
+      }
+    })
+  );
+  return results;
 }
 
-export async function reconcileTimesheetForWeek() {
-    return true;
+/**
+ * Fetch pending approvals for a manager
+ */
+export async function fetchPendingApprovalsForManager(managerId, options = {}) {
+  try {
+    const { data } = await hrApiClient.get('/hr/timesheets', {
+      params: { status: 'pending', managerId },
+    });
+    return (data.timesheets || data || []).map(normalizeTimesheet);
+  } catch (err) {
+    if (err.response?.status === 403) return [];
+    throw new Error(err.response?.data?.error || 'Failed to fetch pending approvals');
+  }
 }
 
-export async function invalidateUserWeekContext() {
-    return true;
+/**
+ * Prefetch adjacent weeks (background warm-up, non-fatal)
+ */
+export async function prefetchAdjacentWeeks(userId, weekStart, options = {}) {
+  const { weeksBefore = 1, weeksAfter = 1 } = options;
+  // Fire-and-forget — errors here are non-fatal
+  const ms     = 7 * 24 * 60 * 60 * 1000;
+  const base   = new Date(weekStart instanceof Date ? weekStart : weekStart + 'T00:00:00');
+  const weeks  = [];
+  for (let i = 1; i <= weeksBefore; i++) {
+    weeks.push(new Date(base.getTime() - i * ms));
+  }
+  for (let i = 1; i <= weeksAfter; i++) {
+    weeks.push(new Date(base.getTime() + i * ms));
+  }
+  await Promise.allSettled(
+    weeks.map((d) => {
+      const ws = formatISODateUtil(d);
+      return getUserTimesheetsByWeek(userId, '', ws).catch(() => {});
+    })
+  );
 }
 
-export async function recomputeTimesheetsSafe() {
-    return true;
-}
 
-export async function submitCurrentWeek(userId, companyId) {
-    const now = new Date();
-    const weekStart = formatISODate(getWeekRange(now).start);
-    return await submitWeek(userId, companyId, weekStart);
-}
-
-export async function getCompanyWorkSchedule(companyId) {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const response = await apiClient.get(`/hr/${cleanCompanyId}/work-schedule`);
-    return response.data;
-}
-
-export async function computeTargetSecondsForDay() {
-    return 8 * 3600; // Default 8 hours
-}
-
-export { getWeekRangeForDate, DEFAULT_WEEK_START_DAY, formatISODateUtil };

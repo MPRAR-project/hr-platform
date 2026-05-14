@@ -1,7 +1,8 @@
-import apiClient from '../api/apiClient';
-import axios from 'axios';
+import hrApiClient from '../lib/hrApiClient';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+/**
+ * Document Service (REST Migration)
+ */
 
 export const DOCUMENT_TYPES = {
   IDENTIFICATION: 'identification',
@@ -13,106 +14,146 @@ export const DOCUMENT_TYPES = {
 };
 
 export const DOCUMENT_CATEGORIES = {
-    IDENTIFICATION: 'Identification',
-    CONTRACT: 'Contract',
-    POLICY: 'Policy',
-    CERTIFICATE: 'Certificate',
-    BANKING: 'Banking',
-    OTHER: 'Other'
+  PASSPORT: 'passport',
+  DRIVERS_LICENSE: 'drivers_license',
+  NATIONAL_ID: 'national_id',
+  BANK_STATEMENT: 'bank_statement',
+  PAYSLIP: 'payslip',
+  CONTRACT: 'contract',
+  POLICY_AGREEMENT: 'policy_agreement',
+  MEDICAL_CERTIFICATE: 'medical_certificate',
+  OTHER: 'other'
 };
-
-/**
- * Genuinely refactored Document Service
- * Uses the Central Backend for storage and metadata.
- * 0% Firebase dependencies.
- */
 
 export async function uploadDocument({
   file,
   userId,
-  companyId,
   documentType,
   category,
   description = '',
   onboardingApplicationId = null,
   onProgress = null
 }) {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const token = localStorage.getItem('mprar_central_token');
-
-    // 1. Upload File to Central Storage API
+  try {
+    // 1. Upload to Storage
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('path', `employee-documents/${userId}/${documentType}_${Date.now()}_${file.name}`);
-
-    const uploadRes = await axios.post(`${API_BASE}/hr/storage/upload`, formData, {
-        headers: {
-            'Content-Type': 'multipart/form-data',
-            'Authorization': `Bearer ${token}`
-        },
-        onUploadProgress: (progressEvent) => {
-            if (onProgress) {
-                const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-                onProgress(percentCompleted);
-            }
+    
+    const { data: uploadRes } = await hrApiClient.post('/hr/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: (progressEvent) => {
+        if (onProgress) {
+          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          onProgress(percentCompleted);
         }
+      }
     });
 
-    const { url } = uploadRes.data;
-
-    // 2. Save Metadata to PostgreSQL via our new documents endpoint
-    const docResponse = await apiClient.post(`/hr/${cleanCompanyId}/documents`, {
-        userId,
-        companyId: cleanCompanyId,
-        name: file.name,
-        fileUrl: url,
-        category,
-        documentType,
-        description,
-        status: 'active',
-        uploadedBy: userId // Assuming self-upload for now
+    // 2. Register Document in DB
+    const { data: docRes } = await hrApiClient.post('/hr/documents', {
+      employeeId: userId,
+      title: file.name,
+      description,
+      documentType,
+      fileKey: uploadRes.fileKey,
+      fileName: uploadRes.fileName,
+      fileMimeType: uploadRes.mimeType,
+      fileSizeBytes: uploadRes.size,
+      metadata: { category, onboardingApplicationId }
     });
 
-    return docResponse.data;
+    return docRes;
+  } catch (error) {
+    console.error('Error uploading document:', error);
+    throw error;
+  }
 }
 
-export async function getUserDocuments(companyId, userId, documentType = null) {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const response = await apiClient.get(`/hr/${cleanCompanyId}/documents`, {
-        params: { userId, documentType }
+export async function getUserDocuments(userId, documentType = null) {
+  try {
+    const { data } = await hrApiClient.get('/hr/documents', {
+      params: { employeeId: userId, type: documentType }
     });
-    return response.data;
-}
-
-export async function deleteDocument(documentId) {
-    const response = await apiClient.delete(`/hr/documents/${documentId}`);
-    return response.data;
-}
-
-export async function createDocumentRequest(companyId, requestData) {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const response = await apiClient.post(`/hr/${cleanCompanyId}/document-requests`, requestData);
-    return response.data;
-}
-
-export async function listDocumentRequests(companyId, filters = {}) {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const response = await apiClient.get(`/hr/${cleanCompanyId}/document-requests`, {
-        params: filters
-    });
-    return response.data;
-}
-
-export async function getOnboardingDocuments(companyId, userId) {
-    return await getUserDocuments(companyId, userId);
-}
-
-export async function updateDocument(documentId, updates) {
-    const response = await apiClient.put(`/hr/documents/${documentId}`, updates);
-    return response.data;
+    return data.documents || [];
+  } catch (error) {
+    console.error('Error getting user documents:', error);
+    return [];
+  }
 }
 
 export async function getDocument(documentId) {
-    const response = await apiClient.get(`/hr/documents/${documentId}`);
-    return response.data;
+  try {
+    const { data } = await hrApiClient.get(`/hr/documents/${documentId}`);
+    return data;
+  } catch (error) {
+    console.error('Error getting document:', error);
+    return null;
+  }
+}
+
+export async function updateDocument(documentId, updates) {
+  try {
+    const { data } = await hrApiClient.put(`/hr/documents/${documentId}`, updates);
+    return data;
+  } catch (error) {
+    console.error('Error updating document:', error);
+    throw error;
+  }
+}
+
+export async function deleteDocument(documentId, userId) {
+  try {
+    await hrApiClient.delete(`/hr/documents/${documentId}`);
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting document:', error);
+    throw error;
+  }
+}
+
+export async function getDocumentStatistics(userId) {
+  try {
+    const docs = await getUserDocuments(userId);
+    const stats = {
+      total: docs.length,
+      byType: {},
+      byCategory: {},
+      totalSize: 0
+    };
+
+    docs.forEach(doc => {
+      stats.byType[doc.documentType] = (stats.byType[doc.documentType] || 0) + 1;
+      const cat = doc.metadata?.category || 'other';
+      stats.byCategory[cat] = (stats.byCategory[cat] || 0) + 1;
+      stats.totalSize += doc.fileSizeBytes || 0;
+    });
+
+    return stats;
+  } catch (error) {
+    console.error('Error getting document statistics:', error);
+    return { total: 0, byType: {}, byCategory: {}, totalSize: 0 };
+  }
+}
+
+export async function bulkUploadDocuments({
+  files,
+  userId,
+  documentType,
+  category,
+  description = '',
+  onProgress = null
+}) {
+  const results = [];
+  for (let i = 0; i < files.length; i++) {
+    const res = await uploadDocument({
+      file: files[i],
+      userId,
+      documentType,
+      category,
+      description,
+      onProgress: (p) => onProgress && onProgress(i, p)
+    });
+    results.push(res);
+  }
+  return { successful: results, successCount: results.length };
 }

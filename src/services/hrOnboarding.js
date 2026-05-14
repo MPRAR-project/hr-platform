@@ -1,65 +1,94 @@
-import apiClient from '../api/apiClient';
-
-/**
- * Genuinely refactored HR Onboarding Service
- * Communicates with the Central Backend (Postgres) instead of Firebase Firestore.
- */
+import hrApiClient from '../lib/hrApiClient';
 
 export async function createHROnboardingProfile({ userId, companyId, siteId, createdBy }) {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const response = await apiClient.post(`/hr/${cleanCompanyId}/onboarding`, {
-        userId,
-        siteId,
-        createdBy,
-        type: 'hr_driven' // Distinguish from self-onboarding if needed
-    });
-    return response.data;
+    try {
+        const { data } = await hrApiClient.post('/hr/onboarding', {
+            employeeId: userId,
+            siteId,
+            assignedTo: createdBy
+        });
+        return data;
+    } catch (error) {
+        console.error('[hrOnboarding] Error creating profile:', error);
+        throw error;
+    }
 }
 
 export async function getHROnboardingProfile(userId) {
-    // This assumes we have a route to get onboarding by userId
-    const response = await apiClient.get(`/hr/onboarding/user/${userId}`);
-    return response.data;
+    try {
+        const { data } = await hrApiClient.get(`/hr/onboarding/${userId}`);
+        return data;
+    } catch (error) {
+        if (error.response?.status === 404) return null;
+        console.error('[hrOnboarding] Error getting profile:', error);
+        throw error;
+    }
 }
 
-export async function getHROnboardingProfiles({ companyId, status = null, searchTerm = null }) {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const response = await apiClient.get(`/hr/${cleanCompanyId}/onboarding`, {
-        params: { status, searchTerm, type: 'hr_driven' }
-    });
-    return {
-        profiles: response.data,
-        hasMore: false
-    };
+export async function getHROnboardingProfiles(filters = {}) {
+    try {
+        const { data } = await hrApiClient.get('/hr/onboarding', { params: filters });
+        return data;
+    } catch (error) {
+        console.error('[hrOnboarding] Error getting profiles:', error);
+        throw error;
+    }
 }
 
 export async function updateHROnboardingSection({ profileId, section, data, updatedBy }) {
-    // We'll use a generic "update section" or "update step" endpoint
-    const response = await apiClient.post(`/hr/onboarding/${profileId}/section`, {
-        section,
-        data,
-        updatedBy
-    });
-    return response.data;
-}
-
-export async function completeHROnboarding(profileId, completedBy) {
-    const response = await apiClient.post(`/hr/onboarding/${profileId}/complete`, {
-        completedBy
-    });
-    return response.data;
-}
-
-export async function syncPersonalInfoToHRProfile(userId, personalInfoData) {
-    // This is now handled by the backend during step/section updates
-    // But we'll provide a direct sync endpoint if needed
-    const response = await apiClient.post(`/hr/onboarding/sync`, { userId, personalInfoData });
-    return response.data;
+    try {
+        // In the new backend, we use the employeeId (profileId) and the step endpoint or update endpoint
+        // For simplicity, we can use a generic update if the backend supports it, 
+        // or map these sections to steps.
+        // Let's assume the backend 'update' endpoint handles partial formData updates.
+        const { data: result } = await hrApiClient.put(`/hr/onboarding/${profileId}`, {
+            [`sections.${section}`]: data,
+            updatedBy
+        });
+        return result;
+    } catch (error) {
+        console.error('[hrOnboarding] Error updating section:', error);
+        throw error;
+    }
 }
 
 export function calculateCompletionPercent(profile) {
-    if (!profile) return 0;
-    // Logic depends on the profile structure, for now returning dummy or basic logic
-    const totalSteps = 10;
-    return Math.min(100, (profile.currentStep / totalSteps) * 100);
+    if (!profile || !profile.sections) return 0;
+    const sections = profile.sections;
+    let totalWeight = 0;
+    let completedWeight = 0;
+
+    // Logic kept for UI calculations
+    totalWeight += 25; if (sections.personalInfo?.status === 'completed') completedWeight += 25;
+    totalWeight += 25; if (sections.employmentDetails?.status === 'completed') completedWeight += 25;
+    totalWeight += 25; if (sections.contractDocuments?.status === 'completed') completedWeight += 25;
+    totalWeight += 25; if (sections.allowances?.status === 'completed') completedWeight += 25;
+
+    return Math.round((completedWeight / totalWeight) * 100);
+}
+
+export async function completeHROnboarding(profileId, completedBy) {
+    try {
+        const { data } = await hrApiClient.post(`/hr/onboarding/${profileId}/complete`, {
+            updatedBy: completedBy
+        });
+        return data;
+    } catch (error) {
+        console.error('[hrOnboarding] Error completing onboarding:', error);
+        throw error;
+    }
+}
+
+export async function syncPersonalInfoToHRProfile(userId, personalInfoData) {
+    try {
+        // Backend now handles cross-service sync in the complete/update methods
+        const { data } = await hrApiClient.post(`/hr/onboarding/${userId}/step`, {
+            stepNumber: 1, // personalInfo is usually step 1
+            stepData: personalInfoData
+        });
+        return { success: true, data };
+    } catch (error) {
+        console.error('[hrOnboarding] Error syncing personal info:', error);
+        return { success: false, error: error.message };
+    }
 }

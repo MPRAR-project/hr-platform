@@ -1,66 +1,37 @@
-import { addDoc, collection, getDocs, query, serverTimestamp, where } from 'firebase/firestore';
-import { db } from '../firebase/client';
+import hrApiClient from '../lib/hrApiClient';
 
 /**
- * Log action to audit trail
+ * Log action to audit trail (REST Migration)
  * @param {string} userId - User ID performing the action
- * @param {string} actionType - Type of action (e.g., 'MANUAL_ENTRY_ADDED', 'MANUAL_ENTRY_DELETED', 'TIMESHEET_EDITED')
- * @param {string} resourceType - Type of resource (e.g., 'TIMESHEET', 'TIME_ENTRY')
- * @param {string} resourceId - ID of the resource being modified
- * @param {object} details - Additional details about the action
- * @returns {Promise<string>} - Document ID of the audit log entry
+ * @param {string} actionType - Type of action
+ * @param {string} resourceType - Type of resource
+ * @param {string} resourceId - ID of the resource
+ * @param {object} details - Additional details
+ * @returns {Promise<string>} - ID of the audit log entry
  */
 export async function logAuditTrail(userId, actionType, resourceType, resourceId, details = {}) {
   try {
-    const auditEntry = {
-      userId,
-      actionType,
-      resourceType,
+    const { data } = await hrApiClient.post('/hr/audit', {
+      action: actionType,
+      resource: resourceType,
       resourceId,
-      details: {
+      description: details.action || `Action ${actionType} on ${resourceType}`,
+      metadata: {
         ...details,
-        timestamp: new Date().toISOString(),
         userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'Unknown'
-      },
-      createdAt: serverTimestamp(),
-      weekStartDate: details.weekStartDate || null,
-      companyId: details.companyId || null
-    };
-
-    const docRef = await addDoc(collection(db, 'auditTrail'), auditEntry);
-    
-    console.log(`[AuditTrail] ${actionType} logged:`, {
-      id: docRef.id,
-      userId,
-      actionType,
-      resourceType,
-      resourceId,
-      details
+      }
     });
 
-    return docRef.id;
+    console.log(`[AuditTrail] ${actionType} logged:`, data.id);
+    return data.id;
   } catch (error) {
-    console.error('[AuditTrail] Failed to log action:', {
-      actionType,
-      error: error.message
-    });
-    // Don't throw - audit trail failures shouldn't block operations
+    console.error('[AuditTrail] Failed to log action:', error);
     return null;
   }
 }
 
 /**
  * Log manual timesheet entry
- * @param {string} userId - Employee ID
- * @param {string} entryDate - Date of the entry (YYYY-MM-DD)
- * @param {string} description - Description of the manual entry
- * @param {string} clockIn - Clock in time (HH:MM)
- * @param {string} clockOut - Clock out time (HH:MM)
- * @param {number} breakMin - Break time in minutes
- * @param {string} createdBy - Name of user creating the entry
- * @param {string} weekStartDate - Start date of the week
- * @param {string} companyId - Company ID
- * @returns {Promise<string>} - Audit log entry ID
  */
 export async function logManualEntryAdded(userId, entryDate, description, clockIn, clockOut, breakMin, createdBy, weekStartDate, companyId) {
   return logAuditTrail(
@@ -77,20 +48,13 @@ export async function logManualEntryAdded(userId, entryDate, description, clockI
       createdBy,
       weekStartDate,
       companyId,
-      action: 'Manual timesheet entry added - employee could not clock in or required manual entry'
+      action: 'Manual timesheet entry added'
     }
   );
 }
 
 /**
  * Log manual timesheet entry deletion
- * @param {string} userId - Employee ID
- * @param {string} entryDate - Date of the entry (YYYY-MM-DD)
- * @param {string} description - Description of the manual entry that was deleted
- * @param {string} deletedBy - Name of user deleting the entry
- * @param {string} weekStartDate - Start date of the week
- * @param {string} companyId - Company ID
- * @returns {Promise<string>} - Audit log entry ID
  */
 export async function logManualEntryDeleted(userId, entryDate, description, deletedBy, weekStartDate, companyId) {
   return logAuditTrail(
@@ -111,13 +75,6 @@ export async function logManualEntryDeleted(userId, entryDate, description, dele
 
 /**
  * Log timesheet submission with manual entries
- * @param {string} userId - Employee ID
- * @param {string} weekStartDate - Start date of the week
- * @param {number} manualEntryCount - Number of manual entries in the submission
- * @param {array} manualEntries - Array of manual entries submitted
- * @param {string} submittedBy - Name of user submitting
- * @param {string} companyId - Company ID
- * @returns {Promise<string>} - Audit log entry ID
  */
 export async function logTimesheetSubmissionWithManualEntries(userId, weekStartDate, manualEntryCount, manualEntries, submittedBy, companyId) {
   return logAuditTrail(
@@ -128,7 +85,7 @@ export async function logTimesheetSubmissionWithManualEntries(userId, weekStartD
     {
       weekStartDate,
       manualEntryCount,
-      manualEntries: manualEntries.map(entry => ({
+      manualEntries: (manualEntries || []).map(entry => ({
         date: entry.entryDate || entry.date,
         description: entry.description,
         hours: entry.effectiveHours || 0
@@ -142,30 +99,19 @@ export async function logTimesheetSubmissionWithManualEntries(userId, weekStartD
 
 /**
  * Get audit trail for a timesheet
- * @param {string} userId - Employee ID
- * @param {string} weekStartDate - Start date of the week (YYYY-MM-DD)
- * @returns {Promise<array>} - Array of audit trail entries
  */
 export async function getTimesheetAuditTrail(userId, weekStartDate) {
   try {
-    const q = query(
-      collection(db, 'auditTrail'),
-      where('userId', '==', userId),
-      where('weekStartDate', '==', weekStartDate),
-      where('resourceType', '==', 'TIME_ENTRY')
-    );
-
-    const snapshot = await getDocs(q);
-    const entries = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }));
-
-    return entries.sort((a, b) => {
-      const timeA = a.createdAt?.toDate?.() || new Date(a.details?.timestamp);
-      const timeB = b.createdAt?.toDate?.() || new Date(b.details?.timestamp);
-      return timeB - timeA; // Newest first
+    const { data } = await hrApiClient.get('/hr/audit', {
+      params: {
+        actorId: userId,
+        resource: 'TIME_ENTRY'
+      }
     });
+    
+    // Filter locally for weekStartDate if needed (or we could add it to the backend params)
+    const logs = data.logs || [];
+    return logs.filter(log => log.metadata?.weekStartDate === weekStartDate);
   } catch (error) {
     console.error('[AuditTrail] Failed to fetch audit trail:', error);
     return [];
@@ -174,35 +120,17 @@ export async function getTimesheetAuditTrail(userId, weekStartDate) {
 
 /**
  * Get all manual entries for an employee in a date range
- * @param {string} userId - Employee ID
- * @param {string} startDate - Start date (YYYY-MM-DD)
- * @param {string} endDate - End date (YYYY-MM-DD)
- * @returns {Promise<array>} - Array of manual entry audit logs
  */
 export async function getManualEntriesAuditLog(userId, startDate, endDate) {
   try {
-    const q = query(
-      collection(db, 'auditTrail'),
-      where('userId', '==', userId),
-      where('actionType', 'in', ['MANUAL_ENTRY_ADDED', 'MANUAL_ENTRY_DELETED'])
-    );
+    const { data } = await hrApiClient.get('/hr/audit', {
+      params: { actorId: userId }
+    });
 
-    const snapshot = await getDocs(q);
-    const entries = snapshot.docs
-      .map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }))
-      .filter(entry => {
-        const entryDate = entry.details?.entryDate;
-        if (!entryDate) return false;
-        return entryDate >= startDate && entryDate <= endDate;
-      });
-
-    return entries.sort((a, b) => {
-      const timeA = a.createdAt?.toDate?.() || new Date(a.details?.timestamp);
-      const timeB = b.createdAt?.toDate?.() || new Date(b.details?.timestamp);
-      return timeB - timeA; // Newest first
+    const logs = data.logs || [];
+    return logs.filter(log => {
+      const entryDate = log.metadata?.entryDate;
+      return entryDate && entryDate >= startDate && entryDate <= endDate;
     });
   } catch (error) {
     console.error('[AuditTrail] Failed to fetch manual entries audit log:', error);
@@ -212,53 +140,45 @@ export async function getManualEntriesAuditLog(userId, startDate, endDate) {
 
 /**
  * Get audit trail statistics for a company
- * @param {string} companyId - Company ID
- * @param {string} startDate - Start date (YYYY-MM-DD)
- * @param {string} endDate - End date (YYYY-MM-DD)
- * @returns {Promise<object>} - Statistics object
  */
 export async function getManualEntryStatistics(companyId, startDate, endDate) {
   try {
-    const q = query(
-      collection(db, 'auditTrail'),
-      where('companyId', '==', companyId),
-      where('actionType', 'in', ['MANUAL_ENTRY_ADDED', 'MANUAL_ENTRY_DELETED'])
-    );
+    const { data } = await hrApiClient.get('/hr/audit', {
+      params: { limit: 1000 }
+    });
 
-    const snapshot = await getDocs(q);
-    const entries = snapshot.docs
-      .map(doc => doc.data())
-      .filter(entry => {
-        const entryDate = entry.details?.entryDate;
-        if (!entryDate) return false;
-        return entryDate >= startDate && entryDate <= endDate;
-      });
+    const logs = data.logs || [];
+    const entries = logs.filter(log => {
+      const entryDate = log.metadata?.entryDate;
+      return entryDate && entryDate >= startDate && entryDate <= endDate && 
+             ['MANUAL_ENTRY_ADDED', 'MANUAL_ENTRY_DELETED'].includes(log.action);
+    });
 
     const stats = {
-      totalManualEntries: entries.filter(e => e.actionType === 'MANUAL_ENTRY_ADDED').length,
-      deletedManualEntries: entries.filter(e => e.actionType === 'MANUAL_ENTRY_DELETED').length,
-      usersWithManualEntries: new Set(entries.map(e => e.userId)).size,
+      totalManualEntries: entries.filter(e => e.action === 'MANUAL_ENTRY_ADDED').length,
+      deletedManualEntries: entries.filter(e => e.action === 'MANUAL_ENTRY_DELETED').length,
+      usersWithManualEntries: new Set(entries.map(e => e.actorId)).size,
       byUser: {}
     };
 
-    // Group by user
     entries.forEach(entry => {
-      if (!stats.byUser[entry.userId]) {
-        stats.byUser[entry.userId] = {
-          name: entry.details?.createdBy || 'Unknown',
+      const uid = entry.actorId;
+      if (!stats.byUser[uid]) {
+        stats.byUser[uid] = {
+          name: entry.metadata?.createdBy || 'Unknown',
           added: 0,
           deleted: 0,
           entries: []
         };
       }
-      if (entry.actionType === 'MANUAL_ENTRY_ADDED') {
-        stats.byUser[entry.userId].added++;
+      if (entry.action === 'MANUAL_ENTRY_ADDED') {
+        stats.byUser[uid].added++;
       } else {
-        stats.byUser[entry.userId].deleted++;
+        stats.byUser[uid].deleted++;
       }
-      stats.byUser[entry.userId].entries.push({
-        date: entry.details?.entryDate,
-        description: entry.details?.description
+      stats.byUser[uid].entries.push({
+        date: entry.metadata?.entryDate,
+        description: entry.metadata?.description
       });
     });
 

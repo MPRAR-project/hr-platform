@@ -102,21 +102,27 @@ export async function getUnreadCount(userId) {
   }
 }
 
-// ── Subscribe (WS stub → Phase 6) ────────────────────────────────────────────
+// ── Subscribe (WS integration — Phase 6) ─────────────────────────────────────────
 export function subscribeToNotifications(userId, callback) {
-  // Phase 6: wsClient.on('notification:new', callback);
-  // For now: initial fetch then poll-on-focus
+  // Initial fetch for baseline
   getMyNotifications(userId)
     .then(callback)
-    .catch((err) => console.warn('[notifications] subscription fallback:', err));
+    .catch((err) => console.warn('[notifications] initial fetch failed:', err));
 
   const onFocus = () => {
     getMyNotifications(userId).then(callback).catch(() => {});
   };
   window.addEventListener('focus', onFocus);
 
+  // WebSocket handler
+  const wsHandler = () => {
+    getMyNotifications(userId).then(callback).catch(() => {});
+  };
+  wsClient.on('notification:new', wsHandler);
+
   return () => {
     window.removeEventListener('focus', onFocus);
+    wsClient.off('notification:new', wsHandler);
   };
 }
 
