@@ -14,7 +14,7 @@
         "@google-cloud/pubsub": "^5.2.3",
         "@tailwindcss/typography": "^0.5.16",
         "algoliasearch": "^5.48.1",
-        "axios": "^1.6.0",
+        "axios": "^1.16.1",
         "class-variance-authority": "^0.7.1",
         "date-fns": "^4.1.0",
         "framer-motion": "^12.23.22",

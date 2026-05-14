@@ -1,196 +1,219 @@
-﻿const CENTRAL_TOKEN_KEY = 'mprar_central_token';
-const CENTRAL_API_URL = import.meta.env.VITE_CENTRAL_API_URL || 'http://localhost:5000';
+/**
+ * auth.js — HR Frontend Auth Service (Phase 3 — REST Only)
+ *
+ * All functions now call the HR REST API instead of Firebase.
+ * Firebase calls have been removed from this file.
+ * Firebase SDK imports are preserved in firebase/client.js until Phase 7.
+ *
+ * COMPAT NOTE: createUserWithEmail / getUserByEmail stubs are kept
+ * so that users.js (Phase 4 — not yet migrated) still builds.
+ * These will be removed when users.js is migrated in Phase 4.
+ */
 
-function getStoredToken() {
-  return localStorage.getItem(CENTRAL_TOKEN_KEY);
-}
+import hrApiClient, { tokenStore } from '../lib/hrApiClient';
 
-function setStoredToken(token) {
-  if (token) {
-    localStorage.setItem(CENTRAL_TOKEN_KEY, token);
-  } else {
-    localStorage.removeItem(CENTRAL_TOKEN_KEY);
-  }
-}
+// ── Login with email + password ───────────────────────────────────────────────
+export async function loginWithEmailPassword(email, password) {
+  try {
+    const { data } = await hrApiClient.post('/hr/auth/login', {
+      email: email.toLowerCase().trim(),
+      password,
+    });
 
-function clearStoredToken() {
-  localStorage.removeItem(CENTRAL_TOKEN_KEY);
-}
+    // Store tokens
+    tokenStore.setTokens(data.accessToken, null); // refresh token is in httpOnly cookie
 
-async function fetchWithAuth(path, options = {}) {
-  const { method = 'GET', body = null, headers = {}, skipToken = false } = options;
-  const url = `${CENTRAL_API_URL}${path}`;
-  const fetchHeaders = { ...headers, Accept: 'application/json' };
+    return normalizeEmployee(data.employee);
+  } catch (err) {
+    const message = err.response?.data?.error || err.message || 'Login failed';
+    const status  = err.response?.status;
 
-  if (body && !(body instanceof FormData)) {
-    fetchHeaders['Content-Type'] = 'application/json';
-  }
-
-  const token = getStoredToken();
-  if (!skipToken && token) {
-    fetchHeaders.Authorization = `Bearer ${token}`;
-  }
-
-  const response = await fetch(url, {
-    method,
-    headers: fetchHeaders,
-    credentials: 'include',
-    body: body && !(body instanceof FormData) ? JSON.stringify(body) : body,
-  });
-
-  if (!response.ok) {
-    let payload = null;
-    try {
-      payload = await response.json();
-    } catch (error) {
-      // Ignore malformed JSON on error
+    if (status === 403) {
+      throw new Error('This account does not have HR platform access. Please subscribe via the Central Platform.');
     }
-    const message = payload?.error || response.statusText || `Request failed with status ${response.status}`;
-    const error = new Error(message);
-    error.status = response.status;
-    error.payload = payload;
-    throw error;
+    if (status === 401) {
+      throw new Error('Invalid email or password.');
+    }
+
+    throw new Error(message);
   }
-
-  return response.json().catch(() => null);
 }
 
-function normalizeHrRole(role, centralRole) {
-  if (role) return role;
-  if (!centralRole) return 'employee';
+// ── Login with Central JWT token (SSO bridge) ──────────────────────────────────
+export async function loginWithToken(centralToken) {
+  try {
+    const { data } = await hrApiClient.post('/hr/auth/bridge', {
+      token: centralToken,
+    });
 
-  const normalized = centralRole.toLowerCase();
-  if (normalized === 'owner' || normalized === 'admin') return 'siteManager';
-  if (normalized === 'super_admin') return 'superUser';
-  return normalized;
+    tokenStore.setTokens(data.accessToken, null);
+
+    return normalizeEmployee(data.employee);
+  } catch (err) {
+    const message = err.response?.data?.error || err.message || 'Bridge authentication failed';
+    const status  = err.response?.status;
+
+    if (status === 403) {
+      throw new Error('This company does not have HR platform access. Please subscribe first.');
+    }
+    if (status === 401) {
+      throw new Error('Your session has expired. Please log in again from the Central Platform.');
+    }
+
+    throw new Error(message);
+  }
 }
 
-function normalizeUser(rawUser) {
-  if (!rawUser) return null;
+// ── Logout ────────────────────────────────────────────────────────────────────
+export async function logout() {
+  try {
+    await hrApiClient.post('/hr/auth/logout');
+  } catch {
+    // Non-fatal — clear tokens regardless
+  } finally {
+    tokenStore.clearAll();
+  }
+}
 
-  const role = normalizeHrRole(rawUser.hrRole || rawUser.role, rawUser.centralRole);
-  const displayName = rawUser.displayName || `${rawUser.firstName || ''} ${rawUser.lastName || ''}`.trim() || rawUser.email;
+// ── Get current user (from token payload — no network) ────────────────────────
+export function getCurrentUser() {
+  const token = tokenStore.getAccess();
+  if (!token) return null;
+
+  try {
+    const payload = parseJwt(token);
+
+    // Check expiry
+    if (payload.exp && Date.now() / 1000 > payload.exp) {
+      return null;
+    }
+
+    return {
+      userId:    payload.userId || payload.sub,
+      companyId: payload.companyId,
+      hrRole:    payload.hrRole,
+      email:     payload.email,
+      role:      payload.hrRole, // alias for components that use `role`
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ── Fetch full employee profile from API ──────────────────────────────────────
+export async function fetchMyProfile() {
+  try {
+    const { data } = await hrApiClient.get('/hr/employees/me');
+    return data;
+  } catch (err) {
+    if (err.response?.status === 404) return null;
+    throw err;
+  }
+}
+
+// ── Refresh access token ───────────────────────────────────────────────────────
+export async function refreshAccessToken() {
+  try {
+    const { data } = await hrApiClient.post('/hr/auth/refresh');
+    tokenStore.setAccess(data.accessToken);
+    return data.accessToken;
+  } catch {
+    tokenStore.clearAll();
+    return null;
+  }
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+/**
+ * normalizeEmployee — maps HR employee record to the shape
+ * that AuthContext and all HR pages expect.
+ * Preserves backward compatibility: role, userId, uid, id, displayName all set.
+ */
+function normalizeEmployee(emp) {
+  if (!emp) return null;
+
+  const displayName = [emp.firstName, emp.lastName].filter(Boolean).join(' ') || emp.email || '';
 
   return {
-    ...rawUser,
-    userId: rawUser.id || rawUser.userId,
-    uid: rawUser.id || rawUser.userId,
-    id: rawUser.id || rawUser.userId,
-    role,
+    // Primary fields (new standard)
+    userId:        emp.id,
+    companyId:     emp.companyId,
+    role:          emp.hrRole,
+    hrRole:        emp.hrRole,
+    email:         emp.email,
+    firstName:     emp.firstName || '',
+    lastName:      emp.lastName  || '',
     displayName,
-    email: rawUser.email,
-    companyId: rawUser.companyId,
-    companyName: rawUser.companyName,
-    siteId: rawUser.siteId,
-    isOnboardingCompleted: rawUser.isOnboardingCompleted ?? false,
-    isOnboardingMandatory: rawUser.isOnboardingMandatory ?? false,
-    isTrainingMandatory: rawUser.isTrainingMandatory ?? false,
-    shift: rawUser.shift || 'day',
-    addons: rawUser.addons || {},
-    centralRole: rawUser.centralRole,
-    hrRole: rawUser.hrRole,
+    status:        emp.status,
+    isOnboarded:   emp.isOnboarded || false,
+
+    // Backward-compat aliases (so existing pages keep working)
+    uid:           emp.id,
+    id:            emp.id,
+    primaryRole:   emp.hrRole,
+    isOnboardingCompleted: emp.isOnboarded || false,
+    isOnboardingMandatory: false,
+    isTrainingMandatory:   false,
+    shift:         emp.shift || 'day',
+    siteId:        emp.siteId || null,
+    teamId:        emp.teamId || null,
+    reportsTo:     emp.reportsTo || null,
+    seatCount:     10,
+
+    // Metadata
+    centralUserId: emp.centralUserId,
+    _source:       'hr-rest-api', // debug marker
   };
 }
 
-export async function loginWithEmailPassword(email, password) {
-  if (!email || !password) {
-    throw new Error('Email and password are required.');
-  }
-
-  const response = await fetchWithAuth('/auth/login', {
-    method: 'POST',
-    body: {
-      email: email.toLowerCase().trim(),
-      password,
-      platform: 'hr',
-    },
-    skipToken: true,
-  });
-
-  if (!response || !response.accessToken || !response.user) {
-    throw new Error('Invalid login response from authentication server.');
-  }
-
-  setStoredToken(response.accessToken);
-  return normalizeUser(response.user);
-}
-
-export async function loginWithToken(token) {
-  if (!token) {
-    throw new Error('Bridge token is required.');
-  }
-
-  setStoredToken(token);
-  const response = await fetchWithAuth('/auth/restore', {
-    method: 'POST',
-    body: { token },
-    skipToken: true,
-  });
-
-  if (!response || !response.user) {
-    throw new Error('Failed to restore session from bridge token.');
-  }
-
-  return normalizeUser(response.user);
-}
-
-export async function logout() {
+/**
+ * parseJwt — decode JWT payload without verifying (client-side only).
+ * Verification is done on the server.
+ */
+function parseJwt(token) {
+  if (!token || typeof token !== 'string' || !token.includes('.')) return null;
   try {
-    await fetchWithAuth('/auth/logout', { method: 'POST', skipToken: true });
-  } catch (error) {
-    console.warn('[auth] Logout request failed:', error.message || error);
-  } finally {
-    clearStoredToken();
+    const base64Url = token.split('.')[1];
+    const base64    = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const json      = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+    return JSON.parse(json);
+  } catch (err) {
+    console.warn('Failed to parse JWT:', err.message);
+    return null;
   }
 }
 
-export async function getCurrentUser(retry = true) {
-  try {
-    const response = await fetchWithAuth('/auth/me');
-    if (!response || !response.user) {
-      throw new Error('Invalid auth/me response from authentication server.');
-    }
+export { parseJwt };
 
-    return normalizeUser(response.user);
-  } catch (error) {
-    if (error.status === 401 && retry) {
-      try {
-        await refreshAccessToken();
-        return getCurrentUser(false);
-      } catch (refreshError) {
-        clearStoredToken();
-        throw refreshError;
-      }
-    }
-    throw error;
-  }
+// ── Phase 4 backward-compat stubs ─────────────────────────────────────────────
+// users.js and other Phase 4 files still import these.
+// They delegate to Firebase (still available) until Phase 4 migration is done.
+// REMOVE these stubs when Phase 4 is complete.
+
+export async function createUserWithEmail(email, password) {
+  const { createUserWithEmailAndPassword } = await import('firebase/auth');
+  const { auth } = await import('../firebase/client');
+  const cred = await createUserWithEmailAndPassword(auth, email, password);
+  return cred.user;
 }
 
-export async function refreshAccessToken() {
-  const response = await fetchWithAuth('/auth/refresh', { method: 'POST', skipToken: true });
-
-  if (!response || !response.accessToken) {
-    throw new Error('Failed to refresh authentication token.');
-  }
-
-  setStoredToken(response.accessToken);
-  return response.accessToken;
+export async function getUserByEmail(email) {
+  // Firebase Admin SDK is not available on the client.
+  // This function is called in users.js to check if a user already exists.
+  // Return null → caller treats user as new (safe fallback during transition).
+  console.warn('[auth compat] getUserByEmail: Firebase Admin not available on client — returning null');
+  return null;
 }
 
 export async function sendPasswordResetLink(email) {
-  try {
-    const response = await fetchWithAuth('/auth/forgot-password', {
-      method: 'POST',
-      body: {
-        email: email.toLowerCase().trim(),
-        origin: 'hr',
-      },
-      skipToken: true,
-    });
-
-    return response;
-  } catch (error) {
-    console.error('Password reset request failed via Central:', error);
-    throw error;
-  }
+  // ForgotPasswordPage still uses this — delegates to Firebase until Phase 4.
+  const { sendPasswordResetEmail } = await import('firebase/auth');
+  const { auth } = await import('../firebase/client');
+  await sendPasswordResetEmail(auth, email);
 }

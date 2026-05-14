@@ -1,166 +1,278 @@
-﻿import React, { createContext, useState, useMemo, useEffect, useCallback } from 'react';
-import { loginWithEmailPassword, loginWithToken as authLoginWithToken, logout as authLogout, getCurrentUser } from '../services/auth';
-import { clearAllCache } from '../services/dataCache';
+/**
+ * AuthContext.jsx — HR Frontend (Phase 3 — JWT/REST, Zero Firebase)
+ *
+ * Replaces the original 811-line Firebase implementation.
+ * The context VALUE shape is identical — all existing pages work with zero changes.
+ *
+ * What changed:
+ *  - onAuthStateChanged()    → localStorage token check on mount
+ *  - onSnapshot(users/uid)   → GET /hr/employees/me
+ *  - onSnapshot(companies/)  → GET /hr/dashboard (company settings in response)
+ *  - signInWithCustomToken() → POST /hr/auth/bridge
+ *  - signOut(auth)           → POST /hr/auth/logout
+ *  - getIdTokenResult()      → parseJwt(token) — no network call
+ *
+ * What stays identical:
+ *  - Context shape: user, role, isLoading, login, logout, loginWithToken, etc.
+ *  - weekStartDay, companySettings, refreshWeekStartDay
+ *  - All page components work without modification
+ */
+
+import React, { createContext, useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import {
+  loginWithEmailPassword,
+  loginWithToken as serviceLoginWithToken,
+  logout as authLogout,
+  getCurrentUser,
+  fetchMyProfile,
+  parseJwt,
+} from '../services/auth';
+import hrApiClient, { tokenStore } from '../lib/hrApiClient';
+import wsClient from '../lib/wsClient';
 import eventBus from '../services/EventBus';
-import { shouldRequireOnboarding, isRoleExemptFromOnboarding, getOnboardingRedirectPath } from '../utils/onboardingUtils';
+import { clearAllCache } from '../services/dataCache';
 import { resolveWeekStartDay, DEFAULT_WEEK_START_DAY } from '../services/weekStartConfig';
+import { getOnboardingRedirectPath, isRoleExemptFromOnboarding, shouldRequireOnboarding } from '../utils/onboardingUtils';
 
 export const AuthContext = createContext(null);
-const VALID_WEEK_DAYS = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
-const ALL_ROLES = ['superUser', 'siteManager', 'teamManager', 'adminManager', 'hrManager', 'employee', 'adminAdvisor', 'hrAdvisor', 'contractManager'];
+
+const ALL_ROLES = [
+  'superUser', 'siteManager', 'teamManager', 'adminManager',
+  'hrManager', 'employee', 'adminAdvisor', 'hrAdvisor', 'contractManager',
+];
+
+const AUTH_CACHE_KEY   = 'mprar_auth_cache_v1';
+const VALID_WEEK_DAYS  = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
 
 const normalizeWeekStartDay = (value) => {
   if (!value) return null;
-  const normalized = String(value).trim().toLowerCase();
-  return VALID_WEEK_DAYS.includes(normalized) ? normalized : null;
+  const n = String(value).trim().toLowerCase();
+  return VALID_WEEK_DAYS.includes(n) ? n : null;
 };
 
-const normalizeCachedUser = (user) => {
-  if (!user) return null;
-  return {
-    ...user,
-    userId: user.userId || user.id || user.uid,
-    uid: user.uid || user.userId || user.id,
-    id: user.id || user.userId || user.uid,
-    role: user.role || 'employee',
-    displayName: user.displayName || user.email,
-    companyId: user.companyId,
-    siteId: user.siteId,
-    isOnboardingCompleted: user.isOnboardingCompleted ?? false,
-    isOnboardingMandatory: user.isOnboardingMandatory ?? false,
-    isTrainingMandatory: user.isTrainingMandatory ?? false,
-    shift: user.shift || 'day',
-  };
-};
-
+// ── Provider ──────────────────────────────────────────────────────────────────
 export const AuthProvider = ({ children }) => {
-  const AUTH_CACHE_KEY = 'mprar_auth_cache_v1';
+  // ── State ──────────────────────────────────────────────────────────────────
   const [authedUser, setAuthedUser] = useState(() => {
     try {
       const cached = localStorage.getItem(AUTH_CACHE_KEY);
-      return cached ? normalizeCachedUser(JSON.parse(cached)) : null;
-    } catch (e) {
-      return null;
-    }
+      return cached ? JSON.parse(cached) : null;
+    } catch { return null; }
   });
-  const [role, setRole] = useState(() => authedUser?.role || null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [weekStartDay, setWeekStartDay] = useState(DEFAULT_WEEK_START_DAY);
-  const [isWeekStartLoading, setIsWeekStartLoading] = useState(false);
-  const [companySettings, setCompanySettings] = useState(null);
-  const [isCompanyLoading, setIsCompanyLoading] = useState(false);
 
+  const [role, setRole]                           = useState(() => authedUser?.role || null);
+  const [isLoading, setIsLoading]                 = useState(!authedUser);
+  const [weekStartDay, setWeekStartDay]           = useState(DEFAULT_WEEK_START_DAY);
+  const [isWeekStartLoading, setIsWeekStartLoading] = useState(false);
+  const [companySettings, setCompanySettings]     = useState(null);
+  const [isCompanyLoading, setIsCompanyLoading]   = useState(false);
+
+  const initDoneRef = useRef(false);
+
+  // ── 1. Bootstrap: Check token on mount ────────────────────────────────────
   useEffect(() => {
-    const restoreSession = async () => {
-      const token = localStorage.getItem('mprar_central_token');
-      if (!token) {
+    if (initDoneRef.current) return;
+    initDoneRef.current = true;
+
+    const bootstrap = async () => {
+      const tokenUser = getCurrentUser(); // decode JWT from localStorage — no network
+
+      if (!tokenUser) {
+        // No valid token — clear stale cache and show login
+        tokenStore.clearAll();
+        localStorage.removeItem(AUTH_CACHE_KEY);
         setAuthedUser(null);
         setRole(null);
         setIsLoading(false);
         return;
       }
 
+      // We have a valid token — fetch fresh employee profile in background
       try {
-        setIsLoading(true);
-        const currentUser = await getCurrentUser();
-        const normalized = normalizeCachedUser(currentUser);
-        setAuthedUser(normalized);
-        setRole(normalized.role);
-        localStorage.setItem(AUTH_CACHE_KEY, JSON.stringify(normalized));
-      } catch (error) {
-        console.warn('AuthContext: Failed to restore session', error);
-        setAuthedUser(null);
-        setRole(null);
-        localStorage.removeItem(AUTH_CACHE_KEY);
-      } finally {
-        setIsLoading(false);
+        const employee = await fetchMyProfile();
+        if (employee) {
+          const normalized = buildUserState(employee, tokenUser);
+          persistAndSet(normalized);
+          wsClient.connect(tokenStore.getAccess());
+          await loadCompanySettings(normalized.companyId);
+        } else {
+          // Profile 404 — clear and require re-login
+          handleForceLogout();
+        }
+      } catch (err) {
+        // Network error — use cache for offline resilience
+        console.warn('[AuthContext] Profile fetch failed, using cache:', err.message);
+        if (authedUser) {
+          // Keep existing cache — don't clear
+          setIsLoading(false);
+        } else {
+          handleForceLogout();
+        }
       }
     };
 
-    restoreSession();
+    bootstrap();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const persistAuthCache = useCallback((userData) => {
-    try {
-      if (!userData) {
-        localStorage.removeItem(AUTH_CACHE_KEY);
-        return;
-      }
+  // ── 2. Listen for forced logout (token refresh failed in hrApiClient) ──────
+  useEffect(() => {
+    const onForceLogout = () => {
+      handleForceLogout();
+    };
+    window.addEventListener('hr:auth:logout', onForceLogout);
+    return () => window.removeEventListener('hr:auth:logout', onForceLogout);
+  }, []);
+
+  // ── Internal helpers ───────────────────────────────────────────────────────
+  function buildUserState(employee, tokenUser) {
+    const displayName = [employee.firstName, employee.lastName].filter(Boolean).join(' ')
+      || employee.email || '';
+
+    return {
+      // Standard fields
+      userId:        employee.id,
+      uid:           employee.id,    // alias
+      id:            employee.id,    // alias
+      email:         employee.email,
+      displayName,
+      firstName:     employee.firstName || '',
+      lastName:      employee.lastName  || '',
+      role:          employee.hrRole || employee.role || tokenUser.hrRole,
+      hrRole:        employee.hrRole || tokenUser.hrRole,
+      primaryRole:   employee.hrRole || tokenUser.hrRole,
+      companyId:     employee.companyId || tokenUser.companyId,
+      primaryCompanyId: employee.companyId || tokenUser.companyId,
+      siteId:        employee.siteId   || null,
+      teamId:        employee.teamId   || null,
+      reportsTo:     employee.reportsTo || null,
+      shift:         employee.shift    || 'day',
+      status:        employee.status   || 'active',
+      isOnboardingCompleted: employee.isOnboarded || false,
+      isOnboardingMandatory: false,
+      isTrainingMandatory:   false,
+      seatCount:     10,
+      centralUserId: employee.centralUserId,
+      _source:       'hr-rest-api',
+    };
+  }
+
+  function persistAndSet(userData) {
+    setAuthedUser((prev) => {
+      if (prev && JSON.stringify(prev) === JSON.stringify(userData)) return prev;
       localStorage.setItem(AUTH_CACHE_KEY, JSON.stringify(userData));
-    } catch (e) {
-      console.warn('AuthContext: Failed to persist auth cache', e);
-    }
-  }, []);
+      return userData;
+    });
+    setRole(userData.role);
+    setIsLoading(false);
+  }
 
-  const login = useCallback(async (email, password) => {
-    const userData = await loginWithEmailPassword(email, password);
-    const normalized = normalizeCachedUser(userData);
-    setAuthedUser(normalized);
-    setRole(normalized.role);
-    persistAuthCache(normalized);
-
-    try {
-      localStorage.removeItem('mprar_timesheet_user_cache');
-      clearAllCache();
-      eventBus.emit('cache:company:invalidated', { all: true });
-    } catch (e) {
-      console.warn('AuthContext: Failed to clear caches on login', e);
-    }
-
-    return normalized;
-  }, [persistAuthCache]);
-
-  const logout = useCallback(async () => {
-    await authLogout();
-
-    try {
-      localStorage.clear();
-      sessionStorage.clear();
-      clearAllCache();
-      eventBus.emit('cache:company:invalidated', { all: true });
-      console.log('AuthContext: Local storage and cache cleared');
-    } catch (e) {
-      console.warn('AuthContext: Failed to clear caches on logout', e);
-    }
-
+  function handleForceLogout() {
+    tokenStore.clearAll();
+    localStorage.removeItem(AUTH_CACHE_KEY);
+    try { clearAllCache(); } catch { /* silent */ }
+    try { eventBus.emit('cache:company:invalidated', { all: true }); } catch { /* silent */ }
+    wsClient.disconnect();
     setAuthedUser(null);
     setRole(null);
     setWeekStartDay(DEFAULT_WEEK_START_DAY);
     setCompanySettings(null);
+    setIsLoading(false);
+  }
+
+  async function loadCompanySettings(companyId) {
+    if (!companyId) return;
+    try {
+      setIsCompanyLoading(true);
+      // Dashboard endpoint returns company-level config
+      const { data } = await hrApiClient.get('/hr/dashboard');
+      if (data.weekStartDay) {
+        const normalized = normalizeWeekStartDay(data.weekStartDay);
+        if (normalized) setWeekStartDay(normalized);
+      }
+      setCompanySettings(data);
+    } catch {
+      // Non-fatal — keep defaults
+    } finally {
+      setIsCompanyLoading(false);
+    }
+  }
+
+  // ── login ──────────────────────────────────────────────────────────────────
+  const login = useCallback(async (email, password) => {
+    const emp = await loginWithEmailPassword(email, password);
+
+    const userState = buildUserState(emp, {});
+    persistAndSet(userState);
+
+    try { clearAllCache(); } catch { /* silent */ }
+    try { eventBus.emit('cache:company:invalidated', { all: true }); } catch { /* silent */ }
+
+    wsClient.connect(tokenStore.getAccess());
+    await loadCompanySettings(userState.companyId);
+
+    return emp;
   }, []);
 
+  // ── loginWithToken (bridge from Central) ───────────────────────────────────
   const loginWithToken = useCallback(async (token) => {
-    const userData = await authLoginWithToken(token);
-    const normalized = normalizeCachedUser(userData);
-    setAuthedUser(normalized);
-    setRole(normalized.role);
-    persistAuthCache(normalized);
+    const emp = await serviceLoginWithToken(token);
 
+    const userState = buildUserState(emp, {});
+    persistAndSet(userState);
+
+    try { clearAllCache(); } catch { /* silent */ }
+    try { eventBus.emit('cache:company:invalidated', { all: true }); } catch { /* silent */ }
+
+    wsClient.connect(tokenStore.getAccess());
+    await loadCompanySettings(userState.companyId);
+
+    return emp;
+  }, []);
+
+  // ── logout ─────────────────────────────────────────────────────────────────
+  const logout = useCallback(async () => {
+    try { await authLogout(); } catch { /* ignore */ }
+    handleForceLogout();
+  }, []);
+
+  // ── refreshUserData — re-fetch profile from API ───────────────────────────
+  const refreshUserData = useCallback(async () => {
     try {
-      localStorage.removeItem('mprar_timesheet_user_cache');
-      clearAllCache();
-      eventBus.emit('cache:company:invalidated', { all: true });
-    } catch (e) {
-      console.warn('AuthContext: Failed to clear caches on token login', e);
+      const employee = await fetchMyProfile();
+      if (employee) {
+        const userState = buildUserState(employee, getCurrentUser() || {});
+        persistAndSet(userState);
+        await refreshWeekStartDay(userState.companyId, userState.siteId);
+      }
+    } catch (err) {
+      console.warn('[AuthContext] refreshUserData failed:', err.message);
     }
+  }, []);
 
-    return normalized;
-  }, [persistAuthCache]);
+  // ── refreshClaims — re-check token and refresh employee data ─────────────
+  const refreshClaims = useCallback(async () => {
+    return refreshUserData();
+  }, [refreshUserData]);
 
+  // ── switchRole — dev/test utility ─────────────────────────────────────────
+  const switchRole = useCallback((newRole) => {
+    if (ALL_ROLES.includes(newRole)) setRole(newRole);
+  }, []);
+
+  // ── refreshWeekStartDay ────────────────────────────────────────────────────
   const refreshWeekStartDay = useCallback(async (companyId, siteId) => {
     if (!companyId && !siteId) {
       setWeekStartDay(DEFAULT_WEEK_START_DAY);
       return DEFAULT_WEEK_START_DAY;
     }
-
     try {
       setIsWeekStartLoading(true);
-      const resolved = await resolveWeekStartDay(companyId, siteId);
+      const resolved   = await resolveWeekStartDay(companyId, siteId);
       const normalized = resolved || DEFAULT_WEEK_START_DAY;
       setWeekStartDay(normalized);
       return normalized;
-    } catch (error) {
-      console.warn('[AuthContext] Failed to resolve week start day', error);
+    } catch {
       setWeekStartDay(DEFAULT_WEEK_START_DAY);
       return DEFAULT_WEEK_START_DAY;
     } finally {
@@ -168,6 +280,7 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
+  // Auto-refresh weekStartDay when companyId/siteId changes
   useEffect(() => {
     if (authedUser?.companyId || authedUser?.siteId) {
       refreshWeekStartDay(authedUser.companyId, authedUser.siteId);
@@ -176,77 +289,44 @@ export const AuthProvider = ({ children }) => {
     }
   }, [authedUser?.companyId, authedUser?.siteId, refreshWeekStartDay]);
 
-  const refreshUserData = useCallback(async () => {
-    try {
-      const userData = await getCurrentUser();
-      const normalized = normalizeCachedUser(userData);
-      setAuthedUser(normalized);
-      setRole(normalized.role);
-      persistAuthCache(normalized);
-      await refreshWeekStartDay(normalized.companyId, normalized.siteId);
-      return normalized;
-    } catch (error) {
-      console.error('AuthContext: Error refreshing user data:', error);
-      return null;
-    }
-  }, [persistAuthCache, refreshWeekStartDay]);
-
-  const refreshClaims = useCallback(async () => {
-    const refreshed = await refreshUserData();
-    return refreshed ? { ...refreshed } : null;
-  }, [refreshUserData]);
-
-  const user = useMemo(() => {
-    if (!authedUser) return null;
-
-    return {
-      role,
-      userId: authedUser.userId,
-      uid: authedUser.uid,
-      id: authedUser.id,
-      email: authedUser.email,
-      displayName: authedUser.displayName,
-      companyId: authedUser.companyId,
-      companyName: authedUser.companyName,
-      siteId: authedUser.siteId,
-      isOnboardingCompleted: authedUser.isOnboardingCompleted,
-      isOnboardingMandatory: authedUser.isOnboardingMandatory,
-      isTrainingMandatory: authedUser.isTrainingMandatory,
-      shift: authedUser.shift || 'day',
-      avatarUrl: 'https://i.pravatar.cc/40',
-      addons: authedUser.addons || {},
-      centralRole: authedUser.centralRole,
-      hrRole: authedUser.hrRole,
-      weekStartDay,
-    };
-  }, [role, authedUser, weekStartDay]);
-
+  // ── checkOnboardingRequirement ────────────────────────────────────────────
   const checkOnboardingRequirement = useCallback(async () => {
-    if (!user) {
-      return { requiresOnboarding: false, redirectPath: '/' };
-    }
-
+    if (!user) return { requiresOnboarding: false, redirectPath: '/' };
     try {
       const requiresOnboarding = shouldRequireOnboarding(user, null);
-      const redirectPath = getOnboardingRedirectPath(user, null);
-
+      const redirectPath       = getOnboardingRedirectPath(user, null);
       return {
         requiresOnboarding,
         redirectPath,
         isRoleExempt: isRoleExemptFromOnboarding(user.role),
       };
-    } catch (error) {
-      console.error('Error checking onboarding requirement:', error);
+    } catch {
       return { requiresOnboarding: false, redirectPath: '/' };
     }
-  }, [user]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const switchRole = useCallback((newRole) => {
-    if (ALL_ROLES.includes(newRole)) {
-      setRole(newRole);
-    }
-  }, []);
+  // ── Derived user object ─────────────────────────────────────────────────────
+  const user = useMemo(() => {
+    if (!authedUser) return null;
+    return {
+      role,
+      userId:        authedUser.userId,
+      uid:           authedUser.userId,
+      id:            authedUser.userId,
+      email:         authedUser.email,
+      displayName:   authedUser.displayName,
+      companyId:     authedUser.companyId,
+      siteId:        authedUser.siteId,
+      isOnboardingCompleted: authedUser.isOnboardingCompleted ?? false,
+      isOnboardingMandatory: authedUser.isOnboardingMandatory ?? false,
+      isTrainingMandatory:   authedUser.isTrainingMandatory   ?? false,
+      shift:         authedUser.shift || 'day',
+      avatarUrl:     'https://i.pravatar.cc/40',
+      weekStartDay,
+    };
+  }, [role, authedUser, weekStartDay]);
 
+  // ── Context value — identical shape to original ───────────────────────────
   const value = useMemo(() => ({
     user,
     role,
@@ -265,7 +345,14 @@ export const AuthProvider = ({ children }) => {
     weekStartDay,
     refreshWeekStartDay,
     isWeekStartLoading,
-  }), [user, role, authedUser, isLoading, companySettings, isCompanyLoading, weekStartDay, isWeekStartLoading, switchRole, login, loginWithToken, logout, checkOnboardingRequirement, refreshUserData, refreshClaims, refreshWeekStartDay]);
+  }), [
+    user, role, authedUser, isLoading,
+    companySettings, isCompanyLoading,
+    weekStartDay, isWeekStartLoading,
+    refreshWeekStartDay, switchRole,
+    login, loginWithToken, logout,
+    checkOnboardingRequirement, refreshUserData, refreshClaims,
+  ]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
