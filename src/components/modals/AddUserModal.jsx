@@ -2,9 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { X, Plus, ArrowRight, ChevronDown, Loader2, AlertTriangle } from 'lucide-react';
 import Button from '../ui/Button';
 import { toast } from 'react-toastify';
-import { db } from '../../firebase/client';
-import { collection, getDocs, query, where, limit } from 'firebase/firestore';
-import { addUsersBySiteManager } from '../../services/users';
+import { addUsersBySiteManager, getUsersByCompany } from '../../services/users';
+import { getWorkLocations } from '../../services/workLocations';
+import { getTrainingCourses } from '../../services/trainingService';
 import { useAuth } from '../../hooks/useAuth';
 
 // Email validation function
@@ -297,21 +297,14 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
 
             // 2. Fallback: query sites collection for a site this user manages
             const uid = authed?.userId || authed?.uid;
-            const sitesRef = collection(db, 'sites');
-
-            if (uid) {
-                try {
-                    const q = query(sitesRef, where('managerUserId', '==', uid), limit(1));
-                    const snap = await getDocs(q);
-                    if (!snap.empty) {
-                        const siteId = snap.docs[0].id;
-                        console.log('[AddUserModal] Resolved siteId from sites collection:', siteId);
-                        setResolvedSiteId(siteId);
-                        return;
-                    }
-                } catch (e) {
-                    console.error('[AddUserModal] Failed to resolve siteId by managerUserId:', e);
-                }
+            const sites = await getWorkLocations();
+            if (sites && sites.length > 0) {
+                // Find a site where I am the manager, or just use the first one available
+                const myUid = authed?.userId || authed?.uid;
+                const managed = sites.find(s => s.managerUserId === myUid);
+                const siteId = managed ? managed.id : sites[0].id;
+                console.log('[AddUserModal] Resolved siteId from workLocations service:', siteId);
+                setResolvedSiteId(siteId);
             }
 
             // 3. Also try matching by companyId + primaryRole as a last resort
@@ -346,26 +339,13 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
                 const companyPath = authed.companyId;
                 const companyId = companyPath.includes('/') ? companyPath.split('/')[1] : companyPath;
 
-                const trainingsRef = collection(db, 'trainings');
-                // Check for both legacy "category" and new "trainingType"
-                // Ideally we'd use an OR query, but firestore limits unique field checks. 
-                // We'll fetch active trainings for company and filter in JS for robustness (usually small number of trainings)
-                // Or try simple queries.
-
-                const q = query(
-                    trainingsRef,
-                    where('companyId', '==', companyId),
-                    where('status', '==', 'active')
-                );
-
-                const snap = await getDocs(q);
-                const count = snap.docs.filter(d => {
-                    const data = d.data();
-                    return data.category === 'Mandatory on Sign Up' || data.trainingType === 'Mandatory on Sign Up';
-                }).length;
+                const courses = await getTrainingCourses();
+                const count = courses.filter(d => 
+                    d.status === 'active' && 
+                    (d.category === 'Mandatory on Sign Up' || d.trainingType === 'Mandatory on Sign Up')
+                ).length;
 
                 setMandatoryTrainingsCount(count);
-
             } catch (e) {
                 console.error('Failed to check mandatory trainings', e);
             }
@@ -378,16 +358,11 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
         const loadManagers = async () => {
             try {
                 if (!authed?.companyId) return;
-                const companyPath = authed.companyId;
-                const companyId = companyPath.includes('/') ? companyPath.split('/')[1] : companyPath;
-                const companyIdRaw = companyPath.replace('companies/', '');
+                const companyId = authed.companyId.replace('companies/', '');
                 const roles = ['teamManager', 'adminManager', 'hrManager', 'seniorManager', 'siteManager', 'superUser', 'owner', 'site_manager'];
-                const usersCol = collection(db, 'users');
-                // fetch all potential managers for the company - handle both formats
-                const q = query(usersCol, where('companyId', 'in', [companyIdRaw, `companies/${companyIdRaw}`]));
-                const snap = await getDocs(q);
-                const opts = snap.docs
-                    .map(d => ({ id: d.id, ...d.data() }))
+                
+                const employees = await getUsersByCompany(companyId);
+                const opts = employees
                     .filter(u => roles.includes(getCanonicalRole(u.primaryRole || u.role)))
                     .map(u => ({
                         id: u.id,
@@ -464,42 +439,8 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
                 return;
             }
 
-            // 2. Check for existing users or invites in Firestore to prevent duplicates
-            // We do this sequentially to avoid overwhelming Firestore but we could use Promise.all
-            for (const u of users) {
-                const emailLower = u.email.toLowerCase().trim();
-
-                // Check if user is already an active member of the company
-                const usersRef = collection(db, 'users');
-                const userQuery = query(
-                    usersRef,
-                    where('email', '==', emailLower),
-                    where('companyId', 'in', [companyId, `companies/${companyId}`])
-                );
-                const userSnap = await getDocs(userQuery);
-
-                if (!userSnap.empty) {
-                    toast.error(`User ${u.email} is already in the company. You can update their role and line manager from the Users list.`);
-                    setIsSubmitting(false);
-                    return;
-                }
-
-                // Check if there is already a pending invitation
-                const invitesRef = collection(db, 'invites');
-                const inviteQuery = query(
-                    invitesRef,
-                    where('email', '==', emailLower),
-                    where('companyId', '==', companyId),
-                    where('status', '==', 'pending')
-                );
-                const inviteSnap = await getDocs(inviteQuery);
-
-                if (!inviteSnap.empty) {
-                    toast.error(`An invitation for ${u.email} is already pending. Please revoke the existing invite if you need to resend it.`);
-                    setIsSubmitting(false);
-                    return;
-                }
-            }
+            // Duplicates will be handled by the backend during bulk creation (status 409).
+            // This client-side check is removed for Zero-Firebase compliance and to avoid extra network calls.
 
             // If we passed all checks, proceed with submission
             // We will check siteId per user if baseSiteId is missing

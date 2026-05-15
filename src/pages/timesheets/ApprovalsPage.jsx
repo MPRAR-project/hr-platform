@@ -1,4 +1,3 @@
-import { collection, getDocs, query, where, Timestamp, onSnapshot, documentId } from 'firebase/firestore';
 import { Calendar, CheckCircle, Clock, Search, User, XCircle } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import Header from '../../components/layout/Header';
@@ -9,11 +8,10 @@ import ViewTimesheetModal from '../../components/modals/ViewTimesheetModal';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
 import Tabs from '../../components/ui/Tabs';
-import { db } from '../../firebase/client';
 import { useAuth } from '../../hooks/useAuth';
 import { allowanceService } from '../../services/allowanceService';
 import { absenceService } from '../../services/absenceService';
-import { approveTimesheet, declineTimesheet } from '../../services/timesheets';
+import { approveTimesheet, declineTimesheet, subscribeToCompanyTimesheets } from '../../services/timesheets';
 import { approverEmployeeRoleMatch } from '../../services/teams';
 import { getTimesheetEditPermissions } from '../../utils/timesheetPermissions';
 
@@ -31,55 +29,51 @@ const ApprovalsPage = () => {
   const [selectedItem, setSelectedItem] = useState(null);
   const { user } = useAuth();
 
-  // State for user data cache to avoid refetching
-  const [usersCache, setUsersCache] = useState({});
-
-  // Real-time listener setup for Timesheets
+  // ── Timesheets Subscription (REST + WebSocket) ─────────────────────────────
   useEffect(() => {
-    let unsubscribes = [];
+    if (!user) return;
+    const companyId = user.companyId || '';
+    if (!companyId) return;
 
-    const setupListeners = async () => {
-      const companyId = user?.companyId || '';
-      if (!companyId) { setTimesheets([]); return; }
+    const unsub = subscribeToCompanyTimesheets(companyId, (data) => {
+      const approverRole = user.role || user.primaryRole;
+      
+      const rows = (data || [])
+        .filter(t => t.status === 'pending' || t.status === 'submitted') // Backend uses 'submitted' for HR flow
+        .map(t => {
+          const emp = t.employee || {};
+          const displayName = emp.displayName || `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || t.userId;
+          const primaryRole = emp.primaryRole || 'employee';
 
-      const companyKey = companyId.includes('/') ? companyId.split('/')[1] : companyId;
-      const approverRole = user?.role || user?.primaryRole;
-      const timesheetsCol = collection(db, 'timesheets');
+          if (!approverEmployeeRoleMatch(approverRole, primaryRole)) return null;
 
-      // Define Queries
-      let queries = [];
-      if (approverRole === 'siteManager') {
-        queries.push(query(timesheetsCol, where('companyId', '==', `companies/${companyKey}`), where('status', 'in', ['pending', 'approved-by-team'])));
-        queries.push(query(timesheetsCol, where('companyId', '==', companyKey), where('status', 'in', ['pending', 'approved-by-team'])));
-      } else {
-        const managerId = user?.id || user?.uid;
-        queries.push(query(timesheetsCol, where('managerUserId', '==', managerId), where('status', 'in', ['pending', 'approved-by-team'])));
-      }
+          const totalHours = t.totalHours || 0;
+          return {
+            id: t.id,
+            name: displayName,
+            role: primaryRole,
+            period: t.period || t.weekStart,
+            dates: t.period || t.weekStart,
+            duration: `${t.timeEntries?.length || 0} days`,
+            leaveType: '-',
+            reason: t.adminNotes || '-',
+            regular: `${totalHours}h`,
+            overtime: '0h',
+            total: `${totalHours}h`,
+            status: 'Pending',
+            submittedOn: t.submittedAt ? new Date(t.submittedAt).toISOString().slice(0, 10) : '',
+            raw: t
+          };
+        })
+        .filter(Boolean);
 
-      // Attach Listeners
-      queries.forEach(q => {
-        const unsub = onSnapshot(q, (snap) => {
-          setDocMap(prev => {
-            const next = { ...prev };
-            snap.docChanges().forEach(change => {
-              if (change.type === 'removed') delete next[change.doc.id];
-              else next[change.doc.id] = change.doc;
-            });
-            return next;
-          });
-        });
-        unsubscribes.push(unsub);
-      });
-    };
+      setTimesheets(rows);
+    });
 
-    setupListeners();
+    return () => unsub();
+  }, [user]);
 
-    return () => {
-      unsubscribes.forEach(u => u());
-    };
-  }, [user?.companyId, user?.role, user?.id, user?.uid]);
-
-  // Real-time listener setup for Absences
+  // ── Absences Subscription (REST + WebSocket) ───────────────────────────────
   useEffect(() => {
     if (!user) return;
 
@@ -96,7 +90,7 @@ const ApprovalsPage = () => {
           leaveType: a.leaveType,
           reason: a.reason || a.notes || '-',
           status: a.status,
-          submittedOn: a.createdAt?.toDate ? a.createdAt.toDate().toISOString().slice(0, 10) : '',
+          submittedOn: a.createdAt?.slice ? a.createdAt.slice(0, 10) : '',
           raw: a
         }));
         setAbsences(rows);
@@ -105,107 +99,6 @@ const ApprovalsPage = () => {
 
     return () => unsub();
   }, [user]);
-
-  // Intermediate state for raw docs and map
-  const [docMap, setDocMap] = useState({});
-  const [rawTimesheetDocs, setRawTimesheetDocs] = useState([]); // Derived from map
-
-  // Update rawDocs when map changes
-  useEffect(() => {
-    setRawTimesheetDocs(Object.values(docMap));
-  }, [docMap]);
-
-  // Resolve Users and Build Rows
-  useEffect(() => {
-    const processDocs = async () => {
-      const docs = rawTimesheetDocs;
-      if (docs.length === 0) { setTimesheets([]); return; }
-
-      const deriveTotals = (t) => {
-        if (t && Array.isArray(t.entries) && t.entries.length > 0) {
-          return t.entries.reduce((acc, e) => {
-            acc.grossSec += e?.grossSec || 0;
-            acc.effectiveSec += e?.effectiveSec || 0;
-            acc.overtimeSec += e?.overtimeSec || 0;
-            return acc;
-          }, { grossSec: 0, effectiveSec: 0, overtimeSec: 0 });
-        }
-        return {
-          grossSec: t?.totals?.grossSec || 0,
-          effectiveSec: t?.totals?.effectiveSec || 0,
-          overtimeSec: t?.totals?.overtimeSec || 0
-        };
-      };
-
-      const uniqueUserIds = new Set();
-      docs.forEach(d => {
-        const rawEmpId = d.data().userId;
-        const employeeId = typeof rawEmpId === 'string' && rawEmpId.includes('/') ? rawEmpId.split('/').pop() : rawEmpId;
-        if (employeeId) uniqueUserIds.add(employeeId);
-      });
-
-      // Identify missing users from *current* cache
-      const missing = Array.from(uniqueUserIds).filter(id => !usersCache[id]);
-
-      if (missing.length > 0) {
-        // Fetch missing
-        console.log('Fetching missing users for real-time approvals:', missing);
-        const { documentId } = await import('firebase/firestore');
-        const chunks = [];
-        for (let i = 0; i < missing.length; i += 10) chunks.push(missing.slice(i, i + 10));
-
-        const newUsers = {};
-        await Promise.all(chunks.map(async chunk => {
-          try {
-            const q = query(collection(db, 'users'), where(documentId(), 'in', chunk));
-            const snap = await getDocs(q);
-            snap.forEach(d => newUsers[d.id] = d.data());
-          } catch (e) { console.error(e); }
-        }));
-
-        setUsersCache(prev => ({ ...prev, ...newUsers }));
-        return; // allow effect to re-run with new cache
-      }
-
-      // Build Rows
-      const approverRole = user?.role || user?.primaryRole;
-      const rows = [];
-      for (const d of docs) {
-        const t = d.data();
-        const rawEmpId = t.userId;
-        const employeeId = typeof rawEmpId === 'string' && rawEmpId.includes('/') ? rawEmpId.split('/').pop() : rawEmpId;
-        const emp = usersCache[employeeId];
-
-        if (!emp) continue;
-        if (!approverEmployeeRoleMatch(approverRole, emp.primaryRole)) continue;
-
-        const totals = deriveTotals(t);
-        const totalHours = Math.round(((totals.effectiveSec || 0) / 3600) * 100) / 100;
-        rows.push({
-          id: d.id,
-          name: emp.displayName || emp.email || employeeId,
-          role: emp.primaryRole || 'Employee',
-          period: t.period,
-          dates: t.period,
-          duration: `${t.entries?.length || 0} days`,
-          leaveType: '-',
-          reason: t.adminNotes || '-',
-          regular: `${Math.round(((totals.grossSec || 0) / 3600) * 100) / 100}h`,
-          overtime: '0h',
-          total: `${totalHours}h`,
-          status: t.status === 'pending' ? 'Pending' : 'Approved by Team',
-          submittedOn: t.createdAt?.toDate ? t.createdAt.toDate().toISOString().slice(0, 10) : '',
-          approvedByName: t.approvedByName,
-          approvedAt: t.approvedAt,
-          approvedBy: t.approvedBy,
-          raw: t
-        });
-      }
-      setTimesheets(rows);
-    };
-
-    processDocs();
-  }, [rawTimesheetDocs, usersCache, user?.role, user?.primaryRole]);
 
   // Filtering logic
   const filteredTimesheets = timesheets.filter(t => {

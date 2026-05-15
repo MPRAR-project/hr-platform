@@ -415,3 +415,12 @@ export function subscribeToCompanyUsers(companyId, onUpdate, onError, options = 
 
 // ── Backward compat alias ─────────────────────────────────────────────────────
 export const deleteUser = archiveUser;
+
+export async function getEmployeeCount(companyId) {
+  try {
+    const { data } = await hrApiClient.get('/hr/dashboard');
+    return data.employeeCount || data.totalEmployees || 0;
+  } catch {
+    return 0;
+  }
+}

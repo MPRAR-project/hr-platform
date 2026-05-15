@@ -23,3 +23,21 @@ export const updateInvoiceSettings = async (companyId, settings) => {
         throw error;
     }
 };
+
+export const uploadInvoiceLogo = async (file) => {
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('type', 'invoice_logo');
+
+        const { data } = await hrApiClient.post('/hr/billing/upload-logo', formData, {
+            headers: {
+                'Content-Type': 'multipart/form-data',
+            },
+        });
+        return data.url;
+    } catch (error) {
+        console.error('[invoiceSettings] Error uploading logo:', error);
+        throw error;
+    }
+};

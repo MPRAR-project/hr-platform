@@ -1,6 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { collection, getDocs, updateDoc, doc, query, where, writeBatch } from 'firebase/firestore';
-import { db } from '../../firebase/client';
+import { fetchAllCompanies, updateWeekStartConfig } from '../../services/superAdminService';
 import Header from '../../components/layout/Header';
 import Button from '../../components/ui/Button';
 import { useAuth } from '../../hooks/useAuth';
@@ -36,11 +35,7 @@ const WeekStartHelper = () => {
     const loadCompanies = async () => {
       setIsLoading(true);
       try {
-        const companiesSnap = await getDocs(collection(db, 'companies'));
-        const loaded = companiesSnap.docs.map((docSnap) => ({
-          id: docSnap.id,
-          ...docSnap.data(),
-        }));
+        const loaded = await fetchAllCompanies();
         setCompanies(loaded);
 
         const initialState = loaded.reduce((acc, company) => {
@@ -54,7 +49,7 @@ const WeekStartHelper = () => {
         }, {});
         setFormState(initialState);
       } catch (error) {
-        console.error('[WeekStartHelper] Failed to load companies', error);
+        console.error('[WeekStartHelper] Failed to load companies via REST', error);
         toast.error('Failed to load companies');
       } finally {
         setIsLoading(false);
@@ -88,28 +83,6 @@ const WeekStartHelper = () => {
     }));
   };
 
-  const runBatchedUpdate = async (docs, updater) => {
-    if (!docs.length) return;
-    const commits = [];
-    let batch = writeBatch(db);
-    let count = 0;
-
-    for (const docSnap of docs) {
-      updater(batch, docSnap.ref);
-      count += 1;
-      if (count >= MAX_BATCH_SIZE) {
-        commits.push(batch.commit());
-        batch = writeBatch(db);
-        count = 0;
-      }
-    }
-
-    if (count > 0) {
-      commits.push(batch.commit());
-    }
-
-    await Promise.all(commits);
-  };
 
   const handleSave = async (company) => {
     const state = formState[company.id];
@@ -119,33 +92,16 @@ const WeekStartHelper = () => {
 
     setSavingCompanyId(company.id);
     try {
-      const companyRef = doc(db, 'companies', company.id);
-      await updateDoc(companyRef, { weekStartDay: normalizedDay });
+      await updateWeekStartConfig(company.id, {
+        weekStartDay: normalizedDay,
+        propagateUsers: state.propagateUsers,
+        propagateSites: state.propagateSites
+      });
+
       invalidateWeekStartCaches(`companies/${company.id}`);
-
-      if (state.propagateUsers) {
-        const userCol = collection(db, 'users');
-        const companyIds = [`companies/${company.id}`, company.id].filter(Boolean);
-        const usersSnap = await getDocs(query(userCol, where('companyId', 'in', companyIds)));
-
-        await runBatchedUpdate(usersSnap.docs, (batch, ref) => {
-          batch.update(ref, { weekStartDay: normalizedDay });
-        });
-      }
-
-      if (state.propagateSites) {
-        const siteCol = collection(db, 'sites');
-        const companyIds = [`companies/${company.id}`, company.id].filter(Boolean);
-        const sitesSnap = await getDocs(query(siteCol, where('companyId', 'in', companyIds)));
-
-        await runBatchedUpdate(sitesSnap.docs, (batch, ref) => {
-          batch.update(ref, { weekStartDay: normalizedDay });
-        });
-      }
-
       toast.success(`Updated week start for ${company.name || company.id}`);
     } catch (error) {
-      console.error('[WeekStartHelper] Failed to update week start', error);
+      console.error('[WeekStartHelper] Failed to update week start via REST', error);
       toast.error(`Failed to update ${company.name || company.id}: ${error.message || 'Unknown error'}`);
     } finally {
       setSavingCompanyId(null);
@@ -155,11 +111,7 @@ const WeekStartHelper = () => {
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
-      const companiesSnap = await getDocs(collection(db, 'companies'));
-      const refreshed = companiesSnap.docs.map((docSnap) => ({
-        id: docSnap.id,
-        ...docSnap.data(),
-      }));
+      const refreshed = await fetchAllCompanies();
       setCompanies(refreshed);
       const refreshedState = refreshed.reduce((acc, company) => {
         const normalized = normalizeWeekStartDay(company.weekStartDay);

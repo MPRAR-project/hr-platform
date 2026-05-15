@@ -8,10 +8,11 @@ import React, { createContext, useContext, useEffect, useState, useCallback, use
 import { useAuth } from '../hooks/useAuth';
 import { useClockSessionContext } from './ClockSessionContext';
 import {
-    subscribeUserTimesheets,
-    processWeeklySummaries,
-    processCurrentWeekTimesheets
-} from '../services/firestoreSubscriptions';
+    fetchWeeklySummaries,
+    getUserTimesheetsByWeek,
+    subscribeToTimesheets,
+    getCompanyWorkSchedule
+} from '../services/timesheets';
 import { processWeekData, calculateWeekTotals } from '../services/weekDataProcessor';
 import { getUserWeekContext } from '../services/timesheets';
 import { getWeekRangeForDate, formatISODate, DEFAULT_WEEK_START_DAY } from '../utils/weekStartUtils';
@@ -112,21 +113,13 @@ export const TimesheetProvider = ({ children }) => {
     const updateWeeklySummaries = useCallback(async (docs, force = false) => {
         if (!user?.uid) return;
 
-        // Optimization: Create a hash of document IDs and update times
-        // This prevents expensive recalculation if the data hasn't actually changed
-        const docHash = docs.map(d => `${d.id}_${d.updatedAt?.seconds || ''}`).join('|') + `_sched_${JSON.stringify(currentSchedule)}`;
-        if (!force && lastProcessedRef.current === docHash) {
-            return;
-        }
-
         try {
-            const summaries = await processWeeklySummaries(docs, user.uid, 12);
-            setWeeklySummaries(summaries);
-            lastProcessedRef.current = docHash;
+            // docs are already normalized from REST in our service
+            setWeeklySummaries(docs);
         } catch (err) {
             console.error('[TimesheetProvider] Error processing weekly summaries:', err);
         }
-    }, [user?.uid, currentSchedule]);
+    }, [user?.uid]);
 
     // Process timesheet documents into current week data
     const updateCurrentWeekData = useCallback(async (docs) => {
@@ -140,13 +133,11 @@ export const TimesheetProvider = ({ children }) => {
         }
     }, [user?.uid]);
 
-    // Get company work schedule (not cached indefinitely - clears every 2 minutes)
+    // Get company work schedule via REST
     const scheduleLastFetched = useRef({});
     const getCompanySchedule = useCallback(async (userId) => {
-        if (!userId) return {};
+        if (!userId || !user?.companyId) return {};
 
-        // Cache for 2 minutes to avoid hammering Firestore, but auto-expire
-        // so schedule changes made by site manager are picked up quickly.
         const now = Date.now();
         const lastFetch = scheduleLastFetched.current[userId] || 0;
         if (scheduleCacheRef.current[userId] && (now - lastFetch) < 2 * 60 * 1000) {
@@ -154,19 +145,7 @@ export const TimesheetProvider = ({ children }) => {
         }
 
         try {
-            const { companyIdPath } = await getUserWeekContext(userId);
-            if (!companyIdPath) return {};
-
-            const compKey = companyIdPath.includes('/') ? companyIdPath.split('/')[1] : companyIdPath;
-            if (!compKey) return {};
-
-            const { doc, getDoc } = await import('firebase/firestore');
-            const { db } = await import('../firebase/client');
-
-            const compRef = doc(db, 'companies', compKey);
-            const compSnap = await getDoc(compRef);
-
-            const schedule = compSnap.exists() ? (compSnap.data().workSchedule || {}) : {};
+            const schedule = await getCompanyWorkSchedule(user.companyId);
             scheduleCacheRef.current[userId] = schedule;
             scheduleLastFetched.current[userId] = now;
             return schedule;
@@ -174,7 +153,7 @@ export const TimesheetProvider = ({ children }) => {
             console.error('[TimesheetProvider] Error getting company schedule:', err);
             return {};
         }
-    }, []);
+    }, [user?.companyId]);
 
     // Keep sessionDocs ref updated
     useEffect(() => {
@@ -333,7 +312,7 @@ export const TimesheetProvider = ({ children }) => {
         return !!weeksByKey[weekKey];
     }, [weeksByKey]);
 
-    // Subscribe to timesheet documents
+    // Subscribe to timesheet documents via REST + WebSocket
     useEffect(() => {
         if (!user?.uid) {
             setTimesheetDocs([]);
@@ -343,31 +322,29 @@ export const TimesheetProvider = ({ children }) => {
             return;
         }
 
-        setIsLoading(true);
-        isInitialLoadRef.current = true;
-
-        // Fallback timeout to ensure loading stops after reasonable time
-        const timeoutId = setTimeout(() => {
-            if (isInitialLoadRef.current) {
+        const fetchData = async () => {
+            setIsLoading(true);
+            try {
+                const sheets = await fetchWeeklySummaries(user.uid, 12);
+                handleTimesheetUpdate(sheets);
+            } catch (err) {
+                console.error('[TimesheetProvider] Fetch error:', err);
+            } finally {
                 setIsLoading(false);
-                isInitialLoadRef.current = false;
-            }
-        }, 10000); // 10 second timeout
-
-        const unsubscribe = subscribeUserTimesheets(user.uid, handleTimesheetUpdate);
-
-        unsubscribeRef.current = unsubscribe;
-
-        return () => {
-            clearTimeout(timeoutId);
-            if (unsubscribeRef.current) {
-                unsubscribeRef.current();
-                unsubscribeRef.current = null;
             }
         };
-        // Only depend on user.uid - handleTimesheetUpdate is stable due to useCallback
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [user?.uid]);
+
+        fetchData();
+
+        // WebSocket listener
+        const unsubscribe = subscribeToTimesheets(user.uid, user.companyId, '', (sheets) => {
+            handleTimesheetUpdate(sheets);
+        });
+
+        return () => {
+            if (unsubscribe) unsubscribe();
+        };
+    }, [user?.uid, user?.companyId]);
 
     const refresh = useCallback(() => {
         // Clear schedule cache so we always re-fetch fresh schedule data on refresh.

@@ -3,8 +3,7 @@ import { X, ArrowRight, Briefcase, Calendar, CreditCard, ChevronDown, Save } fro
 import Badge from '../ui/Badge';
 import Button from '../ui/Button';
 
-import { db } from '../../firebase/client';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { getUsersByCompany, getUserById, updateUserBySiteManager } from '../../services/users';
 
 const AssignEmployeeModal = ({ isOpen, onClose, onSave, employee }) => {
   const [formData, setFormData] = useState({
@@ -24,35 +23,30 @@ const AssignEmployeeModal = ({ isOpen, onClose, onSave, employee }) => {
     const load = async () => {
       try {
         const companyIdPath = employee?.companyId || employee?.application?.companyId || '';
-        const companyId = companyIdPath.split('/')[1];
+        const companyId = companyIdPath.replace('companies/', '');
         if (!companyId || !isOpen) return;
-        const tq = query(collection(db, 'users'), where('companyId', '==', `companies/${companyId}`), where('primaryRole', 'in', ['teamManager']));
-        const aq = query(collection(db, 'users'), where('companyId', '==', `companies/${companyId}`), where('primaryRole', 'in', ['adminManager']));
-        const hq = query(collection(db, 'users'), where('companyId', '==', `companies/${companyId}`), where('primaryRole', 'in', ['hrManager']));
-        const sq = query(collection(db, 'users'), where('companyId', '==', `companies/${companyId}`), where('primaryRole', 'in', ['seniorManager']));
-        const [tSnap, aSnap, hSnap, sSnap] = await Promise.all([getDocs(tq), getDocs(aq), getDocs(hq), getDocs(sq)]);
-        setTeamManagers(tSnap.docs.map(d => ({ id: d.id, name: d.data().displayName || d.data().email })));
-        setAdmins(aSnap.docs.map(d => ({ id: d.id, name: d.data().displayName || d.data().email })));
-        setHrManagers(hSnap.docs.map(d => ({ id: d.id, name: d.data().displayName || d.data().email })));
-        setSeniorManagers(sSnap.docs.map(d => ({ id: d.id, name: d.data().displayName || d.data().email })));
 
-        // Load current assignment for this employee
-        try {
-          const { doc, getDoc } = await import('firebase/firestore');
-          const empId = employee?.id || employee?.application?.userId;
-          if (empId) {
-            const eSnap = await getDoc(doc(db, 'users', empId));
-            const empData = eSnap.exists() ? eSnap.data() : {};
-            const repId = empData.managerUserId || empData.reportsTo || '';
-            if (repId) {
-              const mSnap = await getDoc(doc(db, 'users', repId));
-              const mName = mSnap.exists() ? (mSnap.data().displayName || mSnap.data().email || repId) : repId;
-              setCurrentAssignment({ managerId: repId, managerName: mName });
-            } else {
-              setCurrentAssignment({ managerId: '', managerName: '' });
-            }
+        // Use REST API to get all users and filter by role
+        const allUsers = await getUsersByCompany(companyId);
+        
+        setTeamManagers(allUsers.filter(u => u.primaryRole === 'teamManager').map(u => ({ id: u.id, name: u.displayName || u.email })));
+        setAdmins(allUsers.filter(u => u.primaryRole === 'adminManager').map(u => ({ id: u.id, name: u.displayName || u.email })));
+        setHrManagers(allUsers.filter(u => u.primaryRole === 'hrManager').map(u => ({ id: u.id, name: u.displayName || u.email })));
+        setSeniorManagers(allUsers.filter(u => u.primaryRole === 'seniorManager').map(u => ({ id: u.id, name: u.displayName || u.email })));
+
+        // Load current assignment for this employee via REST
+        const empId = employee?.id || employee?.application?.userId;
+        if (empId) {
+          const empData = await getUserById(empId);
+          const repId = empData?.managerUserId || empData?.reportsTo || '';
+          if (repId) {
+            const manager = await getUserById(repId);
+            const mName = manager ? (manager.displayName || manager.email || repId) : repId;
+            setCurrentAssignment({ managerId: repId, managerName: mName });
+          } else {
+            setCurrentAssignment({ managerId: '', managerName: '' });
           }
-        } catch { }
+        }
       } catch (e) { console.error('Failed to load assignees', e); }
     };
     load();
@@ -71,15 +65,11 @@ const AssignEmployeeModal = ({ isOpen, onClose, onSave, employee }) => {
 
   const handleSave = async () => {
     try {
-      // Persist bi-directional assignment
-      // 1) Update employee.reportsTo and manager field based on target role
       const employeeId = employee?.id || employee?.application?.userId;
       const companyIdPath = employee?.application?.companyId || employee?.companyId || '';
-      const companyId = companyIdPath.split('/')[1] || '';
+      const companyId = companyIdPath.replace('companies/', '');
       if (!employeeId || !companyId) return onClose();
 
-      // Decide which manager type to use based on employee role
-      // employee -> teamManager; hrAdvisor -> hrManager; adminAdvisor -> adminManager
       let targetManagerId = '';
       if (['teamManager', 'adminManager', 'hrManager'].includes(employee?.role)) {
         targetManagerId = formData.seniorManager;
@@ -91,54 +81,15 @@ const AssignEmployeeModal = ({ isOpen, onClose, onSave, employee }) => {
 
       if (!targetManagerId) return onClose();
 
-      const { doc, updateDoc, arrayUnion, arrayRemove, collection, setDoc, serverTimestamp, getDoc } = await import('firebase/firestore');
-      // Enforce single manager per user:
-      // 1) Read current employee.reportsTo; if exists and different, remove from previous manager.managedEmployees
-      try {
-        const eRef = doc(db, 'users', employeeId);
-        const eSnap = await getDoc(eRef);
-        if (eSnap.exists()) {
-          const prevManager = eSnap.data().reportsTo || eSnap.data().managerUserId;
-          if (prevManager && prevManager !== targetManagerId) {
-            try { await updateDoc(doc(db, 'users', prevManager), { managedEmployees: arrayRemove(employeeId) }); } catch { }
-          }
-        }
-      } catch { }
-
-      // 2) Update employee -> reportsTo and managerUserId to manager's userId
-      await updateDoc(doc(db, 'users', employeeId), {
+      // Update via REST API
+      // The backend should handle managedEmployees array sync and assignment audit records
+      await updateUserBySiteManager(employeeId, {
         reportsTo: targetManagerId,
-        teamId: targetManagerId, // Denormalized: Team = Manager
-        managerUserId: targetManagerId
-      });
-      // 3) Update manager -> add this employee to managedEmployees array
-      try { await updateDoc(doc(db, 'users', targetManagerId), { managedEmployees: arrayUnion(employeeId) }); } catch { }
-
-      // Create/append assignment record for auditing/reporting
-      try {
-        const aRef = doc(collection(db, 'assignments'));
-        await setDoc(aRef, {
-          employeeId,
-          managerUserId: targetManagerId,
-          companyId: `companies/${companyId}`,
-          employeeRole: role,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
-        });
-      } catch { }
+        managerUserId: targetManagerId,
+        siteId: employee?.siteId || undefined
+      }, companyId);
 
       onSave({ employeeId, managerUserId: targetManagerId });
-      
-      // 4) Sync to Central Platform Postgres
-      try {
-        const { syncUserToCentral } = await import('../../services/users');
-        await syncUserToCentral(employeeId, companyId, {
-          reportsTo: targetManagerId
-        });
-      } catch (syncErr) {
-        console.warn('[Assign] Central sync failed:', syncErr.message);
-      }
-
       onClose();
     } catch (e) { console.error('Assign save failed', e); onClose(); }
   };

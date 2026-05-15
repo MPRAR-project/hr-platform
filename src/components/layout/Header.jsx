@@ -1,9 +1,8 @@
-import { doc, getDoc } from 'firebase/firestore';
 import { ChevronDown, Menu, User } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { db } from '../../firebase/client';
 import { useAuth } from '../../hooks/useAuth';
 import { useUI } from '../../hooks/useUI';
+import hrApiClient from '../../lib/hrApiClient';
 import NotificationBell from '../common/NotificationBell';
 
 
@@ -18,55 +17,22 @@ const Header = ({ title, subtitle, action, backButton, onBack }) => {
   const pretty = (role) =>
     role.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase());
 
-  // Load company logo from Firestore
+  // Load company logo from REST API
   useEffect(() => {
-    const loadCompanyLogo = async () => {
-      if (!user?.companyId) {
-        return;
-      }
+    const loadData = async () => {
+      if (!user?.companyId) return;
 
       try {
-        const companyId = user.companyId.includes('/') ? user.companyId.split('/').pop() : user.companyId;
-        const companyRef = doc(db, 'companies', companyId);
-        const companySnap = await getDoc(companyRef);
-
-        if (companySnap.exists()) {
-          const data = companySnap.data();
-          setCompanyLogo(data.logoURL || data.logoUrl || data.logo || null);
-        }
+        // Fetch from dashboard which contains company settings
+        const { data } = await hrApiClient.get('/hr/dashboard');
+        setCompanyLogo(data.logoURL || data.logoUrl || data.logo || null);
       } catch (error) {
-        console.error('Error loading company logo:', error);
+        console.error('Error loading header data:', error);
       }
     };
 
-    loadCompanyLogo();
+    loadData();
   }, [user?.companyId]);
-
-  // Load user's profile photo from Firestore
-  useEffect(() => {
-    const loadUserPhoto = async () => {
-      if (!user?.uid) {
-        setIsLoadingPhoto(false);
-        return;
-      }
-
-      try {
-        const userRef = doc(db, 'users', user.uid);
-        const userSnap = await getDoc(userRef);
-
-        if (userSnap.exists()) {
-          const userData = userSnap.data();
-          setUserPhotoURL(userData.photoURL || null);
-        }
-      } catch (error) {
-        console.error('Error loading user photo:', error);
-      } finally {
-        setIsLoadingPhoto(false);
-      }
-    };
-
-    loadUserPhoto();
-  }, [user?.uid]);
 
   return (
     <header className="h-[80px] sticky top-0 bg-white flex-shrink-0 bg-bg-primary border-b border-border-primary flex items-center justify-between px-4 sm:px-4xl z-30">

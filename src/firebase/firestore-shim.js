@@ -1,43 +1,55 @@
-/**
- * Firestore Shim for MPRAR Central
- * Satisfies all legacy firestore imports by providing no-op or proxy functions.
- */
+// Firebase Shim for MPRAR HR Frontend (Post-Migration)
+// This file provides empty mocks for Firebase SDKs to prevent build errors.
 
-export const getFirestore = () => ({ _isShim: true });
-export const getCountFromServer = async () => ({ data: () => ({ count: 0 }) });
-export const collection = (db, path) => ({ path, _isShim: true });
-export const doc = (db, path, id) => ({ path, id, _isShim: true });
-export const query = (col, ...constraints) => ({ col, constraints, _isShim: true });
-export const where = (field, op, value) => ({ field, op, value, _isShim: true });
-export const getDocs = async (q) => ({ docs: [], empty: true, size: 0 });
-export const getDoc = async (d) => ({ exists: () => false, data: () => ({}) });
-export const setDoc = async () => {};
-export const updateDoc = async () => {};
-export const deleteDoc = async () => {};
-export const addDoc = async () => ({ id: 'shim-' + Date.now() });
-export const onSnapshot = (q, cb) => { cb({ docs: [], empty: true }); return () => {}; };
-export const serverTimestamp = () => new Date();
-export const increment = (n) => n;
-export const arrayUnion = (...items) => items;
-export const arrayRemove = (...items) => items;
-export const orderBy = () => ({ _isShim: true });
-export const limit = () => ({ _isShim: true });
-export const startAfter = () => ({ _isShim: true });
-export const writeBatch = () => ({ 
-  set: () => {}, 
-  update: () => {}, 
-  delete: () => {}, 
-  commit: async () => {} 
+export const initializeApp = () => ({});
+export const getAuth = () => ({ 
+  currentUser: null, 
+  onAuthStateChanged: (cb) => { cb(null); return () => {}; },
+  signOut: async () => {},
 });
-export const documentId = () => '__name__';
+export const getFirestore = () => ({});
+export const getFunctions = () => ({});
+export const getStorage = () => ({});
+
+// Firestore mocks
+export const doc = () => ({});
+export const getDoc = async () => ({ exists: () => false, data: () => ({}) });
+export const updateDoc = async () => {};
+export const setDoc = async () => {};
+export const collection = () => ({});
+export const query = () => ({});
+export const where = () => ({});
+export const limit = () => ({});
+export const orderBy = () => ({});
+export const startAfter = () => ({});
+export const onSnapshot = () => () => {};
+export const getDocs = async () => ({ docs: [], forEach: () => {} });
+export const serverTimestamp = () => new Date();
 export const Timestamp = {
-    now: () => ({ toDate: () => new Date(), seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 }),
-    fromDate: (d) => ({ toDate: () => d, seconds: Math.floor(d.getTime() / 1000), nanoseconds: 0 }),
-    fromMillis: (m) => ({ toDate: () => new Date(m), seconds: Math.floor(m / 1000), nanoseconds: 0 })
+  now: () => new Date(),
+  fromDate: (date) => date,
+  fromMillis: (ms) => new Date(ms),
 };
+export const writeBatch = () => ({
+  set: () => {},
+  update: () => {},
+  delete: () => {},
+  commit: async () => {},
+});
+
+// Auth mocks
+export const signInWithEmailAndPassword = async () => ({ user: {} });
+export const createUserWithEmailAndPassword = async () => ({ user: {} });
+export const onIdTokenChanged = () => () => {};
+
+// Functions mocks
+export const httpsCallable = () => async () => ({ data: {} });
+
+// Storage mocks
+export const ref = () => ({});
+export const uploadBytes = async () => ({});
+export const getDownloadURL = async () => '';
 
 export default {
-    collection, doc, query, where, getDocs, getDoc, setDoc, updateDoc, deleteDoc, addDoc, onSnapshot,
-    serverTimestamp, increment, arrayUnion, arrayRemove, orderBy, limit, startAfter, writeBatch,
-    documentId, Timestamp
+  initializeApp, getAuth, getFirestore, getFunctions, getStorage
 };

@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, where, getDocs } from 'firebase/firestore';
-import { db } from '../../firebase/client';
+import { getSessionsForDateRange } from '../../services/timeClock';
 import { useAuth } from '../../hooks/useAuth';
 import Header from '../../components/layout/Header';
 import Loader from '../../components/ui/Loader';
@@ -20,38 +19,26 @@ const SessionDebugPage = () => {
 
             try {
                 setLoading(true);
-                const companyId = user.companyId.includes('/')
-                    ? user.companyId.split('/')[1]
-                    : user.companyId;
-
-                console.log('[SessionDebug] Fetching sessions for:', {
+                
+                // Fetch all sessions via REST (no date filter for debug view)
+                const sessionDocs = await getSessionsForDateRange({ 
                     userId: user.uid,
-                    companyId
+                    startDate: new Date('2020-01-01'), // Look back far enough
+                    endDate: new Date()
                 });
 
-                // Query all sessions for this user
-                const sessionsQuery = query(
-                    collection(db, 'timeClockSessions'),
-                    where('companyId', '==', companyId),
-                    where('userId', '==', user.uid)
-                );
-
-                const snapshot = await getDocs(sessionsQuery);
-
-                console.log('[SessionDebug] Found sessions:', snapshot.docs.length);
-
-                const sessionData = snapshot.docs.map(doc => {
-                    const data = doc.data();
-                    const startedAt = data.startedAt?.toDate?.() || data.startedAt;
+                const sessionData = sessionDocs.map(data => {
+                    const startedAt = data.startedAt ? new Date(data.startedAt) : null;
+                    const endedAt = data.endedAt ? new Date(data.endedAt) : null;
 
                     return {
-                        id: doc.id,
+                        id: data.id || data.sessionId,
                         userId: data.userId,
                         companyId: data.companyId,
                         startedAt: startedAt,
-                        startedAtISO: startedAt instanceof Date ? startedAt.toISOString() : 'Invalid',
-                        dateString: startedAt instanceof Date ? startedAt.toISOString().slice(0, 10) : 'Invalid',
-                        endedAt: data.endedAt?.toDate?.() || data.endedAt,
+                        startedAtISO: startedAt ? startedAt.toISOString() : 'Invalid',
+                        dateString: startedAt ? startedAt.toISOString().slice(0, 10) : 'Invalid',
+                        endedAt: endedAt,
                         status: data.status,
                         rawData: data
                     };
@@ -59,24 +46,14 @@ const SessionDebugPage = () => {
 
                 // Sort by date descending
                 sessionData.sort((a, b) => {
-                    const aTime = a.startedAt instanceof Date ? a.startedAt.getTime() : 0;
-                    const bTime = b.startedAt instanceof Date ? b.startedAt.getTime() : 0;
+                    const aTime = a.startedAt?.getTime() || 0;
+                    const bTime = b.startedAt?.getTime() || 0;
                     return bTime - aTime;
                 });
 
                 setSessions(sessionData);
-                console.log('[SessionDebug] Processed sessions:', sessionData);
-
-                // Check for specific Dec 30 session
-                const dec30Session = sessionData.find(s => s.id === 'dntZEWi5gzB2qsObgHXL');
-                if (dec30Session) {
-                    console.log('✅ Dec 30 session FOUND:', dec30Session);
-                } else {
-                    console.log('❌ Dec 30 session NOT FOUND in results');
-                }
-
             } catch (err) {
-                console.error('[SessionDebug] Error:', err);
+                console.error('[SessionDebug] Error via REST:', err);
                 setError(err.message);
             } finally {
                 setLoading(false);

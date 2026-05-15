@@ -21,9 +21,8 @@ import { getRoleName } from '../../utils/getRoleName';
 import { useCache } from '../../contexts/CacheContext';
 import { LoadingSkeleton } from '../../components/ui/LoadingSkeleton';
 import { AllowancesTab } from '../profile/components/AllowanceTab';
-import { collection, query, where, getDocs, limit } from 'firebase/firestore';
-import { db } from '../../firebase/client';
 import { safeParseDate } from '../../utils/safeDateParse';
+import hrApiClient from '../../lib/hrApiClient';
 
 const AbsenceManagementPage = () => {
   const { user } = useAuth();
@@ -92,7 +91,7 @@ const AbsenceManagementPage = () => {
       setLoading(true);
       setError(null);
       // Subscribe to real-time updates for user's absences
-      unsubscribe = absenceService.subscribeToUserAbsences(user.userId, (absences, error) => {
+      unsubscribe = absenceService.subscribeToAbsences(user, (absences, error) => {
         if (error) {
           console.error('Error in absences subscription:', error);
           setError(error.message);
@@ -296,32 +295,13 @@ const AbsenceManagementPage = () => {
       const usersPromise = getUsersByCompany(user.companyId);
       const absencesPromise = (async () => {
         try {
-          const rawCompId = normalizeId(user.companyId);
-          const pathCompId = `companies/${rawCompId}`;
-
-          // Validate companyId before using in query
-          if (!rawCompId || rawCompId === 'undefined') {
-            console.error('❌ Invalid companyId for query:', rawCompId);
-            return [];
-          }
-
-          // Simplified query to ensure it matches stored data regardless of format
-          // and avoids composite index requirements
-          const absenceQuery = query(
-            collection(db, 'absences'),
-            where('companyId', 'in', [rawCompId, pathCompId]),
-            limit(5000) // Increased limit to ensure we get enough data
-          );
-
-          const absenceSnap = await getDocs(absenceQuery);
-          return absenceSnap.docs.map(d => {
-            const data = d.data();
-            return {
-              userId: data.userId,
-              status: data.status,
-              startDate: data.startDate // Still helpful to have if we need to filter client-side
-            };
-          });
+          const { data } = await hrApiClient.get('/hr/absences');
+          const absences = data.absences || data || [];
+          return absences.map(a => ({
+            userId: a.userId,
+            status: a.status,
+            startDate: a.startDate
+          }));
         } catch (err) {
           console.warn('Failed to fetch absences', err);
           return [];

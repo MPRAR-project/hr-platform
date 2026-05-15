@@ -3,8 +3,8 @@ import React, { useEffect, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { getCompanyPlugins } from '../../services/companyManagementService';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../../firebase/client';
+import { useUI } from '../../hooks/useUI';
+import hrApiClient from '../../lib/hrApiClient';
 import {
   LayoutDashboard,
   CreditCard,
@@ -32,9 +32,8 @@ import {
   ChevronDown,
   ChevronRight,
   DollarSign,
-  Building2
+  Building2,
 } from 'lucide-react';
-import { useUI } from '../../hooks/useUI';
 
 const NavItem = ({ to, icon: Icon, label, onClick, className }) => {
   return (
@@ -113,25 +112,21 @@ const Sidebar = () => {
     const checkPluginAndLogo = async () => {
       // Prioritize company context if available (even for super users)
       if (user?.companyId) {
-        const companyId = user.companyId.includes('/') ? user.companyId.split('/').pop() : user.companyId;
-        const plugins = await getCompanyPlugins(user.companyId);
-        setHasInvoicePlugin(Boolean(plugins.payslipAndInvoice));
-        setHasSchedulingPlugin(Boolean(plugins.scheduling));
-        setHasAbsencePlugin(plugins.absence !== false); // Default to true if undefined
-
-        // Fetch Company Logo
         try {
-          const companyRef = doc(db, 'companies', companyId);
-          const companySnap = await getDoc(companyRef);
-          if (companySnap.exists()) {
-            const data = companySnap.data();
-            setCompanyLogo(data.logoURL || data.logoUrl || data.logo || null);
-            setCompanyName(data.name || data.companyName || null);
-          }
+          // Fetch from dashboard which contains company settings and plugins
+          const { data: dashboardData } = await hrApiClient.get('/hr/dashboard');
+          
+          setHasInvoicePlugin(Boolean(dashboardData.plugins?.payslipAndInvoice));
+          setHasSchedulingPlugin(Boolean(dashboardData.plugins?.scheduling));
+          setHasAbsencePlugin(dashboardData.plugins?.absence !== false);
+          
+          setCompanyLogo(dashboardData.logoURL || dashboardData.logoUrl || dashboardData.logo || null);
+          setCompanyName(dashboardData.name || dashboardData.companyName || null);
         } catch (err) {
-          console.error("Error fetching company logo:", err);
+          console.error("Error fetching dashboard data for sidebar:", err);
+          // Fallback defaults
+          setHasAbsencePlugin(true);
         }
-
         return;
       }
 
@@ -139,14 +134,12 @@ const Sidebar = () => {
       if (user?.role === 'superUser') {
         setHasInvoicePlugin(true);
         setHasSchedulingPlugin(true);
-        // Super User sees MPRAR logo by default (null)
         return;
       }
 
       // Default for others without company context
       setHasInvoicePlugin(false);
       setHasSchedulingPlugin(false);
-
     };
     checkPluginAndLogo();
   }, [user]);

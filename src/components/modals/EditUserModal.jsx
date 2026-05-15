@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Save, ChevronDown, Loader2 } from 'lucide-react';
 import Button from '../ui/Button';
-import { collection, getDocs, query, where } from 'firebase/firestore';
-import { db } from '../../firebase/client';
+import { getUsersByCompany } from '../../services/users';
 import { useAuth } from '../../hooks/useAuth';
 import { toast } from 'react-toastify';
 
@@ -69,19 +68,11 @@ const EditUserModal = ({ isOpen, onClose, user, onSave }) => {
         const loadManagers = async () => {
             if (!authed?.companyId || !isOpen) return;
             try {
-                const companyPath = authed.companyId;
-                const companyIdOnly = companyPath.includes('/') ? companyPath.split('/')[1] : companyPath;
-                const companyIdCandidates = [`companies/${companyIdOnly}`, companyIdOnly];
-                
+                const companyId = authed.companyId.replace('companies/', '');
                 const roles = ['teamManager', 'adminManager', 'hrManager', 'seniorManager', 'siteManager', 'superUser', 'owner', 'site_manager'];
-                const usersCol = collection(db, 'users');
                 
-                // fetch all potential managers for the company
-                const q = query(usersCol, where('companyId', 'in', companyIdCandidates));
-                const snap = await getDocs(q);
-                
-                const opts = snap.docs
-                    .map(d => ({ id: d.id, ...d.data() }))
+                const employees = await getUsersByCompany(companyId);
+                const opts = employees
                     .filter(u => {
                         const r = getCanonicalRole(u.primaryRole || u.role);
                         return roles.includes(r) && u.id !== user?.id;

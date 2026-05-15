@@ -3,8 +3,6 @@ import { useAuth } from '../../hooks/useAuth';
 import { trainingService } from '../../services/trainingService';
 import MandatoryTrainingCompletion from './MandatoryTrainingCompletion';
 import Loader from '../ui/Loader';
-import { db } from '../../firebase/client';
-import { collection, query, where, getDocs } from 'firebase/firestore';
 
 const MandatoryTrainingGuard = ({ children }) => {
     const { user } = useAuth();
@@ -33,26 +31,15 @@ const MandatoryTrainingGuard = ({ children }) => {
 
         try {
             const companyId = user.companyId.includes('/') ? user.companyId.split('/')[1] : user.companyId;
+            const userId = user.userId || user.uid;
 
-            const assignmentsRef = collection(db, 'trainingAssignments');
-            const qAssignments = query(
-                assignmentsRef,
-                where('userId', '==', user.uid)
-            );
+            // 1. Get user assignments via REST
+            let userAssignments = await trainingService.getMyTrainingAssignments(userId);
 
-            const assignmentSnap = await getDocs(qAssignments);
-            let userAssignments = assignmentSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-
-            const trainingsRef = collection(db, 'trainings');
-            const qTrainings = query(
-                trainingsRef,
-                where('companyId', '==', companyId),
-                where('status', '==', 'active')
-            );
-            const trainingSnap = await getDocs(qTrainings);
-            const allMandatoryTrainings = trainingSnap.docs
-                .map(d => ({ id: d.id, ...d.data() }))
-                .filter(t => t.category === 'Mandatory on Sign Up' || t.trainingType === 'Mandatory on Sign Up');
+            // 2. Get all active courses for the company via REST
+            const courses = await trainingService.getTrainingCourses(companyId);
+            const allMandatoryTrainings = courses
+                .filter(t => t.status === 'active' && (t.category === 'Mandatory on Sign Up' || t.trainingType === 'Mandatory on Sign Up'));
 
             if (allMandatoryTrainings.length === 0) {
                 setChecking(false);
@@ -74,18 +61,14 @@ const MandatoryTrainingGuard = ({ children }) => {
                 await Promise.all(missingTrainings.map(training =>
                     trainingService.assignTraining(
                         training.id,
-                        [user.uid],
-                        user.uid,
-                        companyId,
-                        user.role,
-                        dueDate,
+                        userId,
+                        userId,
                         { isAutoAssigned: true }
                     )
                 ));
 
                 // Re-fetch assignments after creation
-                const retrySnap = await getDocs(qAssignments);
-                userAssignments = retrySnap.docs.map(d => ({ id: d.id, ...d.data() }));
+                userAssignments = await trainingService.getMyTrainingAssignments(userId);
             }
 
             // 4. Check status and Deduplicate

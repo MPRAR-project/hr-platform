@@ -6,8 +6,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { getBillingSummary } from '../../services/billing';
 import { parseCompanyId } from '../../utils/dataParser';
 import { createOfflinePaymentRequest } from '../../services/offlinePaymentService';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../../firebase/client';
+import { getCompany } from '../../services/companyManagementService';
 import { toast } from 'react-toastify';
 
 const OfflinePaymentSubmissionPage = () => {
@@ -36,12 +35,10 @@ const OfflinePaymentSubmissionPage = () => {
       setIsLoading(true);
       const companyId = parseCompanyId(user.companyId);
       
-      // Fetch company name
-      const companyRef = doc(db, 'companies', companyId);
-      const companySnap = await getDoc(companyRef);
-      const companyName = companySnap.exists() 
-        ? companySnap.data().name || 'Your Company'
-        : 'Your Company';
+      // Fetch company name via REST
+      const company = await getCompany(companyId);
+      const c = company?.company || company;
+      const companyName = c?.name || 'Your Company';
 
       // Fetch billing summary for amount
       const summary = await getBillingSummary(companyId);
@@ -88,7 +85,7 @@ const OfflinePaymentSubmissionPage = () => {
 
       await createOfflinePaymentRequest({
         companyId,
-        submittedById: user.uid,
+        submittedById: user.id || user.uid,
         submittedByName: user.displayName || user.email || 'Site Manager',
         submittedByEmail: user.email || '',
         paymentMethod: formData.paymentMethod,

@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { X, MapPin, Clock, Calendar, AlertTriangle, CheckCircle, Monitor, Smartphone, UserCheck, RefreshCw } from 'lucide-react';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../../firebase/client';
+import { getSessionById } from '../../services/timeClock';
 import Button from '../ui/Button';
 
 const SessionLocationModal = ({ isOpen, onClose, session }) => {
@@ -34,10 +33,8 @@ const SessionLocationModal = ({ isOpen, onClose, session }) => {
                 setLoadingLocation(true);
                 try {
                     console.log('Fetching full session data for:', session.sessionId);
-                    const docRef = doc(db, 'timeClockSessions', session.sessionId);
-                    const snap = await getDoc(docRef);
-                    if (snap.exists()) {
-                        const data = snap.data();
+                    const data = await getSessionById(session.sessionId);
+                    if (data) {
                         setFullSession(prev => ({
                             ...prev,
                             // Merge missing data, prioritizing the fetched session data for locations

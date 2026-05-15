@@ -14,8 +14,10 @@ import { TimesheetTab } from './components/TimesheetTab';
 import { AbsencesTab } from './components/AbsenceTab';
 import { useAuth } from '../../hooks/useAuth';
 import { getCompanyPlugins } from '../../services/companyManagementService';
-import { db } from '../../firebase/client';
-import { doc, getDoc, collection, query, where, getDocs, onSnapshot } from 'firebase/firestore';
+import { getUserById } from '../../services/users';
+import { getHROnboardingProfile } from '../../services/hrOnboarding';
+import hrApiClient from '../../lib/hrApiClient';
+import wsClient from '../../lib/wsClient';
 
 // Cache for profile data
 const profileCache = new Map();
@@ -93,7 +95,7 @@ const ProfilePage = () => {
     });
 
     // Optimized function to fetch onboarding data
-    const fetchOnboardingData = async (userId, userEmail) => {
+    const fetchOnboardingData = async (userId) => {
         const cacheKey = `onboarding_${userId}`;
         const cachedData = profileCache.get(cacheKey);
 
@@ -102,36 +104,7 @@ const ProfilePage = () => {
         }
 
         try {
-            const appCol = collection(db, 'onboardingApplications');
-
-            // Single optimized query using OR logic
-            const queries = [];
-            if (userId) {
-                queries.push(query(appCol, where('userId', '==', userId)));
-                queries.push(query(appCol, where('userId', '==', `users/${userId}`)));
-            }
-            if (userEmail) {
-                queries.push(query(appCol, where('formData.personalInfo.email', '==', userEmail)));
-            }
-
-            const results = await Promise.allSettled(queries.map(q => getDocs(q)));
-            const allDocs = [];
-
-            for (const r of results) {
-                if (r.status === 'fulfilled' && !r.value.empty) {
-                    r.value.docs.forEach(d => allDocs.push({ id: d.id, ...d.data() }));
-                }
-            }
-
-            let onboarding = null;
-            if (allDocs.length > 0) {
-                allDocs.sort((a, b) => {
-                    const at = (a.updatedAt?.toMillis?.() || a.createdAt?.toMillis?.() || 0);
-                    const bt = (b.updatedAt?.toMillis?.() || b.createdAt?.toMillis?.() || 0);
-                    return bt - at;
-                });
-                onboarding = allDocs[0];
-            }
+            const onboarding = await getHROnboardingProfile(userId);
 
             // Cache the result
             profileCache.set(cacheKey, {
@@ -153,33 +126,20 @@ const ProfilePage = () => {
         console.log('[ProfilePage] Setting up real-time listeners for user:', user.userId);
         setIsLoading(true);
 
-        let unsubscribeUser = null;
-        let unsubscribeOnboarding = null;
+        // 1. Initial fetch for user document
+        const fetchUser = async () => {
+            try {
+                const { data } = await hrApiClient.get('/hr/employees/me');
+                setUserDocData(data);
+                setUserPrifileImage(data.profilePictureUrl || data.profileImage || null);
+                setIsLoading(false);
+            } catch (error) {
+                console.error('[ProfilePage] Error fetching user data:', error);
+                setIsLoading(false);
+            }
+        };
 
-        // 1. Real-time listener for user document
-        const userRef = doc(db, 'users', user.userId);
-        unsubscribeUser = onSnapshot(userRef, (userDoc) => {
-            console.log('[ProfilePage] User document updated:', userDoc.id);
-            const udata = userDoc.exists() ? userDoc.data() : {};
-
-            // Update states directly - personalData will recalculate via useMemo
-            setUserDocData(udata);
-            setUserPrifileImage(udata.profileImage || null);
-            setIsLoading(false);
-
-            // Update cache
-            const cacheKey = `profile_${user.userId}`;
-            profileCache.set(cacheKey, {
-                data: {
-                    userDocData: udata,
-                    userPrifileImage: udata.profileImage || null
-                },
-                timestamp: Date.now()
-            });
-        }, (error) => {
-            console.error('[ProfilePage] Error listening to user document:', error);
-            setIsLoading(false);
-        });
+        fetchUser();
 
         // 1.1 Check for absence plugin
         if (user?.companyId) {
@@ -190,59 +150,27 @@ const ProfilePage = () => {
             });
         }
 
-        // 2. Real-time listener for onboarding applications
-        const setupOnboardingListener = async () => {
-            try {
-                const appCol = collection(db, 'onboardingApplications');
-
-                // Create query for user ID
-                const q = query(appCol, where('userId', '==', user.userId));
-
-                unsubscribeOnboarding = onSnapshot(q, (querySnapshot) => {
-                    console.log('[ProfilePage] Onboarding data updated');
-
-                    const allDocs = [];
-                    querySnapshot.forEach(doc => {
-                        allDocs.push({ id: doc.id, ...doc.data() });
-                    });
-
-                    let onboarding = null;
-                    if (allDocs.length > 0) {
-                        allDocs.sort((a, b) => {
-                            const at = (a.updatedAt?.toMillis?.() || a.createdAt?.toMillis?.() || 0);
-                            const bt = (b.updatedAt?.toMillis?.() || b.createdAt?.toMillis?.() || 0);
-                            return bt - at;
-                        });
-                        onboarding = allDocs[0];
-                    }
-
-                    // Update onboarding data state
-                    const onboardingDataResult = onboarding ? {
-                        ...onboarding,
-                        userId: user.userId
-                    } : null;
-                    setOnboardingData(onboardingDataResult);
-
-                    // Update cache
-                    const cacheKey = `onboarding_${user.userId}`;
-                    profileCache.set(cacheKey, {
-                        data: onboardingDataResult,
-                        timestamp: Date.now()
-                    });
-                }, (error) => {
-                    console.error('[ProfilePage] Error listening to onboarding data:', error);
-                });
-            } catch (error) {
-                console.error('[ProfilePage] Error setting up onboarding listener:', error);
-            }
+        // 2. Initial fetch for onboarding applications
+        const fetchOnboarding = async () => {
+            const data = await fetchOnboardingData(user.userId);
+            setOnboardingData(data);
         };
 
-        setupOnboardingListener();
+        fetchOnboarding();
+
+        // 3. Setup WebSocket listener for real-time updates
+        const handleUpdate = () => {
+            fetchUser();
+            fetchOnboarding();
+        };
+
+        wsClient.on('user:updated', handleUpdate);
+        wsClient.on('onboarding:updated', handleUpdate);
 
         // Cleanup function
         return () => {
-            if (unsubscribeUser) unsubscribeUser();
-            if (unsubscribeOnboarding) unsubscribeOnboarding();
+            wsClient.off('user:updated', handleUpdate);
+            wsClient.off('onboarding:updated', handleUpdate);
         };
     }, [user?.uid]);
 
@@ -293,12 +221,9 @@ const ProfilePage = () => {
             profileCache.delete(`profile_${user.userId}`);
 
             // Reload user document
-            const uref = doc(db, 'users', user.userId);
-            const usnap = await getDoc(uref);
-            const udata = usnap.exists() ? usnap.data() : {};
-
-            setUserDocData(udata);
-            setUserPrifileImage(udata.profileImage || null);
+            const { data } = await hrApiClient.get('/hr/employees/me');
+            setUserDocData(data);
+            setUserPrifileImage(data.profilePictureUrl || data.profileImage || null);
         } catch (error) {
             console.error('Error reloading personal data:', error);
         } finally {

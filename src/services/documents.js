@@ -81,6 +81,8 @@ export async function getUserDocuments(userId, documentType = null) {
   }
 }
 
+export const getOnboardingDocuments = getUserDocuments;
+
 export async function getDocument(documentId) {
   try {
     const { data } = await hrApiClient.get(`/hr/documents/${documentId}`);

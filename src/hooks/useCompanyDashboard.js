@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import apiClient from '../api/apiClient';
+import hrApiClient from '../lib/hrApiClient';
 import { useAuth } from './useAuth';
 
 /**
@@ -36,7 +36,7 @@ export function useCompanyDashboard(companyId) {
         const cleanCompanyId = companyId.replace('companies/', '');
         
         try {
-            const response = await apiClient.get(`/hr/${cleanCompanyId}/dashboard`);
+            const response = await hrApiClient.get('/hr/dashboard');
             setData(prev => ({
                 ...prev,
                 ...response.data,

@@ -3,24 +3,14 @@
  * Helps identify and fix incorrect absence data
  */
 
-import { db } from '../firebase/client';
-import { collection, getDocs, query, where, doc, updateDoc } from 'firebase/firestore';
+import { absenceService } from '../services/absenceService';
 
 /**
  * Get all approved absences for a user
  */
 export async function getUserApprovedAbsences(userId) {
-    const q = query(
-        collection(db, 'absences'),
-        where('userId', '==', userId),
-        where('status', '==', 'Approved')
-    );
-    
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-    }));
+    const absences = await absenceService.getEmployeeAbsencesById(userId, { role: 'admin' });
+    return absences.filter(a => a.status === 'Approved');
 }
 
 /**
@@ -53,8 +43,7 @@ export async function findAbsencesForDates(userId, dates) {
  * Update absence status
  */
 export async function updateAbsenceStatus(absenceId, newStatus) {
-    const absenceRef = doc(db, 'absences', absenceId);
-    await updateDoc(absenceRef, { status: newStatus });
+    await absenceService.updateAbsence(absenceId, { status: newStatus }, { role: 'admin' });
     console.log(`Updated absence ${absenceId} status to ${newStatus}`);
 }
 

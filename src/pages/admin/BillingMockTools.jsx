@@ -1,14 +1,14 @@
 import React, { useMemo, useState } from 'react';
 import Header from '../../components/layout/Header';
 import { useAuth } from '../../hooks/useAuth';
-import { doc, getDoc, updateDoc, Timestamp } from 'firebase/firestore';
-import { db } from '../../firebase/client';
+import { fetchCompanyDetails } from '../../services/companyService';
 import { parseCompanyId } from '../../utils/dataParser';
 import {
   getBillingSummary,
   recordSeatTopUp,
   recordSubscriptionPayment,
   startTrial,
+  updateBillingConfig,
   BILLING_CONSTANTS
 } from '../../services/billing';
 import { toast } from 'react-toastify';
@@ -22,9 +22,7 @@ const formatDateInputValue = (value) => {
 
 const toTimestamp = (value) => {
   if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return Timestamp.fromDate(date);
+  return new Date(value).toISOString();
 };
 
 const BillingMockTools = () => {
@@ -50,27 +48,22 @@ const BillingMockTools = () => {
     }
     try {
       setIsLoading(true);
-      const companyRef = doc(db, 'companies', normalizedCompanyId);
-      const snap = await getDoc(companyRef);
-      if (!snap.exists()) {
-        toast.error('Company not found');
-        return;
-      }
-      const data = snap.data();
+      const { company } = await fetchCompanyDetails(normalizedCompanyId);
+      
       setBillingState({
-        seatQuota: Number(data.billingSeatQuota ?? data.seatCount ?? 0),
-        status: data.billingSubscriptionStatus || 'trial',
-        trialEndsAt: formatDateInputValue(data.billingTrialEndsAt || data.trialEndsAt),
-        renewalDate: formatDateInputValue(data.billingRenewalDate),
-        currentEmployees: Number(data.currentEmployeeCount ?? 0),
+        seatQuota: Number(company.seatCount ?? 0),
+        status: company.status?.toLowerCase() || 'trial',
+        trialEndsAt: company.trialEndsAt ? formatDateInputValue(company.trialEndsAt) : '',
+        renewalDate: company.renewalDate ? formatDateInputValue(company.renewalDate) : '',
+        currentEmployees: Number(company.currentUsers ?? 0),
         historyNote: ''
       });
 
       const currentSummary = await getBillingSummary(normalizedCompanyId);
       setSummary(currentSummary);
-      toast.success('Company loaded');
+      toast.success('Company loaded via REST');
     } catch (error) {
-      console.error('Failed to load company', error);
+      console.error('[BillingMock] Failed to load company via REST', error);
       toast.error(error?.message || 'Failed to load company');
     } finally {
       setIsLoading(false);
@@ -84,20 +77,19 @@ const BillingMockTools = () => {
     }
     try {
       setIsLoading(true);
-      const companyRef = doc(db, 'companies', normalizedCompanyId);
-      await updateDoc(companyRef, {
-        billingSeatQuota: Number(billingState.seatQuota) || 0,
-        billingSubscriptionStatus: billingState.status || 'trial',
-        billingTrialEndsAt: toTimestamp(billingState.trialEndsAt),
-        billingRenewalDate: toTimestamp(billingState.renewalDate),
+      await updateBillingConfig(normalizedCompanyId, {
+        seatQuota: Number(billingState.seatQuota) || 0,
+        status: billingState.status || 'trial',
+        trialEndsAt: toTimestamp(billingState.trialEndsAt),
+        renewalDate: toTimestamp(billingState.renewalDate),
         currentEmployeeCount: Number(billingState.currentEmployees) || 0,
-        updatedAt: Timestamp.now()
       });
+      
       const currentSummary = await getBillingSummary(normalizedCompanyId);
       setSummary(currentSummary);
-      toast.success('Billing fields saved');
+      toast.success('Billing fields saved via REST');
     } catch (error) {
-      console.error('Failed to save billing fields', error);
+      console.error('[BillingMock] Failed to save billing fields via REST', error);
       toast.error(error?.message || 'Failed to save billing fields');
     } finally {
       setIsLoading(false);

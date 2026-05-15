@@ -3,8 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import Button from '../../../components/ui/Button';
 import { useAuth } from '../../../hooks/useAuth';
-import { db } from '../../../firebase/client';
-import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
+import { getContracts } from '../../../services/contractService';
 import ContractUploadModal from './ContractUploadModal';
 import ContractViewerModal from './ContractViewerModal';
 import { LoadingSkeleton } from '../../../components/ui/LoadingSkeleton';
@@ -22,32 +21,23 @@ export const ContractTab = ({ data = {}, isLoading = false, onUpdate, userId, al
 
     const canAddContract = allowUpload;
 
-    // Real-time contracts listener (includes both regular contracts and HR onboarding documents)
+    const fetchContracts = async () => {
+        if (!targetUserId || !user?.companyId) return;
+
+        try {
+            setLoading(true);
+            const data = await getContracts(targetUserId, user.companyId);
+            setContracts(data || []);
+        } catch (error) {
+            console.error("[ContractTab] Error fetching contracts:", error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
     useEffect(() => {
-        if (!targetUserId) return;
-
-        console.log('[ContractTab] Fetching contracts for userId:', targetUserId);
-        setLoading(true);
-        const contractsRef = collection(db, 'users', targetUserId, 'contracts');
-        const q = query(contractsRef, orderBy('createdAt', 'desc'));
-
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            console.log('[ContractTab] Received contracts snapshot:', snapshot.docs.length, 'documents');
-            const userContracts = snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
-            console.log('[ContractTab] Contracts:', userContracts);
-            setContracts(userContracts);
-            setLoading(false);
-        }, (error) => {
-            console.error("[ContractTab] Error listening to contracts:", error);
-            // Don't show toast on every error potential to avoid spam if permission denied temporarily
-            setLoading(false);
-        });
-
-        return () => unsubscribe();
-    }, [targetUserId]);
+        fetchContracts();
+    }, [targetUserId, user?.companyId]);
 
     const handleViewContract = (contract) => {
         setSelectedContract(contract);
@@ -107,7 +97,7 @@ export const ContractTab = ({ data = {}, isLoading = false, onUpdate, userId, al
                                                 {contract.title}
                                             </h4>
                                             <p className="text-sm text-gray-500 mt-1">
-                                                Uploaded by {contract.uploadedByName} • {new Date(contract.createdAt?.toDate ? contract.createdAt.toDate() : Date.now()).toLocaleDateString()}
+                                                Uploaded by {contract.uploadedByName} • {new Date(contract.createdAt).toLocaleDateString()}
                                             </p>
                                         </div>
                                     </div>
@@ -143,7 +133,7 @@ export const ContractTab = ({ data = {}, isLoading = false, onUpdate, userId, al
                 isOpen={isUploadModalOpen}
                 onClose={() => setIsUploadModalOpen(false)}
                 userId={targetUserId}
-                onUploadSuccess={() => { }} // No-op, handled by real-time listener
+                onUploadSuccess={fetchContracts}
             />
 
             <ContractViewerModal
@@ -151,7 +141,7 @@ export const ContractTab = ({ data = {}, isLoading = false, onUpdate, userId, al
                 onClose={() => setIsViewerOpen(false)}
                 contract={selectedContract}
                 userId={targetUserId}
-                onSignSuccess={() => { }} // No-op, handled by real-time listener
+                onSignSuccess={fetchContracts}
             />
         </div>
     );

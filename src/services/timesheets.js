@@ -133,15 +133,21 @@ export function invalidateTimesheetCache(userId, weekStr, datesToInvalidate = []
 // ── Normalize timesheet from REST ─────────────────────────────────────────────
 function normalizeTimesheet(ts) {
   if (!ts) return null;
+  const emp = ts.employee || {};
   return {
     ...ts,
     id:       ts.id       || ts.timesheetId,
-    userId:   ts.userId   || ts.employeeId,
+    userId:   ts.userId   || ts.employeeId || emp.id,
     companyId: ts.companyId,
     period:   ts.period   || ts.weekStart,
     start:    ts.start    || ts.weekStart,
     end:      ts.end      || ts.weekEnd,
     status:   ts.status   || 'draft',
+    employee: {
+      ...emp,
+      displayName: emp.displayName || `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || 'Employee',
+      primaryRole: emp.primaryRole || emp.hrRole || 'employee',
+    },
     entries:  (ts.entries || ts.timeEntries || []).map(normalizeEntry),
     totals:   ts.totals   || { grossSec: 0, effectiveSec: 0, overtimeSec: 0 },
   };
@@ -180,6 +186,23 @@ export async function getTimesheetsByWeek(companyId, weekStartStr) {
   } catch (err) {
     if (err.response?.status === 403) return [];
     throw new Error(err.response?.data?.error || 'Failed to fetch timesheets');
+  }
+}
+
+// ── Get timesheets in a date range (reporting/invoices) ────────────────────────
+export async function getTimesheetsInRange(companyId, startDate, endDate) {
+  try {
+    const { data } = await hrApiClient.get('/hr/timesheets', {
+      params: {
+        startDate,
+        endDate,
+        companyId: companyId.replace('companies/', ''),
+      },
+    });
+    return (data.timesheets || data || []).map(normalizeTimesheet);
+  } catch (err) {
+    if (err.response?.status === 403) return [];
+    throw new Error(err.response?.data?.error || 'Failed to fetch timesheets in range');
   }
 }
 
@@ -503,6 +526,29 @@ export function subscribeToTimesheets(userId, companyId, weekStartStr, callback)
   window.addEventListener('focus', onFocus);
 
   // WebSocket handler
+  const wsHandler = () => fetch();
+  wsClient.on('timesheet:updated', wsHandler);
+
+  return () => {
+    window.removeEventListener('focus', onFocus);
+    wsClient.off('timesheet:updated', wsHandler);
+  };
+}
+
+/**
+ * Subscribe to all timesheets in a company (manager view)
+ */
+export function subscribeToCompanyTimesheets(companyId, callback) {
+  const fetch = () =>
+    getTimesheetsByWeek(companyId, '') // Empty string fetches recent
+      .then(callback)
+      .catch((err) => console.warn('[timesheets] manager subscription fetch failed:', err));
+
+  fetch();
+
+  const onFocus = () => fetch();
+  window.addEventListener('focus', onFocus);
+
   const wsHandler = () => fetch();
   wsClient.on('timesheet:updated', wsHandler);
 

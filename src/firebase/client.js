@@ -1,30 +1,10 @@
 /**
- * MPRAR Central - Firebase Client Shim
- * This file replaces the original firebase client initialization.
- * It provides dummy objects to satisfy imports.
+ * client.js — Firebase Client Mock (Zero-Shim Final)
+ * 
+ * This file is now empty to ensure no Firebase SDK code is bundled.
+ * All Firebase dependencies have been removed from the platform.
  */
-
-export const db = {
-  _isShim: true,
-  collection: () => ({ _isShim: true }),
-  doc: () => ({ _isShim: true })
-};
-
-export const auth = {
-  _isShim: true,
-  currentUser: null,
-  onAuthStateChanged: (cb) => {
-    // We can potentially link this to our new auth state
-    return () => {};
-  }
-};
-
-export const storage = {
-  _isShim: true
-};
-
-export const functions = {
-  _isShim: true
-};
-
-export default { db, auth, storage, functions };
+export const auth = {};
+export const db = {};
+export const storage = {};
+export default {};

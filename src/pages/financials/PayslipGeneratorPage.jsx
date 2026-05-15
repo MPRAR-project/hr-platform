@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { doc, getDoc } from 'firebase/firestore';
-import { db, functions } from '../../firebase/client';
+import { fetchCompanyDetails } from '../../services/companyService';
 import { useAuth } from '../../hooks/useAuth';
 import { useInvoiceCalculations } from '../../hooks/useInvoiceCalculations';
 import { getInvoiceSettings, updateInvoiceSettings } from '../../services/invoiceSettings';
 import { generatePayslipPDF } from '../../utils/payslipPdfExport';
 import { getWeekRange, formatISODate } from '../../utils/dateUtils';
 import { getWeekStartIndex } from '../../utils/weekStartUtils';
-import { httpsCallable } from 'firebase/functions';
+import { sendPayslipEmail } from '../../services/emailService';
 import { Loader2, Calendar, Download, Mail, Settings, X, Save, Menu, Send } from 'lucide-react';
 import { useUI } from '../../hooks/useUI';
 import { toast } from 'react-toastify';
@@ -76,15 +75,12 @@ const PayslipGeneratorPage = () => {
             if (!user?.companyId) return;
 
             try {
-                // Fetch company document to get weekStartDay
-                const companyPath = user.companyId;
-                const companyId = companyPath.includes('/') ? companyPath.split('/').pop() : companyPath;
-                const companyRef = doc(db, 'companies', companyId);
-                const companySnap = await getDoc(companyRef);
+                // Fetch company details to get weekStartDay via REST
+                const companyId = user.companyId.replace('companies/', '');
+                const { company: companyData } = await fetchCompanyDetails(companyId);
 
-                if (companySnap.exists()) {
-                    const companyData = companySnap.data();
-                    const wsIndex = getWeekStartIndex(companyData.weekStartDay);
+                if (companyData) {
+                    const wsIndex = getWeekStartIndex(companyData.weekStartDay || 'monday');
                     setCompanyWeekStartDay(wsIndex);
 
                     // Recalculate weekStart with the correct start day
@@ -102,14 +98,13 @@ const PayslipGeneratorPage = () => {
 
                 if (s?.logoUrl) {
                     try {
-                        const getCompanyLogo = httpsCallable(functions, 'getCompanyLogo');
-                        const result = await getCompanyLogo({ url: s.logoUrl });
-                        if (result.data?.base64) {
-                            setLogoBase64(result.data.base64);
-                            //  toast.success("Logo loaded successfully ready for PDF.");
-                        }
+                        const response = await fetch(s.logoUrl);
+                        const blob = await response.blob();
+                        const reader = new FileReader();
+                        reader.onloadend = () => setLogoBase64(reader.result);
+                        reader.readAsDataURL(blob);
                     } catch (e) {
-                        console.error("Failed to load logo", e);
+                        console.error("Failed to load logo via fetch", e);
                     }
                 }
             });
@@ -214,9 +209,8 @@ const PayslipGeneratorPage = () => {
                 returnBase64: true
             });
 
-            // 2. Call Cloud Function
-            const sendPayslip = httpsCallable(functions, 'sendPayslip');
-            await sendPayslip({
+            // 2. Call Email Service via REST
+            await sendPayslipEmail({
                 email: item.user.email,
                 subject: `Payslip - ${format(new Date(dateRange.end), 'dd MMM yyyy')}`,
                 body: `Dear ${item.user.firstName},\n\nPlease find attached your payslip/invoice for the week ending ${format(new Date(dateRange.end), 'dd MMM yyyy')}.\n\nRegards,\n${settings.companyName || 'Accounts'}`,
@@ -285,9 +279,8 @@ const PayslipGeneratorPage = () => {
                     returnBase64: true
                 });
 
-                // Send email
-                const sendPayslip = httpsCallable(functions, 'sendPayslip');
-                await sendPayslip({
+                // Send email via REST
+                await sendPayslipEmail({
                     email: item.user.email,
                     subject: `Payslip - ${format(new Date(dateRange.end), 'dd MMM yyyy')}`,
                     body: `Dear ${item.user.firstName},\n\nPlease find attached your payslip/invoice for the week ending ${format(new Date(dateRange.end), 'dd MMM yyyy')}.\n\nRegards,\n${settings.companyName || 'Accounts'}`,

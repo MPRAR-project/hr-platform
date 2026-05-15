@@ -2,8 +2,7 @@ import { ArrowRight, ChevronDown, X } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import Button from '../ui/Button';
 import { DEFAULT_LEAVE_TYPE, LEAVE_TYPES } from "../../config/leaveConfig";
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { storage } from '../../firebase/client'; // Import your Firebase storage instance
+import hrApiClient from '../../lib/hrApiClient';
 import { allowanceService } from '../../services/allowanceService';
 import Loader from '../ui/Loader';
 
@@ -110,25 +109,18 @@ const AddAbsenceModal = ({ isOpen, onClose, onSave, userId, preloadedAllowances 
     }));
   };
 
-  const uploadFileToStorage = async (file, userId, leaveType) => {
+  const uploadFileToStorage = async (file) => {
     try {
-      // Create a unique filename
-      const timestamp = Date.now();
-      const fileName = `${timestamp}_${file.name}`;
-      const filePath = `absences/${userId}/${leaveType}/${fileName}`;
-
-      // Create storage reference
-      const storageRef = ref(storage, filePath);
-
-      // Upload file
-      const snapshot = await uploadBytes(storageRef, file);
-
-      // Get download URL
-      const downloadURL = await getDownloadURL(snapshot.ref);
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      const { data } = await hrApiClient.post('/hr/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
 
       return {
-        url: downloadURL,
-        path: filePath,
+        url: data.url,
+        path: data.key,
         name: file.name,
         size: file.size,
         type: file.type

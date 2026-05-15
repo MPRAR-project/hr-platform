@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tagger from "@dhiwise/component-tagger";
+import path from 'path';
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
@@ -77,11 +78,6 @@ export default defineConfig(({ mode }) => ({
             '@assets': '/src/assets',
             '@constants': '/src/constants',
             '@styles': '/src/styles',
-            'firebase/app': '/src/firebase/auth-shim.js',
-            'firebase/firestore': '/src/firebase/firestore-shim.js',
-            'firebase/auth': '/src/firebase/auth-shim.js',
-            'firebase/functions': '/src/firebase/functions-shim.js',
-            'firebase/storage': '/src/firebase/storage-shim.js',
         },
     },
     server: {

@@ -13,6 +13,17 @@ const emitBillingEvent = () => {
   }
 };
 
+export const updateBillingConfig = async (companyId, config) => {
+  try {
+    const { data } = await hrApiClient.put(`/hr/superadmin/companies/${companyId}/billing`, config);
+    emitBillingEvent();
+    return data;
+  } catch (error) {
+    console.error('[billing] Error updating billing config:', error);
+    throw error;
+  }
+};
+
 export const getBillingSummary = async (companyId) => {
   try {
     const { data } = await hrApiClient.get('/hr/billing/summary');
@@ -85,5 +96,15 @@ export const removePluginService = async (companyId, addonType) => {
 export const isSubscriptionExpired = (companyData) => {
   if (!companyData) return false;
   return companyData.isExpired || false;
+};
+
+export const listInvoices = async (filters = {}) => {
+  try {
+    const { data } = await hrApiClient.get('/hr/billing/invoices', { params: filters });
+    return data;
+  } catch (error) {
+    console.error('Error fetching invoices:', error);
+    throw error;
+  }
 };
 

@@ -353,30 +353,18 @@ class ModalErrorHandler {
     console.log(`ModalErrorHandler: Constructing minimal data for ${userId}, week ${weekStart}`);
     
     try {
-      // Try to get user's work schedule
-      const { db } = await import('../firebase/client');
-      const { doc, getDoc } = await import('firebase/firestore');
-      
-      const userRef = doc(db, 'users', userId);
-      const userSnap = await getDoc(userRef);
+      // Try to get user's work schedule via REST
+      const { data: userData } = await hrApiClient.get('/hr/employees/me');
+      const companyId = userData.companyId;
       
       let schedule = {};
-      if (userSnap.exists()) {
-        const userData = userSnap.data();
-        const companyId = userData.companyId;
+      if (companyId) {
+        const compId = typeof companyId === 'string' ? 
+          (companyId.includes('/') ? companyId.split('/')[1] : companyId) : companyId;
         
-        if (companyId) {
-          const compId = typeof companyId === 'string' ? 
-            (companyId.includes('/') ? companyId.split('/')[1] : companyId) : '';
-          
-          if (compId) {
-            const companyRef = doc(db, 'companies', compId);
-            const companySnap = await getDoc(companyRef);
-            
-            if (companySnap.exists()) {
-              schedule = companySnap.data().workSchedule || {};
-            }
-          }
+        if (compId) {
+          const { data: scheduleData } = await hrApiClient.get(`/hr/companies/${compId}/schedule`);
+          schedule = scheduleData.workSchedule || scheduleData || {};
         }
       }
       

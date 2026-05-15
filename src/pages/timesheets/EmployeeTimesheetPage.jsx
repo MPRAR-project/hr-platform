@@ -1,4 +1,3 @@
-import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
 import { AlertTriangle, ArrowLeft, Calendar, CheckCircle, Clock, Search, User, XCircle } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState, useDeferredValue } from 'react';
 import { parseLocalDate } from '../../utils/weekStartUtils';
@@ -15,14 +14,8 @@ import { Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow } f
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
 import Loader from '../../components/ui/Loader';
-import { db } from '../../firebase/client';
-import { useAuth } from '../../hooks/useAuth';
-import { useEmployeeTimesheets } from '../../hooks/useEmployeeTimesheets';
-import { measureAsync, usePerformanceMonitor } from '../../hooks/usePerformanceMonitor';
-import { approveTimesheet, declineTimesheet } from '../../services/timesheets';
-import { getRoleName } from '../../utils/getRoleName';
-import { formatTimeDisplay } from '../../utils/numberFormatter';
 import { canEditTargetTimesheet, getTimesheetEditPermissions, normalizeUserId } from '../../utils/timesheetPermissions';
+import { getUserById } from '../../services/users';
 
 const EmployeeTimesheetsPage = () => {
   const navigate = useNavigate();
@@ -195,20 +188,18 @@ const EmployeeTimesheetsPage = () => {
           }
 
           // Fetch fresh data
-          const userDoc = await getDoc(doc(db, 'users', id));
-          if (!userDoc.exists()) {
+          const userData = await getUserById(id);
+          if (!userData) {
             throw new Error('Employee not found');
           }
-
-          const userData = userDoc.data();
 
           const employeeData = {
             id: id,
             name: userData.displayName || `${userData.firstName || ''} ${userData.lastName || ''}`.trim() || userData.email,
             email: userData.email,
-            role: getRoleName(userData.primaryRole),
+            role: getRoleName(userData.primaryRole || userData.hrRole),
             department: userData.teamId || '—',
-            hireDate: userData.createdAt?.toDate().toLocaleDateString() || '—',
+            hireDate: userData.createdAt ? new Date(userData.createdAt).toLocaleDateString() : '—',
             employeeId: userData.employeeId || '—'
           };
 
@@ -269,59 +260,11 @@ const EmployeeTimesheetsPage = () => {
 
     try {
       await measureAsync('approveTimesheet', async () => {
-        // For optimized data, we need to fetch the actual document IDs for this week
-        // This is a limitation of the current weekly summary approach
-        // TODO: Include docIds in weekly summaries for better performance
-
-        // For now, we'll need to fetch the week details to get document IDs
-        const weekStart = selectedTimesheet.weekStart;
-        let timesheetsSnap;
-
-        try {
-          // Try optimized query first
-          const timesheetsQuery = query(
-            collection(db, 'timesheets'),
-            where('userId', '==', id),
-            where('period', '>=', weekStart),
-            where('period', '<=', selectedTimesheet.weekEnd)
-          );
-          timesheetsSnap = await getDocs(timesheetsQuery);
-        } catch (error) {
-          // Fall back to basic query if index doesn't exist
-          if (error.code === 'failed-precondition') {
-            console.warn('EmployeeTimesheetPage: Falling back to basic query for approval due to missing index');
-            const basicQuery = query(collection(db, 'timesheets'), where('userId', '==', id));
-            const basicSnap = await getDocs(basicQuery);
-            // Filter client-side
-            timesheetsSnap = {
-              docs: basicSnap.docs.filter(doc => {
-                const period = doc.data().period;
-                return period >= weekStart && period <= selectedTimesheet.weekEnd;
-              })
-            };
-          } else {
-            throw error;
-          }
-        }
-
-        const docIds = timesheetsSnap.docs.map(doc => doc.id);
-
-        if (docIds.length === 0) {
-          throw new Error('No timesheet documents found for this week');
-        }
-
-        // Approve all day docs in this week
-        console.log('EmployeeTimesheetPage: Attempting to approve documents:', docIds);
-        console.log('EmployeeTimesheetPage: Current user object:', { uid: user?.uid, email: user?.email, role: user?.role });
-        // Pass approver info including name for better display
         const approverName = user.firstName && user.lastName
           ? `${user.firstName} ${user.lastName}`
           : user.displayName || user.name || 'Manager';
 
-        // NEW: Calling approveTimesheet ONCE. The service now handles bulk week approval internally.
-        // We pick the first available docId from the list.
-        await approveTimesheet(docIds[0], user.userId, null, approverName);
-        console.log(`EmployeeTimesheetPage: Successfully triggered bulk approval for week via document ${docIds[0]}`);
+        await approveTimesheet(selectedTimesheet.id, user.userId || user.uid, approverName);
       });
 
       toast.success('Timesheet approved');
@@ -345,54 +288,7 @@ const EmployeeTimesheetsPage = () => {
 
     try {
       await measureAsync('declineTimesheet', async () => {
-        // Fetch the actual document IDs for this week
-        const weekStart = selectedTimesheet.weekStart;
-        let timesheetsSnap;
-
-        try {
-          // Try optimized query first
-          const timesheetsQuery = query(
-            collection(db, 'timesheets'),
-            where('userId', '==', id),
-            where('period', '>=', weekStart),
-            where('period', '<=', selectedTimesheet.weekEnd)
-          );
-          timesheetsSnap = await getDocs(timesheetsQuery);
-        } catch (error) {
-          // Fall back to basic query if index doesn't exist
-          if (error.code === 'failed-precondition') {
-            console.warn('EmployeeTimesheetPage: Falling back to basic query for decline due to missing index');
-            const basicQuery = query(collection(db, 'timesheets'), where('userId', '==', id));
-            const basicSnap = await getDocs(basicQuery);
-            // Filter client-side
-            timesheetsSnap = {
-              docs: basicSnap.docs.filter(doc => {
-                const period = doc.data().period;
-                return period >= weekStart && period <= selectedTimesheet.weekEnd;
-              })
-            };
-          } else {
-            throw error;
-          }
-        }
-
-        const docIds = timesheetsSnap.docs.map(doc => doc.id);
-
-        if (docIds.length === 0) {
-          throw new Error('No timesheet documents found for this week');
-        }
-
-        // Decline all day docs in this week
-        console.log('EmployeeTimesheetPage: Attempting to decline documents:', docIds);
-        for (const docId of docIds) {
-          try {
-            await declineTimesheet(docId, user.userId);
-            console.log(`EmployeeTimesheetPage: Successfully declined document ${docId}`);
-          } catch (docError) {
-            console.error(`EmployeeTimesheetPage: Failed to decline document ${docId}:`, docError);
-            // Isolation: Continue with other documents
-          }
-        }
+        await declineTimesheet(selectedTimesheet.id, 'Manager rejected', user.userId || user.uid);
       });
 
       toast.success('Timesheet declined');

@@ -1,13 +1,8 @@
 /**
- * auth.js — HR Frontend Auth Service (Phase 3 — REST Only)
+ * auth.js — HR Frontend Auth Service (Phase 8 — Finalized Zero-Shim)
  *
- * All functions now call the HR REST API instead of Firebase.
- * Firebase calls have been removed from this file.
- * Firebase SDK imports are preserved in firebase/client.js until Phase 7.
- *
- * COMPAT NOTE: createUserWithEmail / getUserByEmail stubs are kept
- * so that users.js (Phase 4 — not yet migrated) still builds.
- * These will be removed when users.js is migrated in Phase 4.
+ * All functions call the HR REST API.
+ * All Firebase dependencies and stubs have been removed.
  */
 
 import hrApiClient, { tokenStore } from '../lib/hrApiClient';
@@ -123,6 +118,31 @@ export async function refreshAccessToken() {
   }
 }
 
+// ── Password Reset (Central Platform Proxy) ───────────────────────────────────
+export async function sendPasswordResetLink(email) {
+  try {
+    const centralApiUrl = import.meta.env.VITE_CENTRAL_API_URL || 'http://localhost:5000';
+    const response = await fetch(`${centralApiUrl}/auth/forgot-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        email: email.toLowerCase().trim(),
+        origin: window.location.origin // pass origin so Central knows where to redirect back if needed
+      }),
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || 'Failed to send reset link');
+    }
+
+    return true;
+  } catch (err) {
+    console.error('[auth] Password reset failed:', err.message);
+    throw err;
+  }
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 /**
@@ -191,29 +211,3 @@ function parseJwt(token) {
 
 export { parseJwt };
 
-// ── Phase 4 backward-compat stubs ─────────────────────────────────────────────
-// users.js and other Phase 4 files still import these.
-// They delegate to Firebase (still available) until Phase 4 migration is done.
-// REMOVE these stubs when Phase 4 is complete.
-
-export async function createUserWithEmail(email, password) {
-  const { createUserWithEmailAndPassword } = await import('firebase/auth');
-  const { auth } = await import('../firebase/client');
-  const cred = await createUserWithEmailAndPassword(auth, email, password);
-  return cred.user;
-}
-
-export async function getUserByEmail(email) {
-  // Firebase Admin SDK is not available on the client.
-  // This function is called in users.js to check if a user already exists.
-  // Return null → caller treats user as new (safe fallback during transition).
-  console.warn('[auth compat] getUserByEmail: Firebase Admin not available on client — returning null');
-  return null;
-}
-
-export async function sendPasswordResetLink(email) {
-  // ForgotPasswordPage still uses this — delegates to Firebase until Phase 4.
-  const { sendPasswordResetEmail } = await import('firebase/auth');
-  const { auth } = await import('../firebase/client');
-  await sendPasswordResetEmail(auth, email);
-}

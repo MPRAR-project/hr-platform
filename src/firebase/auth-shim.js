@@ -1,20 +1,39 @@
-/**
- * Auth Shim for MPRAR Central
- * Satisfies all legacy auth imports.
- */
+// Firebase Shim for MPRAR HR Frontend (Post-Migration)
+// This file provides empty mocks for Firebase SDKs to prevent build errors.
 
-export const getAuth = () => ({ currentUser: null });
-export const signInWithEmailAndPassword = async () => ({ user: { uid: 'shim' } });
-export const createUserWithEmailAndPassword = async () => ({ user: { uid: 'shim' } });
-export const signOut = async () => {};
-export const onAuthStateChanged = (auth, cb) => { cb(null); return () => {}; };
-export const updateProfile = async () => {};
-export const sendPasswordResetEmail = async () => {};
-export const GoogleAuthProvider = class {};
-export const signInWithPopup = async () => ({ user: { uid: 'shim' } });
+export const initializeApp = () => ({});
+export const getAuth = () => ({ 
+  currentUser: null, 
+  onAuthStateChanged: (cb) => { cb(null); return () => {}; },
+  signOut: async () => {},
+});
+export const getFirestore = () => ({});
+export const getFunctions = () => ({});
+export const getStorage = () => ({});
+
+// Firestore mocks
+export const doc = () => ({});
+export const getDoc = async () => ({ exists: () => false, data: () => ({}) });
+export const updateDoc = async () => {};
+export const setDoc = async () => {};
+export const collection = () => ({});
+export const query = () => ({});
+export const where = () => ({});
+export const onSnapshot = () => () => {};
+
+// Auth mocks
+export const signInWithEmailAndPassword = async () => ({ user: {} });
+export const createUserWithEmailAndPassword = async () => ({ user: {} });
+export const onIdTokenChanged = () => () => {};
+
+// Functions mocks
+export const httpsCallable = () => async () => ({ data: {} });
+
+// Storage mocks
+export const ref = () => ({});
+export const uploadBytes = async () => ({});
+export const getDownloadURL = async () => '';
 
 export default {
-    getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut,
-    onAuthStateChanged, updateProfile, sendPasswordResetEmail, GoogleAuthProvider,
-    signInWithPopup
+  initializeApp, getAuth, getFirestore, getFunctions, getStorage
 };

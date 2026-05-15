@@ -1,18 +1,21 @@
-import { db } from './hr/src/firebase/client';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import hrApiClient from '../lib/hrApiClient';
 
 async function findUser() {
   const email = 'xiyisi8619@cadinr.com';
-  const q = query(collection(db, 'users'), where('email', '==', email));
-  const snap = await getDocs(q);
-  if (snap.empty) {
-    console.log('User not found');
-    return;
+  try {
+    const { data } = await hrApiClient.get('/hr/users', { params: { email } });
+    const users = data.users || data || [];
+    if (users.length === 0) {
+      console.log('User not found');
+      return;
+    }
+    users.forEach(user => {
+      console.log('User ID:', user.id || user.uid);
+      console.log('User Data:', user);
+    });
+  } catch (err) {
+    console.error('Error finding user:', err.message);
   }
-  snap.forEach(doc => {
-    console.log('User ID:', doc.id);
-    console.log('User Data:', doc.data());
-  });
 }
 
 findUser();

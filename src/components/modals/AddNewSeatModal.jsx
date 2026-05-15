@@ -2,8 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { X, Plus, ArrowRight, ChevronDown, Loader2 } from 'lucide-react';
 import Button from '../ui/Button';
 import { useAuth } from '../../hooks/useAuth';
-import { db } from '../../firebase/client';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { getUsersByCompany } from '../../services/users';
 import { toast } from 'react-toastify';
 
 const pricePerSeat = 5.0;
@@ -29,13 +28,11 @@ const AddNewSeatModal = ({ isOpen, onClose, onSubmit }) => {
     const loadManagers = async () => {
       try {
         if (!authed?.companyId) return;
-        const companyPath = authed.companyId;
-        const companyId = companyPath.includes('/') ? companyPath.split('/')[1] : companyPath;
-        const usersCol = collection(db, 'users');
-        const q = query(usersCol, where('companyId', '==', `companies/${companyId}`));
-        const snap = await getDocs(q);
-        const opts = snap.docs
-          .map((d) => ({ id: d.id, ...d.data() }))
+        
+        // Use REST API
+        const allUsers = await getUsersByCompany(authed.companyId);
+        
+        const opts = allUsers
           .filter((u) => managerRoles.includes(u.primaryRole))
           .map((u) => ({
             id: u.id,

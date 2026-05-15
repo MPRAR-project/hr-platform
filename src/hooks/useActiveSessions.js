@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import apiClient from '../api/apiClient';
+import hrApiClient from '../lib/hrApiClient';
 import { useAuth } from './useAuth';
 
 /**
@@ -21,7 +21,7 @@ export function useActiveSessions() {
         if (!cleanCompanyId) return;
         
         try {
-            const response = await apiClient.get(`/hr/${cleanCompanyId}/active-sessions`);
+            const response = await hrApiClient.get('/hr/time-entries/active-sessions');
             setActiveUsers(response.data.map(session => {
                 const startedAt = new Date(session.startedAt);
                 const now = new Date();

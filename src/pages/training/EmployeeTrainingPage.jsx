@@ -1,6 +1,4 @@
 import React, { useMemo, useState, useEffect } from 'react';
-import { deleteDoc, doc, getDoc } from 'firebase/firestore';
-import { db } from '../../firebase/client';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { Search, Briefcase, Calendar, ArrowLeft, FileText, CheckCircle, AlertTriangle, XCircle, CreditCard, Plus, ChevronDown } from 'lucide-react';
 import Header from '../../components/layout/Header';
@@ -77,7 +75,7 @@ const EmployeeTrainingPage = () => {
         }
 
         // Prevent self-approval: user cannot approve their own training assignments
-        if (assignment.userId === user?.uid) {
+        if (assignment.userId === (user?.id || user?.uid)) {
             return false;
         }
 
@@ -91,7 +89,7 @@ const EmployeeTrainingPage = () => {
         }
 
         // Prevent self-approval: user cannot approve their own extension requests
-        if (assignment.userId === user?.uid) {
+        if (assignment.userId === (user?.id || user?.uid)) {
             return false;
         }
 
@@ -99,7 +97,7 @@ const EmployeeTrainingPage = () => {
     };
 
     const isViewingOwnTraining = () => {
-        return employeeId === user?.uid;
+        return employeeId === (user?.id || (user?.id || user?.uid));
     };
 
     const buildEmployeeFromUserDoc = (userDoc) => {
@@ -585,12 +583,11 @@ const EmployeeTrainingPage = () => {
                 // Determine uploader ID
                 let uploadedByUserId = selectedAssignment.certificateUploadedBy;
 
-                // If missing from assignment, fetch the certificate document
+                // If missing from assignment, fetch the certificate document via REST
                 if (!uploadedByUserId) {
-                    const certRef = doc(db, 'trainingCertificates', selectedAssignment.certificateId);
-                    const certSnap = await getDoc(certRef);
-                    if (certSnap.exists()) {
-                        uploadedByUserId = certSnap.data().uploadedBy;
+                    const result = await certificateService.getCertificateById(selectedAssignment.certificateId);
+                    if (result.success && result.data) {
+                        uploadedByUserId = result.data.uploadedBy;
                     }
                 }
 
@@ -600,7 +597,7 @@ const EmployeeTrainingPage = () => {
                 }
 
                 // Optimization: If current user is the uploader, use their name from state
-                if (uploadedByUserId === user?.uid) {
+                if (uploadedByUserId === (user?.id || user?.uid)) {
                     setUploaderName(user.displayName || user.email || 'Admin');
                     return;
                 }
@@ -628,7 +625,7 @@ const EmployeeTrainingPage = () => {
         };
 
         fetchUploaderNameForAssignment();
-    }, [selectedAssignment?.id, selectedAssignment?.certificateId, selectedAssignment?.certificateUploadedBy, user?.uid, user?.displayName, employee?.name]);
+    }, [selectedAssignment?.id, selectedAssignment?.certificateId, selectedAssignment?.certificateUploadedBy, (user?.id || user?.uid), user?.displayName, employee?.name]);
 
     const getUploadedByDisplay = (assignment) => {
         if (!assignment?.certificateId) {
@@ -1051,7 +1048,7 @@ const EmployeeTrainingPage = () => {
                                                 {/* Show Edit button for authorized roles (Site Manager, Admin Manager, Admin Advisor, HR Manager, HR Advisor) */}
                                                 {userCapabilities.canEditTraining &&
                                                     ['siteManager', 'adminManager', 'adminAdvisor', 'hrManager', 'hrAdvisor'].includes(user?.role) &&
-                                                    assignment.userId !== user?.uid && (
+                                                    assignment.userId !== (user?.id || user?.uid) && (
                                                         <Button
                                                             variant="outline-secondary"
                                                             onClick={() => {
@@ -1110,7 +1107,7 @@ const EmployeeTrainingPage = () => {
                                                 )}
 
                                                 {/* Show message when user cannot approve their own certificate */}
-                                                {assignment.status === 'pending_approval' && userCapabilities.canApproveTraining && assignment.userId === user?.uid && (
+                                                {assignment.status === 'pending_approval' && userCapabilities.canApproveTraining && assignment.userId === (user?.id || user?.uid) && (
                                                     <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
                                                         <AlertTriangle className="h-4 w-4 inline mr-2" />
                                                         You cannot approve your own training certificate. Another manager must review and approve this.
@@ -1138,7 +1135,7 @@ const EmployeeTrainingPage = () => {
                                                 )}
 
                                                 {/* Show message when user cannot approve their own extension request */}
-                                                {assignment.extensionStatus === 'pending' && userCapabilities.canApproveTraining && assignment.userId === user?.uid && (
+                                                {assignment.extensionStatus === 'pending' && userCapabilities.canApproveTraining && assignment.userId === (user?.id || user?.uid) && (
                                                     <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
                                                         <AlertTriangle className="h-4 w-4 inline mr-2" />
                                                         You cannot approve your own extension request. Another manager must review and approve this.

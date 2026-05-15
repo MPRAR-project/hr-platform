@@ -108,7 +108,7 @@ const ContractViewerModal = ({ isOpen, onClose, contract, userId, onSignSuccess 
                                         <div className="flex justify-between">
                                             <span className="text-gray-600">Date:</span>
                                             <span className="font-medium">
-                                                {contract.signedAt?.toDate ? contract.signedAt.toDate().toLocaleString() : new Date().toLocaleString()}
+                                                {contract.signedAt ? new Date(contract.signedAt).toLocaleString() : new Date().toLocaleString()}
                                             </span>
                                         </div>
                                     </div>

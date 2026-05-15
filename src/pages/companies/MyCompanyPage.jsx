@@ -1,19 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import Header from '../../components/layout/Header';
 import { useAuth } from '../../hooks/useAuth';
-import { db } from '../../firebase/client';
-import { doc, getDoc } from 'firebase/firestore';
 import {
   Building2, Mail, Globe, MapPin, Phone, Calendar,
   Users, Shield, Briefcase, CheckCircle2, Clock, AlertCircle,
   ExternalLink, Lock, Edit3, Save, X, Loader2
 } from 'lucide-react';
-import { updateCompanyProfile } from '../../services/companyManagementService';
+import { getCompany, updateCompanyProfile } from '../../services/companyManagementService';
 import { toast } from 'react-toastify';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-const cleanId = (id) => (id || '').replace(/^companies\//, '').trim();
-
 const fmtDate = (value) => {
   if (!value) return '—';
   try {
@@ -93,49 +89,6 @@ const LoadingState = () => (
     </div>
   </div>
 );
-
-// ── Fetch helpers ─────────────────────────────────────────────────────────────
-
-/**
- * 1. Try Firestore companies/{id} first (instant, no token needed)
- * 2. Fall back to Central API /companies/:id (needs central token)
- * 3. Fall back to user's own Firestore doc (basic company info embedded)
- */
-async function fetchCompanyData(companyId, centralToken) {
-  const errors = [];
-
-  // Strategy 1: Firestore companies collection
-  try {
-    const snap = await getDoc(doc(db, 'companies', companyId));
-    if (snap.exists()) {
-      return { source: 'firestore', data: { id: snap.id, ...snap.data() } };
-    }
-  } catch (e) {
-    errors.push(`Firestore: ${e.message}`);
-  }
-
-  // Strategy 2: Central API
-  const centralApiUrl = import.meta.env.VITE_CENTRAL_API_URL || 'http://localhost:5000';
-  const token = centralToken || localStorage.getItem('mprar_central_token');
-  if (token) {
-    try {
-      const res = await fetch(`${centralApiUrl}/companies/${companyId}`, {
-        headers: { 'Authorization': `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        return { source: 'central_api', data: { id: companyId, ...data } };
-      }
-    } catch (e) {
-      errors.push(`Central API: ${e.message}`);
-    }
-  }
-
-  console.warn('[MyCompanyPage] All fetch strategies failed:', errors);
-  return null;
-}
-
-// ── Main Page ─────────────────────────────────────────────────────────────────
 const MyCompanyPage = () => {
   const { user } = useAuth();
   const [company, setCompany] = useState(null);
@@ -148,80 +101,37 @@ const MyCompanyPage = () => {
   const [editData, setEditData] = useState({});
   const [saving, setSaving] = useState(false);
 
-  // Try every possible source for the companyId
-  const rawCompanyId =
-    user?.companyId ||
-    user?.primaryCompanyId ||
-    user?.metadata?.companyId ||
-    (user?.firebaseUser?.reloadUserInfo?.customAttributes
-      ? (() => {
-          try {
-            const attr = JSON.parse(user.firebaseUser.reloadUserInfo.customAttributes);
-            return attr.company_id || attr.companyId;
-          } catch { return null; }
-        })()
-      : null);
-
-  const companyId = cleanId(rawCompanyId);
-
-  // Also try to get companyId from Firebase token claims if not in user object
-  const [resolvedCompanyId, setResolvedCompanyId] = useState(companyId);
-
   useEffect(() => {
-    // If companyId is already resolved, skip
-    if (companyId) {
-      setResolvedCompanyId(companyId);
-      return;
-    }
-
-    // Fallback: read companyId from Firebase ID token claims
-    const tryClaimsFallback = async () => {
-      try {
-        const { auth: fbAuth } = await import('../../firebase/client');
-        const currentUser = fbAuth.currentUser;
-        if (!currentUser) return;
-        const result = await currentUser.getIdTokenResult();
-        const claimCompanyId = result.claims?.company_id;
-        if (claimCompanyId) {
-          setResolvedCompanyId(cleanId(String(claimCompanyId)));
-        }
-      } catch (e) {
-        console.warn('[MyCompanyPage] Could not read claims:', e);
-      }
-    };
-
-    tryClaimsFallback();
-  }, [companyId]);
-
-  useEffect(() => {
-    if (!resolvedCompanyId) {
-      setLoading(false);
-      setError('No company assigned to your account. Please contact your site manager.');
-      return;
-    }
-
     let cancelled = false;
     setLoading(true);
     setError(null);
 
-    fetchCompanyData(resolvedCompanyId, localStorage.getItem('mprar_central_token'))
-      .then((result) => {
-        if (cancelled) return;
-        if (!result) {
-          setError('Company details could not be loaded. Please try again later.');
-        } else {
-          setCompany(result.data);
+    const loadData = async () => {
+      try {
+        const companyId = user?.companyId || user?.primaryCompanyId;
+        if (!companyId) {
+          setError('No company assigned to your account.');
+          return;
         }
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err.message || 'Failed to load company details.');
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
 
+        const data = await getCompany(companyId);
+        if (cancelled) return;
+
+        if (!data) {
+          setError('Company details could not be loaded.');
+        } else {
+          setCompany(data.company || data);
+        }
+      } catch (err) {
+        if (!cancelled) setError(err.message || 'Failed to load company details.');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    loadData();
     return () => { cancelled = true; };
-  }, [resolvedCompanyId]);
+  }, [user?.companyId, user?.primaryCompanyId]);
 
   useEffect(() => {
     if (company) {
@@ -239,10 +149,11 @@ const MyCompanyPage = () => {
   }, [company]);
 
   const handleSave = async () => {
-    if (!resolvedCompanyId) return;
+    const companyId = user?.companyId || user?.primaryCompanyId;
+    if (!companyId) return;
     setSaving(true);
     try {
-      const updated = await updateCompanyProfile(resolvedCompanyId, editData);
+      const updated = await updateCompanyProfile(companyId, editData);
       setCompany(prev => ({ ...prev, ...updated }));
       setIsEditing(false);
     } catch (err) {
@@ -496,7 +407,7 @@ const MyCompanyPage = () => {
             {isManager && (
               <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
                 <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Company Reference ID</p>
-                <p className="text-xs font-mono text-gray-600 break-all select-all">{company.id || resolvedCompanyId}</p>
+                <p className="text-xs font-mono text-gray-600 break-all select-all">{company.id || user?.companyId}</p>
                 <p className="text-xs text-gray-400 mt-1">Quote this ID when contacting MPRAR support.</p>
               </div>
             )}

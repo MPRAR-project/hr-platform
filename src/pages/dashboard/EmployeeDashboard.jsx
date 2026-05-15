@@ -12,18 +12,18 @@ import { Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow } f
 import Header from '../../components/layout/Header';
 import { useAuth } from '../../hooks/useAuth';
 import Loader from '../../components/ui/Loader';
-import { startClock, stopClock, startBreak, endBreak } from '../../services/timeClock';
+import { startClock, stopClock, startBreak, endBreak, getSessionsForDateRange, getMyActiveSession } from '../../services/timeClock';
 import { formatTimeForDisplay } from '../../utils/timeFormatUtils';
 import { getUserShift, updateUserShift, detectShiftChange, SHIFT_TYPES, formatShiftName } from '../../services/shiftService';
-import { checkAndAutoClockOutAll, shouldAutoClockOut, getAutoClockOutTime } from '../../services/autoClockOut';
+import { getUserSchedules } from '../../services/scheduleService';
+import { checkAndAutoClockOutAll, shouldAutoClockOut, getAutoClockOutTime, performAutoClockOut } from '../../services/autoClockOut';
 import { Sun, Moon } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { useClockSessionContext } from '../../contexts/ClockSessionContext';
 import { useTimesheetContext } from '../../contexts/TimesheetContext';
-import { processDashboardRecentEntries } from '../../services/firestoreSubscriptions';
-import { useLocationValidation } from '../../hooks/useLocationValidation';
-import { getCompanyPlugins } from '../../services/companyManagementService';
+import hrApiClient from '../../lib/hrApiClient';
 import { formatISODate } from '../../utils/weekStartUtils';
+import { getUserTimesheetsByWeek } from '../../services/timesheets';
 
 // Optimized time display component
 const TimeDisplay = React.memo(({ time, isActive }) => {
@@ -127,9 +127,9 @@ const EmployeeDashboard = () => {
 
     // Process recent entries from real-time data
     const timeEntries = React.useMemo(() => {
-        if (!sessionDocs || !timesheetDocs) return [];
-        return processDashboardRecentEntries(sessionDocs, timesheetDocs, 7);
-    }, [sessionDocs, timesheetDocs]);
+        if (!recentEntries) return [];
+        return recentEntries;
+    }, [recentEntries]);
 
     const isLoadingRecent = isLoadingSessions || isLoadingTimesheets;
 
@@ -195,22 +195,18 @@ const EmployeeDashboard = () => {
     // Recent entries are now provided by real-time context - no need to fetch
 
     // Load weekly hours based on company work schedule and actual timesheet data
-    // Now uses real-time timesheet data from context
+    // Now uses REST API
     const loadWeeklyHours = useCallback(async () => {
         try {
             setIsLoadingWeeklyHours(true);
             const uid = user?.uid || '';
-            const companyId = (user?.companyId || '').split('/')[1] || '';
+            const companyId = user?.companyId;
 
             if (!uid || !companyId) return;
 
-            const { doc, getDoc } = await import('firebase/firestore');
-            const { db } = await import('../../firebase/client');
-
-            // Get company work schedule
-            const companyRef = doc(db, 'companies', companyId);
-            const companySnap = await getDoc(companyRef);
-            const workSchedule = companySnap.exists() ? (companySnap.data().workSchedule || {}) : {};
+            // Get company work schedule via REST
+            const { data: dashboardData } = await hrApiClient.get('/hr/dashboard');
+            const workSchedule = dashboardData.workSchedule || {};
 
             // Calculate total scheduled hours for the week
             const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -251,10 +247,7 @@ const EmployeeDashboard = () => {
             if (!user?.uid || !user?.companyId) return;
 
             try {
-                const { getUserTimesheetsByWeek } = await import('../../services/timesheets');
-                const { getUserWeekContext, formatISODate } = await import('../../services/timesheets'); // Or utils
-
-                const { getWeekRangeForDate } = await import('../../utils/weekStartUtils');
+                const { getUserWeekContext, getWeekRangeForDate, formatISODate } = await import('../../services/timesheets');
 
                 // Get context to know current week start day
                 const { weekStartDay } = await getUserWeekContext(user.uid);
@@ -287,53 +280,45 @@ const EmployeeDashboard = () => {
             if (!user?.uid || isAutoClockingOutRef.current) return;
 
             try {
-                const { collection, query, where, getDocs } = await import('firebase/firestore');
-                const { db } = await import('../../firebase/client');
+                // Check for open session for current user via REST
+                const { data: sessionData } = await hrApiClient.get('/hr/time-entries/my-session').catch(() => ({ data: null }));
 
-                // Check for open session for current user
-                const openQ = query(collection(db, 'timeClockSessions'), where('userId', '==', user.uid), where('status', '==', 'open'));
-                const openSnap = await getDocs(openQ);
-
-                if (!openSnap.empty) {
-                    const { getAutoClockOutTime, performAutoClockOut } = await import('../../services/autoClockOut');
+                if (sessionData && !sessionData.clockOut) {
                     const companyId = user.companyId;
                     const siteId = user.siteId;
                     const now = new Date();
                     const userShift = await getUserShift(user.uid);
                     let anyTriggered = false;
 
-                    for (const sessionDoc of openSnap.docs) {
-                        const sessionData = sessionDoc.data();
-                        const startedAt = sessionData.startedAt?.toDate ? sessionData.startedAt.toDate() : null;
+                    const startedAt = sessionData.clockIn ? new Date(sessionData.clockIn) : null;
 
                         if (startedAt) {
                             // CRITICAL: Use skipRounding: true for the trigger check
                             const autoClockOutTime = await getAutoClockOutTime(userShift, companyId, startedAt, { siteId, skipRounding: true });
 
                             if (now >= autoClockOutTime) {
-                                // Double-check lock before each operation in the loop
+                                // Double-check lock
                                 if (!isAutoClockingOutRef.current) {
                                     isAutoClockingOutRef.current = true;
                                 }
 
-                                console.log(`[AutoClockOut] ⏰ TRIGGERED for session ${sessionDoc.id} at ${autoClockOutTime.toLocaleTimeString()}`);
+                                console.log(`[AutoClockOut] ⏰ TRIGGERED for session ${sessionData.id} at ${autoClockOutTime.toLocaleTimeString()}`);
 
                                 try {
                                     await performAutoClockOut(
                                         user.uid,
-                                        sessionDoc.id,
+                                        sessionData.id,
                                         sessionData,
                                         startedAt,
-                                        sessionData.breakSec || 0,
+                                        (sessionData.breakMinutes || 0) * 60,
                                         autoClockOutTime
                                     );
                                     anyTriggered = true;
                                 } catch (err) {
-                                    console.error(`[AutoClockOut] Failed to clock out session ${sessionDoc.id}:`, err);
+                                    console.error(`[AutoClockOut] Failed to clock out session ${sessionData.id}:`, err);
                                 }
                             }
                         }
-                    }
 
                     if (anyTriggered) {
                         toast.info('You were automatically clocked out due to shift end time', {
@@ -490,18 +475,14 @@ const EmployeeDashboard = () => {
     // Load site name
     const loadSiteName = async () => {
         try {
-            const siteId = (user?.siteId || '').split('/')[1] || '';
+            const siteId = user?.siteId;
             if (!siteId) return;
 
-            const { doc, getDoc } = await import('firebase/firestore');
-            const { db } = await import('../../firebase/client');
+            const { data: dashboardData } = await hrApiClient.get('/hr/dashboard');
+            const site = (dashboardData.sites || []).find(s => s.id === siteId);
 
-            const siteRef = doc(db, 'sites', siteId);
-            const siteSnap = await getDoc(siteRef);
-
-            if (siteSnap.exists()) {
-                const siteData = siteSnap.data();
-                setSiteName(siteData.name || siteData.siteName || 'Main Office');
+            if (site) {
+                setSiteName(site.name || site.siteName || 'Main Office');
             }
         } catch (e) {
             console.error('Failed to load site name', e);
@@ -916,48 +897,18 @@ const EmployeeDashboard = () => {
             }).then(async () => {
                 // Fetch location data in background after successful clock in
                 try {
-                    const { collection, query, where, getDocs, doc: docRef, getDoc } = await import('firebase/firestore');
-                    const { db } = await import('../../firebase/client');
-
                     const today = new Date();
-                    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-                    const todayEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+                    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString();
+                    const todayEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999).toISOString();
 
-                    const schedulesQuery = query(
-                        collection(db, 'schedules'),
-                        where('employeeId', '==', userId),
-                        where('status', '==', 'accepted')
-                    );
-                    const schedulesSnap = await getDocs(schedulesQuery);
-
-                    // Find shift for today
-                    const todayShift = schedulesSnap.docs.find(doc => {
-                        const shiftData = doc.data();
-                        const shiftStart = shiftData.start?.toDate ? shiftData.start.toDate() : new Date(shiftData.start);
-                        return shiftStart >= todayStart && shiftStart <= todayEnd;
-                    });
+                    const schedules = await getUserSchedules(user.id, todayStart, todayEnd);
+                    const todayShift = schedules.find(s => s.status === 'accepted');
 
                     if (todayShift) {
-                        const shiftData = todayShift.data();
-                        const assignedLocationId = shiftData.locationId || null;
-
-                        // Update session with location data if found
-                        if (assignedLocationId) {
-                            try {
-                                const locationDoc = await getDoc(docRef(db, 'work_locations', assignedLocationId));
-                                if (locationDoc.exists()) {
-                                    const assignedLocationName = locationDoc.data().name;
-                                    // Optional: Update the session with location data
-                                    // This can be done in background without blocking UI
-                                }
-                            } catch (locErr) {
-                                console.warn('Failed to fetch location name:', locErr);
-                            }
-                        }
+                        // Logic for assigned location if needed
                     }
                 } catch (error) {
                     console.warn('Background location fetch failed:', error);
-                    // Don't show error to user since clock in already succeeded
                 }
             }).catch((error) => {
                 // Revert UI on error
@@ -1358,23 +1309,17 @@ const EmployeeDashboard = () => {
     // State reconciliation function
     const reconcileState = useCallback(async () => {
         try {
-            const uid = user?.uid;
-            if (!uid) return;
+            if (!user?.id) return;
 
-            const { collection, query, where, getDocs } = await import('firebase/firestore');
-            const { db } = await import('../../firebase/client');
-            const q = query(collection(db, 'timeClockSessions'), where('userId', '==', uid), where('status', '==', 'open'));
-            const snap = await getDocs(q);
+            const session = await getMyActiveSession(user.id);
 
-            if (!snap.empty) {
-                const s = snap.docs[0].data();
-                const startedAt = s.roundedStartedAt?.toDate ? s.roundedStartedAt.toDate() : (s.startedAt?.toDate ? s.startedAt.toDate() : new Date());
-                const rawStartedAt = s.startedAt?.toDate ? s.startedAt.toDate() : new Date();
-
+            if (session && session.status === 'open') {
+                const startedAt = session.startedAt instanceof Date ? session.startedAt : new Date(session.startedAt);
+                
                 // Server says we're clocked in, update local state
                 if (clockStatus === 'out') {
-                    setClockInTime(startedAt); // Display time (rounded)
-                    setRawClockInTime(rawStartedAt); // Raw time for calculations
+                    setClockInTime(startedAt); 
+                    setRawClockInTime(startedAt);
                     setClockOutTime(null);
                     setRawClockOutTime(null);
                     setClockStatus('in');
@@ -1395,7 +1340,7 @@ const EmployeeDashboard = () => {
         } catch (error) {
             console.error('Failed to reconcile state:', error);
         }
-    }, [user?.uid, clockStatus, showErrorMessage]);
+    }, [user?.id, clockStatus, showErrorMessage]);
 
     const handleRefreshClockData = useCallback(async () => {
         if (isRefreshing) return;
@@ -1403,50 +1348,33 @@ const EmployeeDashboard = () => {
         setIsRefreshing(true);
 
         try {
-            const { collection, query, where, getDocs } = await import('firebase/firestore');
-            const { db } = await import('../../firebase/client');
+            if (!user?.id) return;
 
-            if (!user?.uid) return;
+            const session = await getMyActiveSession(user.id);
 
-            // Check for open session
-            const openQ = query(
-                collection(db, 'timeClockSessions'),
-                where('userId', '==', user.uid),
-                where('status', '==', 'open')
-            );
-            const openSnap = await getDocs(openQ);
-
-            if (!openSnap.empty) {
-                const sessionData = openSnap.docs[0].data();
-
+            if (session && session.status === 'open') {
                 // Only sync if we're currently showing 'out' (prevents timer reset)
                 if (clockStatus === 'out') {
-                    const startedAt = sessionData.roundedStartedAt?.toDate ? sessionData.roundedStartedAt.toDate() : (sessionData.startedAt?.toDate ? sessionData.startedAt.toDate() : new Date());
-                    const rawStartedAt = sessionData.startedAt?.toDate ? sessionData.startedAt.toDate() : new Date();
-                    setClockInTime(startedAt); // Display time (rounded)
-                    setRawClockInTime(rawStartedAt); // Raw time for calculations
+                    const startedAt = session.startedAt instanceof Date ? session.startedAt : new Date(session.startedAt);
+                    setClockInTime(startedAt);
+                    setRawClockInTime(startedAt);
                     setClockOutTime(null);
                     setRawClockOutTime(null);
 
-                    if (sessionData.breakStartTime) {
+                    if (session.breakStartTime) {
                         setClockStatus('break');
-                        setBreakStartTime(sessionData.breakStartTime.toDate ? sessionData.breakStartTime.toDate() : new Date(sessionData.breakStartTime));
+                        setBreakStartTime(session.breakStartTime instanceof Date ? session.breakStartTime : new Date(session.breakStartTime));
                     } else {
                         setClockStatus('in');
                     }
 
-                    setTotalBreakTime(sessionData.breakSec || 0);
+                    setTotalBreakTime(session.breakSec || 0);
+                } else {
+                    setTotalBreakTime(session.breakSec || 0);
                 }
-                // If already clocked in, just update break time silently
-                else {
-                    setTotalBreakTime(sessionData.breakSec || 0);
-                }
-
-                // toast.success('Status confirmed: Clocked in', { autoClose: 1000 });
             } else {
                 // No open session
                 if (clockStatus !== 'out') {
-                    // User thinks they're clocked in but server says otherwise
                     setClockStatus('out');
                     setClockInTime(null);
                     setRawClockInTime(null);
@@ -1454,9 +1382,6 @@ const EmployeeDashboard = () => {
                     setRawClockOutTime(null);
                     setTotalBreakTime(0);
                     setBreakStartTime(null);
-                    // toast.warning('Clock status corrected to clocked out');
-                } else {
-                    // toast.success('Status confirmed: Clocked out', { autoClose: 1000 });
                 }
             }
 
@@ -1469,7 +1394,7 @@ const EmployeeDashboard = () => {
         } finally {
             setIsRefreshing(false);
         }
-    }, [isRefreshing, user?.uid, clockStatus, loadWeeklyHours]);
+    }, [isRefreshing, user?.id, clockStatus, loadWeeklyHours]);
 
 
     // Debouncing and conflict prevention

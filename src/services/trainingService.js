@@ -7,6 +7,7 @@
  */
 
 import hrApiClient from '../lib/hrApiClient';
+import wsClient from '../lib/wsClient';
 
 // ── Helper: normalize date fields ─────────────────────────────────────────────
 function normalizeDates(obj) {
@@ -151,23 +152,53 @@ export async function isTrainingComplete(userId, courseId) {
     const assignments = await getMyTrainingAssignments(userId);
     const match = assignments.find((a) => a.courseId === courseId || a.course?.id === courseId);
     return match ? match.status === 'completed' || match.progress >= 100 : false;
-  } catch {
+  } catch (err) {
     return false;
   }
 }
 
-// ── Get Training Stats for Dashboard ─────────────────────────────────────────
+// ── Get Training Stats ────────────────────────────────────────────────────────
 export async function getTrainingStats(companyId) {
   try {
-    const courses = await getTrainingCourses(companyId);
-    return {
-      totalCourses:     courses.length,
-      activeCourses:    courses.filter((c) => c.status === 'active' || c.isActive).length,
-      mandatoryCourses: courses.filter((c) => c.mandatory || c.isMandatory).length,
-    };
-  } catch {
+    const { data } = await hrApiClient.get('/hr/training/stats');
+    return data;
+  } catch (err) {
     return { totalCourses: 0, activeCourses: 0, mandatoryCourses: 0 };
   }
+}
+
+// ── Statistics (Complex) ──────────────────────────────────────────────────────
+export async function getTrainingStatistics(companyId, role, userId) {
+  try {
+    const { data } = await hrApiClient.get('/hr/training/stats');
+    return { success: true, data };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+// ── Subscriptions (Phase 6) ───────────────────────────────────────────────────
+export function subscribeTrainings(companyId, callback) {
+  const fetch = () =>
+    getTrainingCourses(companyId)
+      .then((data) => callback({ success: true, data }))
+      .catch((err) => callback({ success: false, error: err.message }));
+
+  fetch();
+  wsClient.on('training:updated', fetch);
+  return () => wsClient.off('training:updated', fetch);
+}
+
+export function subscribeAssignments(companyId, userId, callback) {
+  const fetch = () => {
+    const p = userId ? getMyTrainingAssignments(userId) : getTrainingCourses(companyId); // Fallback logic
+    p.then((data) => callback({ success: true, data }))
+     .catch((err) => callback({ success: false, error: err.message }));
+  };
+
+  fetch();
+  wsClient.on('training:updated', fetch);
+  return () => wsClient.off('training:updated', fetch);
 }
 
 // ── Default export ────────────────────────────────────────────────────────────
@@ -175,15 +206,23 @@ const trainingService = {
   getTrainingCourses,
   getTrainingCourse,
   createTrainingCourse,
+  createTraining: createTrainingCourse,
   updateTrainingCourse,
+  updateTraining: updateTrainingCourse,
   deleteTrainingCourse,
+  deleteTraining: deleteTrainingCourse,
   assignCourseToEmployee,
+  assignTraining: assignCourseToEmployee,
   updateAssignmentProgress,
+  updateAssignment: updateAssignmentProgress,
   markAssignmentComplete,
   getMyTrainingAssignments,
   getEmployeeTraining,
   isTrainingComplete,
   getTrainingStats,
+  getTrainingStatistics,
+  subscribeTrainings,
+  subscribeAssignments,
 };
 
 export default trainingService;

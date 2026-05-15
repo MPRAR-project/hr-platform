@@ -83,16 +83,31 @@ export async function updateCompanyPlugins(companyId, plugins) {
 }
 
 /**
+ * Get company details
+ */
+export async function getCompany(companyId) {
+  try {
+    const { data } = await hrApiClient.get('/hr/company');
+    return data;
+  } catch (error) {
+    console.error('[companyManagementService] Failed to fetch company:', error);
+    return null;
+  }
+}
+
+/**
  * Get plugin settings for a company
  */
 export async function getCompanyPlugins(companyId) {
   try {
-    const { data } = await hrApiClient.get('/hr/company');
+    const data = await getCompany(companyId);
+    if (!data) return {};
     return {
       scheduling: data.pluginScheduling,
       payslipAndInvoice: data.pluginPayslipAndInvoice,
       hiring: data.pluginHiring,
-      assets: data.pluginAssets
+      assets: data.pluginAssets,
+      absence: data.pluginAbsence !== false
     };
   } catch (error) {
     console.error('[companyManagementService] Failed to fetch plugins:', error);

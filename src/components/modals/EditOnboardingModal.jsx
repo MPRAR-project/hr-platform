@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { toast } from 'react-toastify';
 import Button from '../ui/Button';
-import { db } from '../../firebase/client';
-import { doc, getDoc, updateDoc, setDoc, serverTimestamp, collection, query, where, getDocs } from 'firebase/firestore';
+import { getUserOnboardingApplication, submitOnboardingStep } from '../../services/onboarding';
+import { getUserById, updateUserBySiteManager } from '../../services/users';
 import { getClients } from '../../services/clients';
 import { getSites } from '../../services/sites';
 import { useAuth } from '../../hooks/useAuth';
@@ -78,13 +78,8 @@ const EditOnboardingModal = ({ isOpen, onClose, userId, currentData, onSave }) =
       if (!isOpen || !userId) return;
 
       try {
-        const normalizedUserId = userId.includes('/') ? userId.split('/').pop() : userId;
-        const userRef = doc(db, 'users', normalizedUserId);
-        const userSnap = await getDoc(userRef);
-
-        if (userSnap.exists()) {
-          const userData = userSnap.data();
-          // Update formData with fresh site/client IDs
+        const userData = await getUserById(userId);
+        if (userData) {
           setFormData(prev => ({
             ...prev,
             clientId: userData.clientId || prev.clientId || '',
@@ -148,89 +143,7 @@ const EditOnboardingModal = ({ isOpen, onClose, userId, currentData, onSave }) =
     try {
       setLoading(true);
 
-      // Normalize userId (handle both 'uid' and 'users/uid' formats)
       const normalizedUserId = userId.includes('/') ? userId.split('/').pop() : userId;
-
-      // Find onboarding application
-      const appCol = collection(db, 'onboardingApplications');
-      const queries = [
-        query(appCol, where('userId', '==', normalizedUserId)),
-        query(appCol, where('userId', '==', `users/${normalizedUserId}`))
-      ];
-
-      const results = await Promise.allSettled(queries.map(q => getDocs(q)));
-      const allDocs = [];
-      for (const r of results) {
-        if (r.status === 'fulfilled' && !r.value.empty) {
-          r.value.docs.forEach(d => allDocs.push({ id: d.id, ...d.data() }));
-        }
-      }
-
-      let latestOnboarding = null;
-      let onboardingRef = null;
-
-      if (allDocs.length === 0) {
-        // Create new onboarding application if it doesn't exist
-        const userRef = doc(db, 'users', normalizedUserId);
-        const userSnap = await getDoc(userRef);
-
-        if (!userSnap.exists()) {
-          toast.error('User not found');
-          return;
-        }
-
-        const userData = userSnap.data();
-        const companyId = userData.companyId?.includes('/')
-          ? userData.companyId
-          : (userData.companyId ? `companies/${userData.companyId}` : null);
-        const siteId = userData.siteId?.includes('/')
-          ? userData.siteId
-          : (userData.siteId ? `sites/${userData.siteId}` : null);
-
-        if (!companyId || !siteId) {
-          toast.error('User company or site information is missing');
-          return;
-        }
-
-        // Create new onboarding application
-        const newOnboardingRef = doc(collection(db, 'onboardingApplications'));
-        const now = serverTimestamp();
-
-        const newOnboardingData = {
-          userId: normalizedUserId,
-          companyId,
-          siteId,
-          status: 'pending',
-          currentStep: 'personalInfo',
-          formData: {
-            personalInfo: {},
-            identification: {},
-            banking: {},
-            hrInfo: {},
-            policies: {},
-            optionalInfo: {}
-          },
-          employmentDetails: {},
-          documents: [],
-          createdAt: now,
-          updatedAt: now,
-          completedAt: null
-        };
-
-        await setDoc(newOnboardingRef, newOnboardingData);
-
-        latestOnboarding = { id: newOnboardingRef.id, ...newOnboardingData };
-        onboardingRef = newOnboardingRef;
-      } else {
-        // Get the latest onboarding application
-        allDocs.sort((a, b) => {
-          const at = (a.updatedAt?.toMillis?.() || a.createdAt?.toMillis?.() || 0);
-          const bt = (b.updatedAt?.toMillis?.() || b.createdAt?.toMillis?.() || 0);
-          return bt - at;
-        });
-        latestOnboarding = allDocs[0];
-        onboardingRef = doc(db, 'onboardingApplications', latestOnboarding.id);
-      }
 
       // Prepare employment details update
       const employmentDetailsUpdate = {
@@ -242,7 +155,7 @@ const EditOnboardingModal = ({ isOpen, onClose, userId, currentData, onSave }) =
         officeAddress: formData.officeAddress || '',
         workPattern: formData.workPattern || '',
         probationPeriod: formData.probationPeriod || '',
-        lastUpdated: serverTimestamp(),
+        lastUpdated: new Date().toISOString(),
         updatedBy: normalizedUserId,
         source: 'onboarding',
 
@@ -265,91 +178,19 @@ const EditOnboardingModal = ({ isOpen, onClose, userId, currentData, onSave }) =
         adminNotes: formData.adminNotes || ''
       };
 
-      // Calculate probation end date if start date and probation period are provided
-      if (formData.startDate && formData.probationPeriod) {
-        const startDate = new Date(formData.startDate);
-        // Extract number from strings like "3 Months" or just use the number
-        const probationMonths = parseInt(formData.probationPeriod.toString().match(/\d+/)?.[0]) || 3;
-        const endDate = new Date(startDate);
-        endDate.setMonth(endDate.getMonth() + probationMonths);
-        employmentDetailsUpdate.probationEndDate = endDate.toISOString().split('T')[0];
-      }
+      // 1. Update Onboarding Application via REST
+      await submitOnboardingStep(normalizedUserId, 4, { hrInfo: employmentDetailsUpdate });
 
-      // Update onboarding application
-      const onboardingUpdates = {
-        employmentDetails: {
-          ...(latestOnboarding.employmentDetails || {}),
-          ...employmentDetailsUpdate
-        },
-        'formData.banking': {
-          accountHolderName: formData.bankAccountName,
-          accountNumber: formData.bankAccountNumber,
-          bankName: formData.bankName,
-          sortCode: formData.sortCode,
-          branchName: formData.branchName,
-          iban: formData.iban
-        },
-        'formData.hrInfo': {
-          ...(latestOnboarding.formData?.hrInfo || {}),
-          annualSalary: formData.annualSalary,
-          payFrequency: formData.payFrequency,
-          benefits: formData.benefits,
-          hourlyRate: formData.hourlyRate,
-          chargeRate: formData.chargeRate,
-          notes: formData.adminNotes, // Sync with adminNotes
-          position: formData.jobTitle, // Keep these in sync too
-          department: formData.department,
-          employmentType: formData.employmentType,
-          startDate: formData.startDate,
-          probationEndDate: employmentDetailsUpdate.probationEndDate || ''
-        },
-        updatedAt: serverTimestamp()
-      };
-
-      await updateDoc(onboardingRef, onboardingUpdates);
-
-      // Update users collection with employment details AND sync site/client
-      const userRef = doc(db, 'users', normalizedUserId);
-      const userSnap = await getDoc(userRef);
-
-      if (userSnap.exists()) {
-        const userUpdates = {};
-        if (formData.jobTitle) userUpdates.jobTitle = formData.jobTitle;
-        if (formData.employmentType) userUpdates.employmentType = formData.employmentType;
-        if (formData.department) userUpdates.department = formData.department;
-        if (formData.startDate) userUpdates.hireDate = formData.startDate;
-
-        // CRITICAL FIX: Save the FULL employment details structure to the user document
-        userUpdates.employmentDetails = {
-          ...(userSnap.data().employmentDetails || {}),
-          ...employmentDetailsUpdate
-        };
-
-        userUpdates.updatedAt = serverTimestamp();
-        await updateDoc(userRef, userUpdates);
-
-        // USE CENTRALIZED SYNC for site/client changes
-        // This ensures assignments are properly managed
-        if (formData.siteId !== undefined) {
-          try {
-            const { updateUserSiteAndClient } = await import('../../services/userSiteClientSync');
-            console.log('[EditOnboarding] Calling updateUserSiteAndClient with:', {
-              userId: normalizedUserId,
-              siteId: formData.siteId || null,
-              clientId: formData.clientId || null
-            });
-            const syncResult = await updateUserSiteAndClient(
-              normalizedUserId,
-              formData.siteId || null,
-              formData.clientId || null
-            );
-            console.log('[EditOnboarding] Site/client sync result:', syncResult);
-          } catch (syncError) {
-            console.error(`[Onboarding] Failed to sync site/client:`, syncError);
-            // Don't fail the whole operation, just log
-          }
-        }
-      }
+      // 2. Update User Document via REST
+      await updateUserBySiteManager(normalizedUserId, {
+        jobTitle: formData.jobTitle,
+        employmentType: formData.employmentType,
+        department: formData.department,
+        hireDate: formData.startDate,
+        siteId: formData.siteId || null,
+        clientId: formData.clientId || null,
+        employmentDetails: employmentDetailsUpdate
+      });
 
       console.log('[EditOnboarding] ========= SAVE COMPLETED =========');
       toast.success('Onboarding details updated successfully');

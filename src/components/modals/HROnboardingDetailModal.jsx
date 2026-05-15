@@ -52,40 +52,25 @@ const HROnboardingDetailModal = ({ isOpen, onClose, profile, userData }) => {
                 try {
                     console.log('[HR Onboarding] Fetching robust employment details for:', profile.userId);
 
-                    const { collection, query, where, getDocs, doc, getDoc } = await import('firebase/firestore');
-                    const { db } = await import('../../firebase/client');
                     const { getUserEmploymentDetails } = await import('../../services/users');
+                    const { getUserOnboardingApplication } = await import('../../services/onboarding.js');
 
                     const uid = profile.userId;
 
-                    // 1. Get user details from users collection (primary source for existing employees)
+                    // 1. Get user details from REST (primary source for existing employees)
                     let userEmploymentDetails = null;
                     try {
                         userEmploymentDetails = await getUserEmploymentDetails(uid);
                     } catch (e) {
-                        console.warn('Failed to load employment details from users collection:', e);
+                        console.warn('Failed to load employment details from REST:', e);
                     }
 
                     // 2. Get onboarding application data (fallback source)
                     let onboarding = null;
                     try {
-                        const appCol = collection(db, 'onboardingApplications');
-                        // Try exact match first
-                        const q1 = query(appCol, where('userId', '==', uid));
-                        const s1 = await getDocs(q1);
-
-                        if (!s1.empty) {
-                            onboarding = s1.docs[0].data();
-                        } else {
-                            // Try path match
-                            const q2 = query(appCol, where('userId', '==', `users/${uid}`));
-                            const s2 = await getDocs(q2);
-                            if (!s2.empty) {
-                                onboarding = s2.docs[0].data();
-                            }
-                        }
+                        onboarding = await getUserOnboardingApplication(uid);
                     } catch (e) {
-                        console.error('Failed to load onboarding applications:', e);
+                        console.error('Failed to load onboarding application:', e);
                     }
 
                     // 3. Construct the detailed employment object

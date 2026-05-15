@@ -240,6 +240,17 @@ export async function getSessionsForDateRange({ userId, companyId, startDate, en
   }
 }
 
+// ── Get Single Session ────────────────────────────────────────────────────────
+export async function getSessionById(sessionId) {
+  try {
+    const { data } = await hrApiClient.get(`/hr/time-entries/${sessionId}`);
+    return normalizeEntry(data);
+  } catch (err) {
+    if (err.response?.status === 404) return null;
+    throw err;
+  }
+}
+
 // ── Normalize entry shape ─────────────────────────────────────────────────────
 function normalizeEntry(e) {
   return {

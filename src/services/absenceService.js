@@ -12,6 +12,7 @@
  */
 
 import hrApiClient from '../lib/hrApiClient';
+import wsClient from '../lib/wsClient';
 import { allowanceService } from './allowanceService';
 import { safeParseDate } from '../utils/safeDateParse';
 
@@ -264,15 +265,28 @@ class AbsenceService {
     }
   }
 
-  // ── Real-time subscription stub (was onSnapshot) ──────────────────────────
+  // ── Real-time subscription (Phase 6) ─────────────────────────────────────
   subscribeToAbsences(currentUser, callback) {
-    // Phase 6: replace with wsClient.on('absence:*', callback)
-    // For now: do an initial fetch then return no-op unsubscribe
-    this.getEmployeeAbsences(currentUser)
-      .then(callback)
-      .catch((err) => console.warn('[absenceService] subscription fallback failed:', err));
+    if (!currentUser) return () => {};
 
-    return () => {}; // unsubscribe no-op
+    const handler = () => {
+      this.getEmployeeAbsences(currentUser)
+        .then(callback)
+        .catch((err) => console.warn('[absenceService] refresh failed:', err));
+    };
+
+    // Listen for WebSocket events
+    wsClient.on('absence:updated', handler);
+
+    // Initial fetch
+    handler();
+
+    return () => wsClient.off('absence:updated', handler);
+  }
+
+  // Alias used by some pages
+  subscribeToEmployeeAbsences(currentUser, callback) {
+    return this.subscribeToAbsences(currentUser, callback);
   }
 
   // ── Permission helpers ─────────────────────────────────────────────────────

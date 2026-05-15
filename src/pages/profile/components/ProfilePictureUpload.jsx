@@ -1,9 +1,7 @@
 import React, { useState } from 'react';
 import { Camera, User, Upload, X } from 'lucide-react';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { doc, updateDoc } from 'firebase/firestore';
-import { storage, db } from "../../../firebase/client"
 import { toast } from 'react-toastify';
+import hrApiClient from '../../../lib/hrApiClient';
 import Button from '../../../components/ui/Button';
 
 const ProfilePictureUpload = ({ userId, currentPrifileImage, userName, onPhotoUpdate }) => {
@@ -49,29 +47,24 @@ const ProfilePictureUpload = ({ userId, currentPrifileImage, userName, onPhotoUp
     try {
       setIsUploading(true);
 
-      // Create a unique filename
-      const timestamp = Date.now();
-      const filename = `profile-pictures/${userId}/${timestamp}-${selectedFile.name}`;
+      // Upload to HR API
+      const formData = new FormData();
+      formData.append('file', selectedFile);
       
-      // Upload to Firebase Storage
-      const storageRef = ref(storage, filename);
-      await uploadBytes(storageRef, selectedFile);
+      const { data: uploadResult } = await hrApiClient.post('/hr', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
       
-      // Get download URL
-      const downloadURL = await getDownloadURL(storageRef);
-      
-      // Update user document in Firestore
-      const userRef = doc(db, 'users', userId);
-      await updateDoc(userRef, {
-        profileImage: downloadURL,
-        updatedAt: new Date()
+      // Update employee record with new profilePictureKey
+      await hrApiClient.put(`/hr/employees/${userId}`, {
+        profilePictureKey: uploadResult.fileKey
       });
 
       toast.success('Profile picture updated successfully!');
       
-      // Notify parent component
+      // Notify parent component with the new URL
       if (onPhotoUpdate) {
-        onPhotoUpdate(downloadURL);
+        onPhotoUpdate(uploadResult.url);
       }
       
       // Close modal and reset
@@ -90,11 +83,9 @@ const ProfilePictureUpload = ({ userId, currentPrifileImage, userName, onPhotoUp
     try {
       setIsUploading(true);
       
-      // Update user document to remove profileImage
-      const userRef = doc(db, 'users', userId);
-      await updateDoc(userRef, {
-        profileImage: null,
-        updatedAt: new Date()
+      // Update employee record to remove profilePictureKey
+      await hrApiClient.put(`/hr/employees/${userId}`, {
+        profilePictureKey: null
       });
 
       toast.success('Profile picture removed successfully!');

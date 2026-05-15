@@ -1,27 +1,30 @@
 // Manual Verification Script for Week Start Logic
 // Run this in browser console or a temporary node script if firebase env is set up
 
+import hrApiClient from './lib/hrApiClient';
 import { getTimesheetsByWeek, upsertDailyEntry } from './services/timesheets';
-import { db } from './firebase/client';
-import { doc, setDoc, deleteDoc } from 'firebase/firestore';
 
 async function verifyWeekStartTransition() {
     console.log("--- STARTING VERIFICATION ---");
     const testUserId = "test_user_verify_v1";
     const testCompanyId = "companies/test_company";
 
-    // Clean up previous test data
-    await deleteDoc(doc(db, 'timesheets', `${testUserId}_2023-10-22`));
-    await deleteDoc(doc(db, 'timesheets', `${testUserId}_2023-10-26`));
+    // Clean up previous test data via REST
+    try {
+        await hrApiClient.delete(`/hr/timesheets/${testUserId}_2023-10-22`);
+        await hrApiClient.delete(`/hr/timesheets/${testUserId}_2023-10-26`);
+    } catch (err) {
+        // Ignore if not found
+    }
 
-    // 1. SETUP: Create a LEAGCY Sunday-based timesheet (Oct 22 - Oct 28)
-    // Pretend user was on Sunday schedule.
+    // 1. SETUP: Create a LEGACY Sunday-based timesheet (Oct 22 - Oct 28) via REST
     console.log("1. Setting up Legacy Data (Sun Oct 22 - Sat Oct 28)...");
-    await setDoc(doc(db, 'timesheets', `${testUserId}_2023-10-22`), {
+    await hrApiClient.post('/hr/timesheets', {
+        id: `${testUserId}_2023-10-22`,
         userId: testUserId,
         companyId: "test_company",
-        start: "2023-10-22",
-        end: "2023-10-28",
+        startDate: "2023-10-22",
+        endDate: "2023-10-28",
         period: "2023-10-22",
         entries: [
             { date: "2023-10-22", id: "entry_1", notes: "Old Entry Sunday" },

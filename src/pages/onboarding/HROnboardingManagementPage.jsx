@@ -3,8 +3,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Search, Filter, ChevronDown, Eye, Loader2 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { getHROnboardingProfiles } from '../../services/hrOnboarding';
-import { getDoc, doc, collection, query, where, getDocs } from 'firebase/firestore';
-import { db } from '../../firebase/client';
+import { listInvites } from '../../services/invitations';
+import hrApiClient from '../../lib/hrApiClient';
 import HROnboardingDetailModal from '../../components/modals/HROnboardingDetailModal';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
@@ -45,14 +45,9 @@ const HROnboardingManagementPage = () => {
                 return;
             }
 
-            const companyId = user.companyId.includes('/')
-                ? user.companyId
-                : `companies/${user.companyId}`;
+            const cacheKey = `hr_onboarding_${user.companyId}`;
 
-            const rawCompanyId = companyId.split('/')[1] || companyId;
-            const cacheKey = `hr_onboarding_${rawCompanyId}`;
-
-            // Try cache first (prefetch or previous load)
+            // Try cache first
             const cachedData = getItem(cacheKey);
             if (Array.isArray(cachedData?.profiles)) {
                 setProfiles(cachedData.profiles);
@@ -62,61 +57,43 @@ const HROnboardingManagementPage = () => {
                 setIsLoading(true);
             }
 
-            // 1. Fetch existing HR Profiles (skip if we had cache and only revalidating)
-            const profilesResult = await getHROnboardingProfiles({
-                companyId,
-                limitCount: 100
-            });
+            // 1. Fetch existing HR Profiles and Pending Invites in parallel
+            const [profilesResult, invites] = await Promise.all([
+                getHROnboardingProfiles({ limitCount: 100 }),
+                listInvites()
+            ]);
 
-            // 2. Fetch Pending Invites that require HR Onboarding
-            const invitesRef = collection(db, 'invites');
-            const invitesQuery = query(
-                invitesRef,
-                where('companyId', '==', rawCompanyId),
-                where('status', '==', 'pending'),
-                where('requiresHROnboarding', '==', true)
-            );
+            // 2. Format Pending Invites
+            const pendingInvites = invites
+                .filter(inv => inv.status === 'pending' && inv.requiresHROnboarding)
+                .map(inv => ({
+                    id: `invite_${inv.id}`,
+                    isInvite: true,
+                    status: 'pending_signup',
+                    completionPercent: 0,
+                    userId: null,
+                    createdAt: inv.createdAt,
+                    userData: {
+                        displayName: inv.displayName,
+                        email: inv.email,
+                        firstName: inv.firstName,
+                        lastName: inv.lastName
+                    }
+                }));
 
-            const invitesSnap = await getDocs(invitesQuery);
-            const pendingInvites = invitesSnap.docs.map(doc => ({
-                id: `invite_${doc.id}`, // specific ID format
-                isInvite: true,
-                status: 'pending_signup',
-                completionPercent: 0,
-                userId: null,
-                createdAt: doc.data().createdAt,
-                // Mock user data for display
-                userData: {
-                    displayName: doc.data().displayName,
-                    email: doc.data().email,
-                    firstName: doc.data().displayName?.split(' ')[0] || '',
-                    lastName: doc.data().displayName?.split(' ').slice(1).join(' ') || ''
-                }
-            }));
-
-            const allProfiles = [...pendingInvites, ...profilesResult.profiles];
+            const allProfiles = [...pendingInvites, ...(profilesResult.profiles || profilesResult || [])];
             setProfiles(allProfiles);
 
-            // Load user data for real profiles
-            // Optimization: Batch this or use existing user cache if possible
+            // 3. Load user data for real profiles from the employee list (batch fetch)
+            const { data: employeesData } = await hrApiClient.get('/hr/employees', {
+                params: { limit: 1000 }
+            });
+            
+            const employeeList = employeesData.employees || employeesData || [];
             const userMap = {};
-            // Gather IDs to fetch
-            const userIdsToFetch = profilesResult.profiles.map(p => p.userId);
-
-            // In a real scalability scenario, we shouldn't fetch 100 users one-by-one.
-            // But for now, we'll keep the logic but cache the result.
-            await Promise.all(
-                userIdsToFetch.map(async (userId) => {
-                    try {
-                        const userDoc = await getDoc(doc(db, 'users', userId));
-                        if (userDoc.exists()) {
-                            userMap[userId] = userDoc.data();
-                        }
-                    } catch (err) {
-                        console.error('Error loading user data:', err);
-                    }
-                })
-            );
+            employeeList.forEach(emp => {
+                userMap[emp.id] = emp;
+            });
 
             setUserDataMap(userMap);
 

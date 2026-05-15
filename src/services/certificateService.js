@@ -131,6 +131,16 @@ class CertificateService {
       throw error;
     }
   }
+
+  async getCertificateById(id) {
+    try {
+      const { data } = await hrApiClient.get(`/hr/certificates/${id}`);
+      return { success: true, data };
+    } catch (error) {
+      console.error('[CertificateService] Fetch certificate failed:', error);
+      throw error;
+    }
+  }
 }
 
 export const certificateService = new CertificateService();

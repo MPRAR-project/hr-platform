@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
-import { db } from '../../firebase/client';
-import { collection, query, where, getDocs, writeBatch, doc, updateDoc } from 'firebase/firestore';
+import { scanDataForCleanup, performDataCleanup } from '../../services/superAdminService';
 import { Trash2, Search, AlertTriangle, ShieldAlert, CheckCircle } from 'lucide-react';
 import Header from '../../components/layout/Header';
 import Loader from '../../components/ui/Loader';
@@ -36,78 +35,26 @@ const DataCleanupPage = () => {
         setDeleteProgress(null);
 
         try {
-            // 1. Scan Timesheets
-            const tsRef = collection(db, 'timesheets');
-            const tsQ = query(tsRef, where(targetType, '==', targetId.trim()));
-            const tsSnap = await getDocs(tsQ);
-
-            // 2. Scan Sessions
-            const sessRef = collection(db, 'timeClockSessions');
-            const sessQ = query(sessRef, where(targetType, '==', targetId.trim()));
-            const sessSnap = await getDocs(sessQ);
-
-            // 3. Scan Users
-            const userRef = collection(db, 'users');
-
-            // For users, it's usually companyId (string) or companies/companyId (string)
-            let usersDocs = [];
-            if (targetType === 'companyId') {
-                const usersQ1 = query(userRef, where('companyId', '==', targetId.trim()));
-                const usersQ2 = query(userRef, where('companyId', '==', `companies/${targetId.trim()}`));
-                const [snap1, snap2] = await Promise.all([getDocs(usersQ1), getDocs(usersQ2)]);
-
-                // Deduplicate and filter by fake
-                const seenIds = new Set();
-                [...snap1.docs, ...snap2.docs].forEach(d => {
-                    if (!seenIds.has(d.id)) {
-                        const email = (d.data().email || '').toLowerCase();
-                        const isFake = FAKE_DOMAINS.some(domain => email.includes(domain));
-
-                        if (!onlyFake || isFake) {
-                            usersDocs.push(d);
-                            seenIds.add(d.id);
-                        }
-                    }
-                });
-            }
-
-            // 4. Scan Profiles
-            let profileDocs = [];
-            if (targetType === 'companyId') {
-                const pRef = collection(db, 'userCompanyProfiles');
-                const pQ = query(pRef, where('companyId', '==', `companies/${targetId.trim()}`));
-                const pSnap = await getDocs(pQ);
-
-                pSnap.docs.forEach(d => {
-                    const email = (d.data().email || '').toLowerCase();
-                    const isFake = FAKE_DOMAINS.some(domain => email.includes(domain));
-                    if (!onlyFake || isFake) {
-                        profileDocs.push(d);
-                    }
-                });
-            }
-
+            const data = await scanDataForCleanup(targetType, targetId.trim(), { onlyFake });
+            
             setScanResult({
-                timesheetsCount: tsSnap.size,
-                sessionsCount: sessSnap.size,
-                usersCount: usersDocs.length,
-                profilesCount: profileDocs.length,
-                timesheetDocs: tsSnap.docs,
-                sessionDocs: sessSnap.docs,
-                userDocs: usersDocs,
-                profileDocs: profileDocs
+                timesheetsCount: data.counts.timesheets,
+                sessionsCount: data.counts.sessions,
+                usersCount: data.counts.users,
+                profilesCount: data.counts.profiles,
+                // No need to store docs refs anymore as server handles execution
             });
 
-            const total = tsSnap.size + sessSnap.size + usersDocs.length + profileDocs.length;
+            const total = data.counts.timesheets + data.counts.sessions + data.counts.users + data.counts.profiles;
             if (total === 0) {
                 toast.info('No records found for this ID.');
             } else {
-                toast.success(`Found ${total} total records.`);
+                toast.success(`Found ${total} total records via REST.`);
             }
 
         } catch (error) {
-            console.error('Scan failed:', error);
-            toast.error('Scan failed: ' + error.message);
+            console.error('[Cleanup] Scan failed:', error);
+            toast.error('Scan failed: ' + (error.response?.data?.error || error.message));
         } finally {
             setIsLoading(false);
         }
@@ -125,70 +72,27 @@ const DataCleanupPage = () => {
         setDeleteProgress({ total: totalToStep, deleted: 0 });
 
         try {
-            const allDocs = [
-                ...scanResult.timesheetDocs.map(d => ({ ref: d.ref, type: 'timesheet' })),
-                ...scanResult.sessionDocs.map(d => ({ ref: d.ref, type: 'session' })),
-                ...scanResult.userDocs.map(d => ({ ref: d.ref, type: 'user' })),
-                ...scanResult.profileDocs.map(d => ({ ref: d.ref, type: 'profile' }))
-            ];
+            await performDataCleanup(targetType, targetId.trim(), { onlyFake });
 
-            const BATCH_SIZE = 1000; // Safe limit under 500
-            let deletedCountTotal = 0;
-
-            for (let i = 0; i < allDocs.length; i += BATCH_SIZE) {
-                const batch = writeBatch(db);
-                const chunk = allDocs.slice(i, i + BATCH_SIZE);
-
-                chunk.forEach(item => {
-                    batch.delete(item.ref);
-                });
-
-                await batch.commit();
-                deletedCountTotal += chunk.length;
-                setDeleteProgress({ total: allDocs.length, deleted: deletedCountTotal });
-            }
-
-            // [FIX] Clear local cache immediately after deletion
+            // Clear cache
             if (targetType === 'companyId') {
                 clearItemsByPrefix(`paginated_users_${targetId.trim()}`);
                 clearItemsByPrefix(`userGroups_${targetId.trim()}`);
                 clearItemsByPrefix(`platform_stats_${targetId.trim()}`);
-                clearPlatformCache(); // Clear the main platform dashboard cache too
+                clearPlatformCache();
             } else {
                 clearAll();
                 clearPlatformCache();
             }
 
-            // If we deleted users, update the company count
-            if (scanResult.usersCount > 0 && targetType === 'companyId') {
-                try {
-                    const companyRef = doc(db, 'companies', targetId.trim());
-                    // Re-scan remaining real users to get accurate count
-                    const userRef = collection(db, 'users');
-                    const usersQ1 = query(userRef, where('companyId', '==', targetId.trim()));
-                    const usersQ2 = query(userRef, where('companyId', '==', `companies/${targetId.trim()}`));
-                    const [snap1, snap2] = await Promise.all([getDocs(usersQ1), getDocs(usersQ2)]);
-
-                    const seenIds = new Set();
-                    [...snap1.docs, ...snap2.docs].forEach(d => seenIds.add(d.id));
-
-                    await updateDoc(companyRef, {
-                        currentEmployeeCount: seenIds.size
-                    });
-                    console.log(`Updated company ${targetId.trim()} count to ${seenIds.size}`);
-                } catch (e) {
-                    console.warn('Could not update company count:', e);
-                }
-            }
-
-            toast.success('Deletion completed successfully and cache cleared.');
-            setScanResult(null); // Clear results
+            toast.success('Deletion completed successfully and cache cleared via REST.');
+            setScanResult(null);
             setConfirmText('');
             setTargetId('');
 
         } catch (error) {
-            console.error('Delete failed:', error);
-            toast.error('Delete failed: ' + error.message);
+            console.error('[Cleanup] Delete failed:', error);
+            toast.error('Delete failed: ' + (error.response?.data?.error || error.message));
         } finally {
             setIsLoading(false);
             setDeleteProgress(null);

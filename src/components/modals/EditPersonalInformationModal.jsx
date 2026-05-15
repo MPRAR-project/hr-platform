@@ -2,9 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { toast } from 'react-toastify';
 import Button from '../ui/Button';
-import { db } from '../../firebase/client';
-import { doc, getDoc, updateDoc, serverTimestamp, collection, query, where, getDocs } from 'firebase/firestore';
-import { syncUserToCentral } from '../../services/users';
+import { getUserById, updateUserBySiteManager, syncUserToCentral } from '../../services/users';
+import { getUserOnboardingApplication, submitOnboardingStep } from '../../services/onboarding';
 
 const EditPersonalInformationModal = ({ isOpen, onClose, userId, companyId, currentData, onSave }) => {
   const [loading, setLoading] = useState(false);
@@ -71,12 +70,10 @@ const EditPersonalInformationModal = ({ isOpen, onClose, userId, companyId, curr
 
       // Prioritize firstName/lastName from user document over parsed display name
       // Get user document data to access actual firstName/lastName fields
-      let userDocData = {};
       try {
-        const userDocRef = doc(db, 'users', userId);
-        const userDocSnap = await getDoc(userDocRef);
-        if (userDocSnap.exists()) {
-          userDocData = userDocSnap.data();
+        const userData = await getUserById(userId);
+        if (userData) {
+          userDocData = userData;
         }
       } catch (error) {
         console.warn('Failed to fetch user document:', error);
@@ -286,21 +283,10 @@ const EditPersonalInformationModal = ({ isOpen, onClose, userId, companyId, curr
     try {
       setLoading(true);
 
-      // Normalize userId (handle both 'uid' and 'users/uid' formats)
       const normalizedUserId = userId.includes('/') ? userId.split('/').pop() : userId;
 
-      console.log("USER ID:", normalizedUserId);
-      // Update users collection
-      const userRef = doc(db, 'users', normalizedUserId);
-      const userSnap = await getDoc(userRef);
-
-      if (!userSnap.exists()) {
-        throw new Error('User not found');
-      }
-
-      const userData = userSnap.data();
       const updates = {
-        updatedAt: serverTimestamp()
+        updatedAt: new Date().toISOString()
       };
 
       // Update basic information fields in users collection
@@ -329,46 +315,21 @@ const EditPersonalInformationModal = ({ isOpen, onClose, userId, companyId, curr
       if (formData.emergencyEmail) updates.emergencyEmail = formData.emergencyEmail;
       if (formData.emergencyAddress) updates.emergencyAddress = formData.emergencyAddress;
 
-      await updateDoc(userRef, updates);
+      // 1. Update User Document via REST
+      await updateUserBySiteManager(normalizedUserId, updates);
 
-      // Also update onboardingApplications if it exists
+      // 2. Update Onboarding Application via REST (if it exists)
       try {
-        const onboardingCol = collection(db, 'onboardingApplications');
-        const onboardingQueries = [
-          query(onboardingCol, where('userId', '==', normalizedUserId)),
-          query(onboardingCol, where('userId', '==', `users/${normalizedUserId}`))
-        ];
+        const application = await getUserOnboardingApplication(normalizedUserId);
+        if (application) {
+          const stepData = application.stepData || {};
+          const updatedStepData = { ...stepData };
 
-        const results = await Promise.allSettled(onboardingQueries.map(q => getDocs(q)));
-        const allDocs = [];
-        for (const r of results) {
-          if (r.status === 'fulfilled' && !r.value.empty) {
-            r.value.docs.forEach(d => allDocs.push({ id: d.id, ...d.data() }));
-          }
-        }
-
-        if (allDocs.length > 0) {
-          // Sort by updatedAt/createdAt to get the latest
-          allDocs.sort((a, b) => {
-            const at = (a.updatedAt?.toMillis?.() || a.createdAt?.toMillis?.() || 0);
-            const bt = (b.updatedAt?.toMillis?.() || b.createdAt?.toMillis?.() || 0);
-            return bt - at;
-          });
-
-          const latestOnboarding = allDocs[0];
-          const onboardingRef = doc(db, 'onboardingApplications', latestOnboarding.id);
-
-          // Build the complete stepData object with updates
-          const existingStepData = latestOnboarding.stepData || {};
-          const updatedStepData = { ...existingStepData };
-
-          // Update stepData.personalInfo - use form values directly (they are the source of truth)
           updatedStepData.personalInfo = {
-            ...(existingStepData.personalInfo || {}),
+            ...(stepData.personalInfo || {}),
             firstName: formData.firstName,
             lastName: formData.lastName,
-            // Email is not editable - keep existing email, but trim it if somehow it has spaces
-            email: (existingStepData.personalInfo?.email || formData.email)?.trim(),
+            email: formData.email?.trim(),
             phone: formData.phone,
             dateOfBirth: formData.dateOfBirth,
             gender: formData.gender,
@@ -377,9 +338,8 @@ const EditPersonalInformationModal = ({ isOpen, onClose, userId, companyId, curr
             addressLine1: formData.address
           };
 
-          // Update stepData.identification - use form values directly
           updatedStepData.identification = {
-            ...(existingStepData.identification || {}),
+            ...(stepData.identification || {}),
             nationalInsurance: formData.nationalInsurance,
             passportNumber: formData.passportNumber,
             issuingCountry: formData.issuingCountry,
@@ -392,15 +352,11 @@ const EditPersonalInformationModal = ({ isOpen, onClose, userId, companyId, curr
             emergencyAddress: formData.emergencyAddress
           };
 
-          // Update the entire stepData object
-          await updateDoc(onboardingRef, {
-            stepData: updatedStepData,
-            updatedAt: serverTimestamp()
-          });
+          await submitOnboardingStep(normalizedUserId, 1, updatedStepData.personalInfo);
+          await submitOnboardingStep(normalizedUserId, 2, updatedStepData.identification);
         }
       } catch (onboardingError) {
         console.warn('Failed to update onboarding application (non-critical):', onboardingError);
-        // Don't throw - updating users collection is the primary goal
       }
 
       // Sync personal info to HR onboarding profile if it exists

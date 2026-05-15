@@ -1,16 +1,14 @@
-
-import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../hooks/useAuth';
-import { db } from '../../firebase/client';
-import { collection, query, where, orderBy, limit, doc, Timestamp, onSnapshot } from 'firebase/firestore';
 import { FileText, Download, User as UserIcon, RefreshCw, Filter, Menu, Calendar } from 'lucide-react';
 import Loader from '../../components/ui/Loader';
 import Header from '../../components/layout/Header';
 import { useUI } from '../../hooks/useUI';
 import { canEditTimesheets } from '../../utils/timesheetPermissions';
-import { fetchWeekDetails } from '../../services/timesheets';
+import { fetchWeekDetails, getTimesheetsByWeek, getUserTimesheetsByWeek } from '../../services/timesheets';
 import { getUserById } from '../../services/users';
 import { getManagedEmployeeIdsForManager } from '../../services/teams';
+import hrApiClient from '../../lib/hrApiClient';
+import wsClient from '../../lib/wsClient';
 
 const TimesheetArchivePage = ({ isEmbedded = false }) => {
     const { user } = useAuth();
@@ -150,15 +148,11 @@ const TimesheetArchivePage = ({ isEmbedded = false }) => {
         fetchManagedEmployees();
     }, [isTeamManager, user?.userId, user?.companyId]);
 
-    // Real-time listener setup using proper Firestore snapshot pattern
+    // Real-time listener setup via REST + WebSocket
     useEffect(() => {
-        let unsubscribes = [];
-
-        const setupListeners = async () => {
+        const loadData = async () => {
             if (!user || !selectedMonthId) return;
 
-            // Clear previous data when month changes
-            setDocMap({});
             setRealtimeLoading(true);
             const selectedMonth = months.find(m => m.id === selectedMonthId);
             if (!selectedMonth) {
@@ -166,343 +160,56 @@ const TimesheetArchivePage = ({ isEmbedded = false }) => {
                 return;
             }
 
-            console.log(`TimesheetArchivePage: Setting up real-time listeners for ${selectedMonthId} (${selectedMonth.startStr} to ${selectedMonth.endStr})`);
-
-            const timesheetsCol = collection(db, 'timesheets');
-            const queries = [];
-
-            if (!isManager) {
-                // Employee: Only their own
-                queries.push(query(timesheetsCol, where('userId', '==', user.uid)));
-            } else if (isTeamManager) {
-                // Team Manager: Only their team members
-                if (managedEmployeeIds.size > 0) {
-                    queries.push(query(timesheetsCol, where('userId', 'in', Array.from(managedEmployeeIds))));
-                }
-                // Also include their own timesheets
-                queries.push(query(timesheetsCol, where('userId', '==', user.uid)));
-            } else {
-                // Other Managers (Site, Admin, HR, etc.) - Original logic
-                // 1. Approved By Me
-                queries.push(query(timesheetsCol, where('approvedBy', '==', user.uid)));
-
-                // 2. Managed By Me
-                queries.push(query(timesheetsCol, where('managerUserId', '==', user.uid)));
-
-                // 3. My Own Timesheets
-                queries.push(query(timesheetsCol, where('userId', '==', user.uid)));
-
-                // 4. Hierarchy (Site/Company)
-                if (canViewHierarchy) {
-                    if (user.siteId) {
-                        const sitePath = typeof user.siteId === 'string' ? user.siteId : (user.siteId.path || user.siteId.id);
-                        const siteIdRaw = sitePath.split('/').pop();
-                        const possibleSiteIds = [sitePath, siteIdRaw].filter(Boolean);
-
-                        queries.push(query(timesheetsCol, where('siteId', 'in', possibleSiteIds)));
-                        queries.push(query(timesheetsCol, where('siteIdPath', 'in', possibleSiteIds)));
-                    }
-
-                    if (user.companyId) {
-                        const compPath = user.companyId;
-                        const compIdRaw = compPath.split('/').pop();
-                        const possibleCompIds = [compPath, compIdRaw].filter(Boolean);
-
-                        queries.push(query(timesheetsCol, where('companyId', 'in', possibleCompIds)));
-                    }
-
-                    if (!user.siteId && !user.companyId) {
-                        queries.push(query(timesheetsCol, limit(500)));
-                    }
-                }
-            }
-
-            // Attach Listeners
-            queries.forEach(q => {
-                const unsub = onSnapshot(q, (snap) => {
-                    // Update a map of docs by ID for efficient merging
-                    setDocMap(prev => {
-                        const next = { ...prev };
-                        snap.docChanges().forEach(change => {
-                            const docData = change.doc.data();
-                            
-                            // Client-side filtering for approved status and date range
-                            if (docData.status !== 'approved') return;
-                            
-                            const docPeriod = docData.period || (docData.start && typeof docData.start === 'string' ? docData.start : null);
-                            if (!docPeriod) return;
-                            
-                            if (docPeriod < selectedMonth.startStr || docPeriod > selectedMonth.endStr) return;
-
-                            if (change.type === 'removed') {
-                                delete next[change.doc.id];
-                            } else {
-                                next[change.doc.id] = change.doc;
-                            }
-                        });
-                        return next;
+            try {
+                let sheets = [];
+                if (!isManager) {
+                    // Employee: Only their own
+                    sheets = await getUserTimesheetsByWeek(user.uid, user.companyId, selectedMonth.startStr);
+                } else {
+                    // Manager: Use the batch endpoint with status filter
+                    const { data } = await hrApiClient.get('/hr/timesheets', {
+                        params: {
+                            status: 'approved',
+                            companyId: user.companyId?.replace('companies/', ''),
+                            startDate: selectedMonth.startStr,
+                            endDate: selectedMonth.endStr
+                        }
                     });
-                });
-                unsubscribes.push(unsub);
-            });
+                    sheets = data.timesheets || data || [];
+                }
 
-            setRealtimeLoading(false);
+                // Normalization is already handled by the service, but let's ensure consistency
+                const parsedSheets = sheets.map(s => ({
+                    ...s,
+                    name: s.employee?.displayName || s.employeeName || s.name || '',
+                    weekStartDate: new Date(s.weekStart || s.period || s.start),
+                    approvalDate: s.approvedAt ? new Date(s.approvedAt) : null
+                }));
+
+                setArchives(parsedSheets);
+            } catch (err) {
+                console.error('[TimesheetArchivePage] Load error:', err);
+            } finally {
+                setRealtimeLoading(false);
+            }
         };
 
-        setupListeners();
+        loadData();
+
+        // WebSocket listener for updates
+        const handleWsUpdate = () => loadData();
+        wsClient.on('timesheet:updated', handleWsUpdate);
 
         return () => {
-            unsubscribes.forEach(u => u());
+            wsClient.off('timesheet:updated', handleWsUpdate);
         };
-    }, [user, selectedMonthId, isManager, isTeamManager, managedEmployeeIds, canViewHierarchy]);
+    }, [user, selectedMonthId, isManager]);
 
-    // Intermediate state for raw docs and map (like ApprovalsPage pattern)
-    const [docMap, setDocMap] = useState({});
-    const [rawTimesheetDocs, setRawTimesheetDocs] = useState([]); // Derived from map
+    // Intermediate state logic removed as we now load directly into archives
 
-    // Update rawDocs when map changes
-    useEffect(() => {
-        const docs = Object.values(docMap);
-        setRawTimesheetDocs(docs);
-    }, [docMap]);
-
-    // Process and update archives when raw docs change
-    useEffect(() => {
-        if (rawTimesheetDocs.length > 0) {
-            processAndSetArchives(rawTimesheetDocs);
-        } else {
-            setArchives([]);
-        }
-    }, [rawTimesheetDocs]);
-
-    // Process archives data (extracted for reuse)
-    const processAndSetArchives = async (allDocs) => {
-        // Apply HR advisor filter
-        const filteredDocs = await filterTimesheetsForHRAdvisor(allDocs);
-
-        // Deduplicate by ID (should already be unique due to docMap, but keeping for safety)
-        const seen = new Set();
-        const uniqueDocs = [];
-        for (const d of filteredDocs) {
-            if (!seen.has(d.id)) {
-                seen.add(d.id);
-                uniqueDocs.push(d);
-            }
-        }
-
-        console.log("TimesheetArchivePage: Processing", uniqueDocs.length, "unique docs");
-
-        // Parse Docs and fetch missing user information
-        const parsedDocs = await Promise.all(uniqueDocs.map(async (d) => {
-            const data = d.data();
-            let userName = data.name || data.employeeName || data.displayName;
-
-            // If user name is missing, fetch it from the users collection (with caching)
-            if (!userName && data.userId) {
-                // Check cache first
-                const cachedUserData = userCache[data.userId];
-                if (cachedUserData) {
-                    userName = cachedUserData.name;
-                } else {
-                    try {
-                        const userData = await getUserById(data.userId);
-                        if (userData) {
-                            userName = userData.displayName ||
-                                `${userData.firstName || ''} ${userData.lastName || ''}`.trim() ||
-                                userData.email ||
-                                '';
-
-                            // Cache the user name and role
-                            setUserCache(prev => ({
-                                ...prev,
-                                [data.userId]: {
-                                    name: userName || 'Missing Name',
-                                    role: userData.role
-                                }
-                            }));
-                        }
-                    } catch (error) {
-                        console.warn(`Failed to fetch user data for ${data.userId}:`, error);
-                        userName = '';
-                        // Cache the failed result
-                        setUserCache(prev => ({
-                            ...prev,
-                            [data.userId]: {
-                                name: '',
-                                role: null
-                            }
-                        }));
-                    }
-                }
-            }
-
-            // Canonical week start date for all sorting (always a real Date)
-            let weekStart;
-            if (data.weekStartDate?.toDate) {
-                weekStart = data.weekStartDate.toDate();
-            } else if (typeof data.weekStartDate === 'string') {
-                weekStart = new Date(data.weekStartDate);
-            } else if (data.start?.toDate) {
-                weekStart = data.start.toDate();
-            } else if (typeof data.start === 'string') {
-                weekStart = new Date(data.start);
-            } else if (typeof data.period === 'string') {
-                weekStart = new Date(data.period);
-            } else {
-                weekStart = new Date();
-            }
-
-            return {
-                id: d.id,
-                ...data,
-                name: userName || '',
-                start: weekStart,
-                weekStartDate: weekStart,
-                approvalDate: data.approvedAt?.toDate?.() || new Date()
-            };
-        }));
-
-        // Filter out any entries where the user name is missing
-        const filteredArchives = parsedDocs.filter(doc => doc.name && doc.name !== 'Unknown User' && doc.name !== 'Missing Name');
-
-        setArchives(filteredArchives);
-    };
-
-    // Cache for user information to avoid repeated fetches (persistent across sessions)
-    const [userCache, setUserCache] = useState(() => {
-        try {
-            const cached = localStorage.getItem('mprar_timesheet_user_cache');
-            return cached ? JSON.parse(cached) : {};
-        } catch (e) {
-            return {};
-        }
-    });
-
-    // Update localStorage when user cache changes
-    useEffect(() => {
-        try {
-            localStorage.setItem('mprar_timesheet_user_cache', JSON.stringify(userCache));
-        } catch (e) {
-            console.warn('Failed to save user cache to localStorage:', e);
-        }
-    }, [userCache]);
-
-    // Legacy fetch method (kept for manual refresh if needed)
     const fetchArchivesForMonth = async (monthId) => {
-        if (!user) return;
-
-        setLoading(true);
-        setArchives([]); // Clear previous
-
-        const selectedMonth = months.find(m => m.id === monthId);
-        if (!selectedMonth) {
-            setLoading(false);
-            return;
-        }
-
-        console.log(`TimesheetArchivePage: Manual refresh for ${monthId} (${selectedMonth.startStr} to ${selectedMonth.endStr})`);
-
-        try {
-            const tsRef = collection(db, 'timesheets');
-            let allDocs = [];
-
-            // Helper to run query
-            const runQuery = async (constraints, label) => {
-                try {
-                    const q = query(tsRef, ...constraints);
-                    const snap = await getDocs(q);
-                    console.log(`TimesheetArchivePage: Query [${label}] found ${snap.size} docs (pre-filter)`);
-
-                    // Client-side Filtering
-                    const filteredDocs = snap.docs.filter(doc => {
-                        const data = doc.data();
-
-                        // 1. Status Filter (Must be approved)
-                        if (data.status !== 'approved') return false;
-
-                        // 2. Date Filter
-                        const docPeriod = data.period || (data.start && typeof data.start === 'string' ? data.start : null);
-                        if (!docPeriod) return false;
-
-                        return docPeriod >= selectedMonth.startStr && docPeriod <= selectedMonth.endStr;
-                    });
-
-                    console.log(`TimesheetArchivePage: Query [${label}] matches ${filteredDocs.length} approved docs in range`);
-                    return filteredDocs;
-                } catch (e) {
-                    console.warn(`TimesheetArchivePage: Query [${label}] failed`, e);
-                    if (e.code === 'failed-precondition') {
-                        console.error(`Missing Index for [${label}]. URL:`, e.details);
-                    }
-                    return [];
-                }
-            };
-
-            if (!isManager) {
-                // Employee: Only their own
-                const c = [where('userId', '==', user.uid)];
-                allDocs = await runQuery(c, "Employee Own");
-                allDocs = await filterTimesheetsForHRAdvisor(allDocs);
-            } else if (isTeamManager) {
-                // Team Manager: Only their team members
-                const queries = [];
-                
-                if (managedEmployeeIds.size > 0) {
-                    queries.push(runQuery([where('userId', 'in', Array.from(managedEmployeeIds))], "Team Members"));
-                }
-                // Also include their own timesheets
-                queries.push(runQuery([where('userId', '==', user.uid)], "Own Timesheets"));
-                
-                const results = await Promise.all(queries);
-                allDocs = results.flat();
-            } else {
-                // Other Managers (Site, Admin, HR, etc.) - Original logic
-                const queries = [];
-
-                // 1. Approved By Me
-                queries.push(runQuery([where('approvedBy', '==', user.uid)], "Approved By Me"));
-
-                // 2. Managed By Me
-                queries.push(runQuery([where('managerUserId', '==', user.uid)], "Managed By Me"));
-
-                // 3. My Own Timesheets
-                queries.push(runQuery([where('userId', '==', user.uid)], "My Own Timesheets"));
-
-                // 4. Hierarchy (Site/Company)
-                if (canViewHierarchy) {
-                    if (user.siteId) {
-                        const sitePath = typeof user.siteId === 'string' ? user.siteId : (user.siteId.path || user.siteId.id);
-                        const siteIdRaw = sitePath.split('/').pop();
-                        const possibleSiteIds = [sitePath, siteIdRaw].filter(Boolean);
-
-                        queries.push(runQuery([where('siteId', 'in', possibleSiteIds)], "Site Hierarchy (String)"));
-                        queries.push(runQuery([where('siteIdPath', 'in', possibleSiteIds)], "Site Hierarchy (Path)"));
-                    }
-
-                    if (user.companyId) {
-                        const compPath = user.companyId;
-                        const compIdRaw = compPath.split('/').pop();
-                        const possibleCompIds = [compPath, compIdRaw].filter(Boolean);
-
-                        queries.push(runQuery([where('companyId', 'in', possibleCompIds)], "Company Hierarchy"));
-                    }
-
-                    if (!user.siteId && !user.companyId) {
-                        queries.push(runQuery([limit(500)], "Unrestricted"));
-                    }
-                }
-
-                const results = await Promise.all(queries);
-                allDocs = results.flat();
-            }
-
-            await processAndSetArchives(allDocs);
-
-        } catch (error) {
-            console.error("Error fetching archives:", error);
-        } finally {
-            setLoading(false);
-        }
+        // Manual refresh now just re-triggers the effect
+        setSelectedMonthId(monthId);
     };
 
     const sortedArchives = useMemo(() => {

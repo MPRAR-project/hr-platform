@@ -239,12 +239,62 @@ class AllowanceService {
     }
   }
 
-  // ── Subscribe stub (Phase 6 will wire WS) ─────────────────────────────────
-  subscribeToAllowances(employeeId, callback) {
-    this.getEmployeeAllowances(employeeId)
-      .then(callback)
-      .catch((err) => console.warn('[allowanceService] subscription fallback failed:', err));
-    return () => {};
+  // ── Get employees (those eligible for allowances) ────────────────────────
+  async getEmployeesForAllowances(user) {
+    try {
+      const { data } = await hrApiClient.get('/hr/users', {
+        params: { 
+          role: 'employee',
+          includeContractors: true
+        }
+      });
+      return data.users || data || [];
+    } catch (err) {
+      console.error('[allowanceService] Error fetching employees:', err);
+      return [];
+    }
+  }
+
+  // ── Create multiple allowances ───────────────────────────────────────────
+  async createAllowances(employeeId, allowances, user) {
+    try {
+      const { data } = await hrApiClient.post(`/hr/allowances/bulk`, {
+        employeeId,
+        allowances
+      });
+      return data;
+    } catch (err) {
+      throw new Error(err.response?.data?.error || 'Failed to create bulk allowances');
+    }
+  }
+
+  // ── Subscription wrappers (polling based fallback) ────────────────────────
+  subscribeEmployeesForAllowances(user, callback, onError) {
+    const poll = async () => {
+      try {
+        const data = await this.getEmployeesForAllowances(user);
+        callback(data);
+      } catch (err) {
+        if (onError) onError(err);
+      }
+    };
+    poll();
+    const interval = setInterval(poll, 60000); // 1 min poll
+    return () => clearInterval(interval);
+  }
+
+  subscribeToCompanyAllowances(companyId, user, year, callback, onError) {
+    const poll = async () => {
+      try {
+        const data = await this.getAllowancesForCompany(companyId);
+        callback(data);
+      } catch (err) {
+        if (onError) onError(err);
+      }
+    };
+    poll();
+    const interval = setInterval(poll, 60000);
+    return () => clearInterval(interval);
   }
 
   // ── Ensure sick leave allowance exists (called from users.js) ─────────────

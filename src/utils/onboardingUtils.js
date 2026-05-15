@@ -1,5 +1,4 @@
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
-import { db } from '../firebase/client';
+import hrApiClient from '../lib/hrApiClient';
 
 /**
  * Onboarding Utilities - Centralized logic for onboarding operations
@@ -35,19 +34,17 @@ export async function getCompanyOnboardingSettings(companyId) {
     // Handle both formats: 'companies/id' and just 'id'
     const cleanCompanyId = companyId.replace('companies/', '');
     
-    const companyRef = doc(db, 'companies', cleanCompanyId);
-    const companySnap = await getDoc(companyRef);
+    // Use REST API instead of direct Firestore
+    const { data: companyData } = await hrApiClient.get(`/hr/companies/${cleanCompanyId}`);
 
-    if (!companySnap.exists()) {
-      console.warn(`Company document not found for ID: ${cleanCompanyId}`);
+    if (!companyData) {
+      console.warn(`Company data not found for ID: ${cleanCompanyId}`);
       return {
         isOnboardingMandatory: false,
         exists: false
       };
     }
 
-    const companyData = companySnap.data();
-    
     // Handle both old and new field names for backward compatibility
     const isOnboardingMandatory = 
       companyData.isOnboardingMandatory ?? 
@@ -137,12 +134,9 @@ export async function updateOnboardingMandatory(companyId, isRequired) {
     // Handle both formats: 'companies/id' and just 'id'
     const cleanCompanyId = companyId.replace('companies/', '');
     
-    const companyRef = doc(db, 'companies', cleanCompanyId);
-    
-    // Update with the standardized field name
-    await updateDoc(companyRef, {
-      isOnboardingMandatory: isRequired,
-      updatedAt: new Date()
+    // Update via REST API
+    await hrApiClient.put(`/hr/companies/${cleanCompanyId}`, {
+      isOnboardingMandatory: isRequired
     });
 
     return {
@@ -152,17 +146,7 @@ export async function updateOnboardingMandatory(companyId, isRequired) {
     };
   } catch (error) {
     console.error('Error updating onboarding mandatory setting:', error);
-    
-    // Provide specific error types for better handling
-    if (error.code === 'permission-denied') {
-      throw new Error('You do not have permission to modify this setting');
-    } else if (error.code === 'not-found') {
-      throw new Error('Company not found');
-    } else if (error.message.includes('network')) {
-      throw new Error('Network error. Please check your connection and try again');
-    } else {
-      throw new Error(`Failed to update onboarding setting: ${error.message}`);
-    }
+    throw new Error(error.response?.data?.error || `Failed to update onboarding setting: ${error.message}`);
   }
 }
 
@@ -177,18 +161,16 @@ export async function validateOnboardingStatus(userId) {
       throw new Error('User ID is required');
     }
 
-    const userRef = doc(db, 'users', userId);
-    const userSnap = await getDoc(userRef);
+    // Use REST API
+    const { data: userData } = await hrApiClient.get(`/hr/employees/${userId}`);
 
-    if (!userSnap.exists()) {
+    if (!userData) {
       return {
         valid: false,
         error: 'User not found'
       };
     }
 
-    const userData = userSnap.data();
-    
     // Handle both old and new field names for backward compatibility
     const isOnboardingCompleted = 
       userData.isOnboardingCompleted ?? 

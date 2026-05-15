@@ -308,8 +308,6 @@ const PendingAllowancePage = () => {
 
     const fetchCompanyAllowances = async () => {
       try {
-        const { collection: firestoreCollection, query: firestoreQuery, where, getDocs } = await import('firebase/firestore');
-        const { db } = await import('../../firebase/client');
         const currentYear = new Date().getFullYear();
 
         if (unsubscribeAllowancesRef.current) {

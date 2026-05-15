@@ -1,28 +1,30 @@
 // Verification Script for Self-Healing System
 // Run in specific test context if possible
 
-import { reconcileTimesheetForWeek } from './services/timesheetReconciler';
-import { db } from './firebase/client';
-import { doc, setDoc, getDoc, deleteDoc } from 'firebase/firestore';
+import { reconcileTimesheetForWeek } from './services/timesheets';
+import hrApiClient from './lib/hrApiClient';
 
 async function verifySelfHealing() {
     console.log("--- START SELF-HEALING TEST ---");
     const userId = "test_user_heal_1";
     const companyId = "companies/test_company";
 
-    // CLEANUP
+    // CLEANUP via REST
     const oldId = `${userId}_2026-01-18`; // Sunday
     const newId = `${userId}_2026-01-20`; // Tuesday
-    await deleteDoc(doc(db, 'timesheets', oldId));
-    await deleteDoc(doc(db, 'timesheets', newId));
+    try {
+        await hrApiClient.delete(`/hr/timesheets/${oldId}`);
+        await hrApiClient.delete(`/hr/timesheets/${newId}`);
+    } catch (err) {}
 
-    // 1. SETUP: Legacy Timesheet (Sunday Jan 18 - Sat Jan 24)
+    // 1. SETUP: Legacy Timesheet (Sun Jan 18 - Sat Jan 24) via REST
     console.log("1. Creating Legacy Data (Sun Jan 18 - Sat Jan 24)...");
-    await setDoc(doc(db, 'timesheets', oldId), {
+    await hrApiClient.post('/hr/timesheets', {
+        id: oldId,
         userId, companyId: "test_company",
         period: "2026-01-18",
-        start: "2026-01-18",
-        end: "2026-01-24",
+        startDate: "2026-01-18",
+        endDate: "2026-01-24",
         entries: [
             { id: "e1", date: "2026-01-19", grossSec: 3600, effectiveSec: 3600, notes: "Stay" }, // Mon
             { id: "e2", date: "2026-01-21", grossSec: 3600, effectiveSec: 3600, notes: "Move" }  // Wed
@@ -62,9 +64,8 @@ async function verifySelfHealing() {
         console.error("❌ Entry Jan 21 MISSING in new doc");
     }
 
-    // Check Old Doc (Should not have Jan 21)
-    const oldSnap = await getDoc(doc(db, 'timesheets', oldId));
-    const oldData = oldSnap.data();
+    // Check Old Doc (Should not have Jan 21) via REST
+    const { data: oldData } = await hrApiClient.get(`/hr/timesheets/${oldId}`);
     const stayedEntry = oldData.entries.find(e => e.date === "2026-01-19");
     const lostEntry = oldData.entries.find(e => e.date === "2026-01-21");
 

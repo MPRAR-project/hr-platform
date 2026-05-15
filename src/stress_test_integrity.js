@@ -1,9 +1,8 @@
 // STRESS TEST: Timesheet Integrity Verification (Volatile Settings)
 // Run this in a test environment or browser console console.
 
-import { reconcileTimesheetForWeek } from './services/timesheetReconciler';
-import { db } from './firebase/client';
-import { doc, setDoc, deleteDoc, getDoc, collection, getDocs, query, where } from 'firebase/firestore';
+import { reconcileTimesheetForWeek } from './services/timesheets';
+import hrApiClient from './lib/hrApiClient';
 
 async function runStressTest() {
     console.log("🔥 STARTING STRESS TEST: Timesheet Integrity 🔥");
@@ -12,8 +11,11 @@ async function runStressTest() {
 
     // --- SETUP: CLEAN SLATE ---
     console.log("🧹 Cleanup...");
-    const qSnapshot = await getDocs(query(collection(db, 'timesheets'), where('userId', '==', userId)));
-    await Promise.all(qSnapshot.docs.map(d => deleteDoc(d.ref)));
+    try {
+        await hrApiClient.delete(`/hr/timesheets/stress/${userId}`);
+    } catch (err) {
+        // Ignore if not found
+    }
 
     // --- SCENARIO 1: WEEK START = TUESDAY ---
     // EXPECTED:
@@ -110,36 +112,38 @@ async function runStressTest() {
     console.log("🏁 STRESS TEST COMPLETE 🏁");
 }
 
-// Helper to inject raw data (simulating pre-existing state)
+// Helper to inject raw data via REST
 async function addEntryToRawDoc(userId, weekStartStr, entry) {
     const id = `${userId}_${weekStartStr}`;
-    const ref = doc(db, 'timesheets', id);
-    const snap = await getDoc(ref);
-    if (!snap.exists()) return; // Should exist from reconcile
-    const data = snap.data();
-    const entries = [...(data.entries || []), entry];
-    await setDoc(ref, { ...data, entries }, { merge: true });
+    try {
+        await hrApiClient.put(`/hr/timesheets/${id}/entries`, { entry });
+    } catch (err) {
+        console.error('Failed to add entry to raw doc:', err.message);
+    }
 }
 
-// Global Audit: Sum ALL hours in ALL timesheets for user
+// Global Audit: Sum ALL hours in ALL timesheets for user via REST
 async function auditData(userId, expectedCount, expectedSec) {
-    const q = query(collection(db, 'timesheets'), where('userId', '==', userId));
-    const snap = await getDocs(q);
-    let count = 0;
-    let sec = 0;
+    try {
+        const { data } = await hrApiClient.get('/hr/timesheets', { params: { employeeId: userId } });
+        const sheets = data.timesheets || data || [];
+        let count = 0;
+        let sec = 0;
 
-    snap.docs.forEach(d => {
-        const data = d.data();
-        (data.entries || []).forEach(e => {
-            count++;
-            sec += (e.effectiveSec || 0);
+        sheets.forEach(ts => {
+            (ts.entries || []).forEach(e => {
+                count++;
+                sec += (e.effectiveSec || 0);
+            });
         });
-    });
 
-    if (count === expectedCount && sec === expectedSec) {
-        console.log(`🛡️ AUDIT PASS: ${count} entries, ${sec} seconds.`);
-    } else {
-        console.error(`🛡️ AUDIT FAIL! Expected ${expectedCount}/${expectedSec}, Found ${count}/${sec}`);
-        console.log("Dump:", snap.docs.map(d => ({ id: d.id, entries: d.data().entries })));
+        if (count === expectedCount && sec === expectedSec) {
+            console.log(`🛡️ AUDIT PASS: ${count} entries, ${sec} seconds.`);
+        } else {
+            console.error(`🛡️ AUDIT FAIL! Expected ${expectedCount}/${expectedSec}, Found ${count}/${sec}`);
+            console.log("Dump:", sheets.map(ts => ({ id: ts.id, entries: ts.entries })));
+        }
+    } catch (err) {
+        console.error('Audit failed:', err.message);
     }
 }

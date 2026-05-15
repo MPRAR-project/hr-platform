@@ -1,8 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { doc, getDoc } from 'firebase/firestore';
-import { db, functions } from '../../firebase/client';
-import { httpsCallable } from 'firebase/functions';
+import { fetchCompanyDetails } from '../../services/companyService';
 import { useAuth } from '../../hooks/useAuth';
 import { useInvoiceCalculations } from '../../hooks/useInvoiceCalculations';
 import { getSites } from '../../services/sites';
@@ -72,16 +70,14 @@ const InvoiceGeneratorPage = () => {
             if (!user?.companyId) return;
 
             try {
-                // Fetch company document to get weekStartDay
-                const companyPath = user.companyId;
-                const companyId = companyPath.includes('/') ? companyPath.split('/').pop() : companyPath;
-                const companyRef = doc(db, 'companies', companyId);
-                const companySnap = await getDoc(companyRef);
+                // Fetch company details to get weekStartDay via REST
+                const companyId = user.companyId.replace('companies/', '');
+                const { company: companyData } = await fetchCompanyDetails(companyId);
 
-                if (companySnap.exists()) {
-                    const companyData = companySnap.data();
+                if (companyData) {
                     // weekStartDay in company is stored as string like 'saturday'
-                    const wsIndex = getWeekStartIndex(companyData.weekStartDay);
+                    // but companyService might have already normalized it or we use it here
+                    const wsIndex = getWeekStartIndex(companyData.weekStartDay || 'monday');
                     setCompanyWeekStartDay(wsIndex);
 
                     // Recalculate weekStart with the correct start day
@@ -98,16 +94,17 @@ const InvoiceGeneratorPage = () => {
             getSites(user.companyId).then(setSites).catch(console.error);
             getInvoiceSettings(user.companyId).then(async (s) => {
                 setSettings(s);
-                // Fetch Logo via Cloud Function to bypass CORS
+                // In a Firebase-free world, the logo is served via a direct URL or a REST endpoint
+                // If we need Base64 for PDF generation, we'll fetch it via standard fetch
                 if (s?.logoUrl) {
                     try {
-                        const getCompanyLogo = httpsCallable(functions, 'getCompanyLogo');
-                        const result = await getCompanyLogo({ url: s.logoUrl });
-                        if (result.data?.base64) {
-                            setLogoBase64(result.data.base64);
-                        }
+                        const response = await fetch(s.logoUrl);
+                        const blob = await response.blob();
+                        const reader = new FileReader();
+                        reader.onloadend = () => setLogoBase64(reader.result);
+                        reader.readAsDataURL(blob);
                     } catch (e) {
-                        console.error("Failed to load logo via Cloud Function", e);
+                        console.error("Failed to load logo via fetch", e);
                     }
                 }
             }).catch(console.error);
@@ -569,7 +566,7 @@ const InvoiceGeneratorPage = () => {
                                     <tr key={inv.id} className="hover:bg-gray-50">
                                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600">{inv.invoiceNumber}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                            {inv.createdAt?.toDate ? format(inv.createdAt.toDate(), 'dd MMM yyyy') : '-'}
+                                            {inv.createdAt ? format(new Date(inv.createdAt), 'dd MMM yyyy') : '-'}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{inv.clientName || '-'}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{inv.siteName}</td>

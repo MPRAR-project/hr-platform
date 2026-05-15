@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
-import { getInvoiceSettings, updateInvoiceSettings } from '../../services/invoiceSettings';
-import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { getInvoiceSettings, updateInvoiceSettings, uploadInvoiceLogo } from '../../services/invoiceSettings';
 import { Loader2, Save, Upload, Receipt, Building, Menu } from 'lucide-react';
 import { useUI } from '../../hooks/useUI';
 import { toast } from 'react-toastify';
@@ -101,15 +100,11 @@ const InvoiceSettingsPage = () => {
 
         setUploading(true);
         try {
-            const storage = getStorage();
-            const storageRef = ref(storage, `companies/${user.companyId}/invoice_logo_${Date.now()}`);
-            await uploadBytes(storageRef, file);
-            const url = await getDownloadURL(storageRef);
-
+            const url = await uploadInvoiceLogo(file);
             setSettings(prev => ({ ...prev, logoUrl: url }));
             toast.success('Logo uploaded');
         } catch (error) {
-            console.error(error);
+            console.error('[InvoiceSettings] Logo upload failed:', error);
             toast.error('Upload failed');
         } finally {
             setUploading(false);

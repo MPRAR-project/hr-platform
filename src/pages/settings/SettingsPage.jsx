@@ -1,8 +1,3 @@
-
-import { collection, doc, getDoc, getDocs, query, updateDoc, where, writeBatch } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
-
-
 import { ArrowRight, ChevronDown, Edit2, Loader2, MapPin, Navigation, Plus, Trash2, X, Building, Image, Upload, Calendar } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'react-toastify';
@@ -10,8 +5,9 @@ import Header from '../../components/layout/Header';
 import DeleteConfirmationModal from '../../components/modals/DeleteConfirmationModal';
 import AutoClockOutSettings from '../../components/settings/AutoClockOutSettings';
 import Button from '../../components/ui/Button';
-import { db, storage } from '../../firebase/client';
 import { useAuth } from '../../hooks/useAuth';
+import { getCompany, updateCompanyProfile } from '../../services/companyManagementService';
+import hrApiClient from '../../lib/hrApiClient';
 import { invalidateCompanyCache } from '../../services/cacheInvalidationService';
 import { getDefaultAutoLunchConfig, invalidateAutoLunchCaches } from '../../services/autoLunch';
 import { getUserCurrentLocation } from '../../services/locationService';
@@ -67,11 +63,10 @@ const SettingsPage = () => {
         }
 
         // Load company data
-        const ref = doc(db, 'companies', companyId);
-        const snap = await getDoc(ref);
+        const company = await getCompany(companyId);
 
-        if (snap.exists()) {
-          const c = snap.data();
+        if (company) {
+            const c = company.company || company;
           setCompanyInfo({
             companyName: c.name || '',
             payrollEmail: c.payrollEmail || ''
@@ -225,9 +220,8 @@ const SettingsPage = () => {
         toast.error('Company ID not found');
         return;
       }
-      const ref = doc(db, 'companies', companyId);
       const lunchBreakMinutes = autoLunchSettings.lunchBreakMinutes;
-      await updateDoc(ref, {
+      await updateCompanyProfile(companyId, {
         name: companyInfo.companyName || '',
         payrollEmail: companyInfo.payrollEmail || '',
         workSchedule: workSchedule,
@@ -249,7 +243,6 @@ const SettingsPage = () => {
         plugins: plugins,
         // locations are now saved immediately, so we don't need to save them here
       });
-      await propagateWeekStartDay(companyId, weekStartDay);
       invalidateRoundingCaches(companyPath);
       invalidateAutoLunchCaches(companyPath);
       invalidateWeekStartCaches(companyPath);
@@ -272,46 +265,7 @@ const SettingsPage = () => {
     }
   };
 
-  const propagateWeekStartDay = async (companyId, weekStart) => {
-    try {
-      const companyPath = `companies/${companyId}`;
-      const identifiers = [companyPath, companyId];
-
-      const updateInBatches = async (docs) => {
-        if (!docs.length) return;
-        let batch = writeBatch(db);
-        let count = 0;
-
-        for (const snap of docs) {
-          // Remove weekStartDay from user documents so they inherit from company
-          batch.update(snap.ref, { weekStartDay: null });
-          count += 1;
-          if (count >= 400) {
-            await batch.commit();
-            batch = writeBatch(db);
-            count = 0;
-          }
-        }
-
-        if (count > 0) {
-          await batch.commit();
-        }
-      };
-
-      // Update users
-      const userCol = collection(db, 'users');
-      const usersSnap = await getDocs(query(userCol, where('companyId', 'in', identifiers)));
-      await updateInBatches(usersSnap.docs);
-      usersSnap.docs.forEach((docSnap) => invalidateUserWeekContext(docSnap.id));
-
-      // Update sites (keep existing logic for site-level overrides)
-      const sitesCol = collection(db, 'sites');
-      const sitesSnap = await getDocs(query(sitesCol, where('companyId', 'in', identifiers)));
-      await updateInBatches(sitesSnap.docs);
-    } catch (error) {
-      console.warn('[Settings] Failed to propagate week start day', error);
-    }
-  };
+  // Removed propagateWeekStartDay as backend handles this via unified profile update
 
   const handleAddLocation = () => {
     setEditingLocation(null);
@@ -401,9 +355,8 @@ const SettingsPage = () => {
         updatedLocations = [...locations, newLocation];
       }
 
-      // Save to Firestore immediately
-      const ref = doc(db, 'companies', companyId);
-      await updateDoc(ref, {
+      // Save to REST immediately
+      await updateCompanyProfile(companyId, {
         locations: updatedLocations
       });
 
@@ -456,9 +409,8 @@ const SettingsPage = () => {
     try {
       const updatedLocations = locations.filter(loc => loc.id !== locationToDelete);
 
-      // Save to Firestore immediately
-      const ref = doc(db, 'companies', companyId);
-      await updateDoc(ref, {
+      // Save to REST immediately
+      await updateCompanyProfile(companyId, {
         locations: updatedLocations
       });
 
@@ -536,20 +488,20 @@ const SettingsPage = () => {
 
     setIsUploadingLogo(true);
     try {
-      // Create storage reference
-      const timestamp = Date.now();
-      const ext = file.name.split('.').pop();
-      const storageRef = ref(storage, `company-logos/${companyId}/logo-${timestamp}.${ext}`);
+      const formData = new FormData();
+      formData.append('file', file);
 
-      // Upload file
-      await uploadBytes(storageRef, file);
+      // Upload file via REST API
+      const { data: uploadRes } = await hrApiClient.post('/hr/upload', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      });
 
-      // Get download URL
-      const downloadURL = await getDownloadURL(storageRef);
+      const downloadURL = uploadRes.url;
 
-      // Update company document
-      const companyRef = doc(db, 'companies', companyId);
-      await updateDoc(companyRef, {
+      // Update company profile via REST
+      await updateCompanyProfile(companyId, {
         logoURL: downloadURL,
         updatedAt: new Date()
       });
@@ -597,9 +549,8 @@ const SettingsPage = () => {
 
     setIsUploadingLogo(true);
     try {
-      // Update company document to remove logo URL
-      const companyRef = doc(db, 'companies', companyId);
-      await updateDoc(companyRef, {
+      // Update company profile via REST to remove logo URL
+      await updateCompanyProfile(companyId, {
         logoURL: null,
         updatedAt: new Date()
       });

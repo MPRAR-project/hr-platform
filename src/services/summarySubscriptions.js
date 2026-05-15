@@ -1,10 +1,10 @@
 import hrApiClient from '../lib/hrApiClient';
+import wsClient from '../lib/wsClient';
 
 /**
- * Subscribe to Weekly Summaries (Phase 4 — REST Migration)
+ * Subscribe to Weekly Summaries (Phase 6 — WebSocket Activation)
  * 
- * Maps legacy real-time Firestore listeners to the new HR REST API.
- * Uses polling as a fallback until Phase 6 WebSocket activation.
+ * Maps legacy real-time Firestore listeners to the new HR REST API via WebSockets.
  */
 
 export async function subscribeWeeklySummaries(userId, callback) {
@@ -58,10 +58,11 @@ export async function subscribeWeeklySummaries(userId, callback) {
     // Initial fetch
     fetchSummaries();
 
-    // Polling every 30 seconds
-    const interval = setInterval(fetchSummaries, 30000);
+    // Listen for WebSocket events
+    const wsHandler = () => fetchSummaries();
+    wsClient.on('timesheet:updated', wsHandler);
 
-    return () => clearInterval(interval);
+    return () => wsClient.off('timesheet:updated', wsHandler);
 }
 
 /**

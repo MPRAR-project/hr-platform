@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Bell, Check, Trash2, X } from 'lucide-react';
-import { collection, query, where, orderBy, limit, onSnapshot, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../../firebase/client';
+import { subscribeToNotifications, markNotificationRead, markAllNotificationsRead } from '../../services/notifications';
 import { useAuth } from '../../hooks/useAuth';
 import { formatDistanceToNow } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
@@ -25,22 +24,14 @@ const NotificationBell = () => {
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
 
-    // Real-time listener - use stable userId to prevent re-subscription loop
+    // Real-time listener via REST/WS service
     const userId = user?.id || user?.uid;
     useEffect(() => {
         if (!userId) return;
 
-        const q = query(
-            collection(db, 'notifications'),
-            where('userId', '==', userId),
-            orderBy('createdAt', 'desc'),
-            limit(20)
-        );
-
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            const updates = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const unsubscribe = subscribeToNotifications(userId, (updates) => {
             setNotifications(updates);
-            setUnreadCount(updates.filter(n => n.status === 'unread').length);
+            setUnreadCount(updates.filter(n => !n.isRead && n.status !== 'read').length);
         });
 
         return () => unsubscribe();
@@ -48,17 +39,15 @@ const NotificationBell = () => {
 
     const markAsRead = async (notification) => {
         try {
-            await updateDoc(doc(db, 'notifications', notification.id), {
-                status: 'read',
-                readAt: serverTimestamp()
-            });
+            await markNotificationRead(notification.id);
         } catch (error) {
             console.error('Error marking as read:', error);
         }
     };
 
     const handleNotificationClick = async (notification) => {
-        if (notification.status === 'unread') {
+        const isUnread = !notification.isRead && notification.status !== 'read';
+        if (isUnread) {
             await markAsRead(notification);
         }
 
@@ -97,12 +86,14 @@ const NotificationBell = () => {
     };
 
     const markAllRead = async () => {
-        // Optimistic update for UI feel (batch update in background)
-        // For simplicity, just update displayed ones
-        const unreadIds = notifications.filter(n => n.status === 'unread').map(n => n.id);
-        unreadIds.forEach(id => {
-            updateDoc(doc(db, 'notifications', id), { status: 'read', readAt: serverTimestamp() }).catch(console.error);
-        });
+        try {
+            await markAllNotificationsRead(userId);
+            // Local update for immediate feedback
+            setNotifications(prev => prev.map(n => ({ ...n, status: 'read', isRead: true })));
+            setUnreadCount(0);
+        } catch (error) {
+            console.error('Error marking all read:', error);
+        }
     };
 
     return (

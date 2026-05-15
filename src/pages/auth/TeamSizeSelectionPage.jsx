@@ -5,9 +5,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { submitTeamSize } from '../../services/signup';
 import { startTrial } from '../../services/billing';
 import { createStripeCustomer, USE_STRIPE } from '../../services/stripe';
-import { auth } from '../../firebase/client';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../../firebase/client';
+import { fetchCompanyDetails } from '../../services/companyService';
 
 // Reusable Seat Option Card Component
 const SeatOptionCard = ({ seats, isSelected, onClick }) => {
@@ -117,17 +115,16 @@ const TeamSizeSelection = () => {
                 console.log('Trial initialized successfully');
 
                 // Create Stripe customer if Stripe is enabled
-                if (USE_STRIPE && auth.currentUser) {
+                if (USE_STRIPE && authed?.email) {
                     try {
                         console.log('Creating Stripe customer...');
-                        // Get company name for Stripe customer
-                        const companyRef = doc(db, 'companies', companyId);
-                        const companySnap = await getDoc(companyRef);
-                        const companyName = companySnap.exists() ? companySnap.data().name : 'Company';
+                        // Get company details via REST
+                        const { company: companyData } = await fetchCompanyDetails(companyId);
+                        const companyName = companyData?.name || 'Company';
 
                         const customerId = await createStripeCustomer(
                             companyId,
-                            auth.currentUser.email,
+                            authed.email,
                             companyName
                         );
                         console.log('Stripe customer created:', customerId);

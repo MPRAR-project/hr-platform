@@ -110,39 +110,17 @@ const RateAllowancePage = () => {
             // Step 1: Update user document
             await updateUserBySiteManager(userId, payload);
 
-            // Step 2: Update ALL active assignments for this user with new rates
+            // Step 2: Update ALL active assignments for this user with new rates via REST
             const chargeRate = Number(cleanRates.chargeBackBasic) || Number(cleanRates.standardChargeRate) || 0;
             const overtimeChargeRate = Number(cleanRates.chargeBackOvertime) || Number(cleanRates.overtimeChargeRate) || 0;
 
             if (chargeRate > 0) {
                 try {
-                    // Import assignment functions
-                    const { collection, query, where, getDocs, doc, updateDoc } = await import('firebase/firestore');
-                    const { db } = await import('../../firebase/client');
-
-                    // Find all active assignments for this user
-                    const assignmentsRef = collection(db, 'userAssignments');
-                    const q = query(
-                        assignmentsRef,
-                        where('userId', '==', userId),
-                        where('status', '==', 'active')
-                    );
-                    const snapshot = await getDocs(q);
-
-                    // Update each assignment with new rates
-                    const updatePromises = snapshot.docs.map(assignmentDoc =>
-                        updateDoc(doc(db, 'userAssignments', assignmentDoc.id), {
-                            chargeRate,
-                            overtimeChargeRate,
-                            updatedAt: new Date()
-                        })
-                    );
-
-                    await Promise.all(updatePromises);
-                    console.log(`✅ Updated ${snapshot.docs.length} active assignments for user ${userId} with rates ${chargeRate}/${overtimeChargeRate}`);
+                    const { updateAssignmentRates } = await import('../../services/assignmentService');
+                    await updateAssignmentRates(userId, { chargeRate, overtimeChargeRate });
+                    console.log(`✅ Updated active assignments for user ${userId} with rates ${chargeRate}/${overtimeChargeRate} via REST`);
                 } catch (assignmentError) {
-                    console.error('Error updating assignments:', assignmentError);
-                    // Don't fail the whole save if assignment update fails
+                    console.error('Error updating assignments via REST:', assignmentError);
                 }
             }
 

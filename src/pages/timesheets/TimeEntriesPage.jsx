@@ -1,4 +1,3 @@
-import { collection, getDocs, query, where, getDoc, doc } from 'firebase/firestore';
 import { Calendar, Download, Search } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'react-toastify';
@@ -9,7 +8,6 @@ import EditTimesheetModal from '../../components/modals/EditTimesheetModal';
 import Button from '../../components/ui/Button';
 import Loader from '../../components/ui/Loader';
 import Tabs from '../../components/ui/Tabs';
-import { db } from '../../firebase/client';
 import { useAuth } from '../../hooks/useAuth';
 import { deleteTimeEntry } from '../../services/timesheets';
 import { useCanManageTimeEntries } from '../../hooks/useCanManageTimeEntries';
@@ -46,8 +44,8 @@ const TimeEntriesPage = () => {
             }
             try {
                 // Get company data to fetch week start day from company settings
-                const companyDoc = await getDoc(doc(db, 'companies', user.companyId?.split('/')?.pop() || user.companyId));
-                const companyData = companyDoc.data();
+                const { getCompany } = await import('../../services/companyManagementService');
+                const companyData = await getCompany(user.companyId);
                 const companyWeekStartDay = companyData?.weekStartDay || DEFAULT_WEEK_START_DAY;
 
 
@@ -335,82 +333,42 @@ const TimeEntriesPage = () => {
         const determineAccessibleUsers = async () => {
             if (!user) return;
 
-            const startTime = Date.now();
             setIsLoadingUsers(true);
             try {
-                const companyId = user.companyId?.includes('/')
-                    ? user.companyId.split('/')[1]
-                    : user.companyId;
-
+                const companyId = user.companyId;
                 let userIds = [];
+                let usersData = {};
+
+                const { getUsersByCompany } = await import('../../services/users');
 
                 // Employee: Only themselves
                 if (user.role === 'employee') {
                     userIds = [user.userId];
                 }
-                // Admin/HR: Everyone in company - optimized with parallel query
+                // Admin/HR/Site: Everyone in company
                 else if (['adminManager', 'adminAdvisor', 'hrManager', 'hrAdvisor', 'siteManager', 'seniorManager'].includes(user.role)) {
-                    const usersQuery = query(
-                        collection(db, 'users'),
-                        where('companyId', '==', `companies/${companyId}`)
-                    );
-                    const usersSnap = await getDocs(usersQuery);
-                    userIds = usersSnap.docs.map(doc => doc.id);
-
-                    // Optimized user data processing
-                    const usersData = {};
-                    usersSnap.docs.forEach(doc => {
-                        usersData[doc.id] = {
-                            id: doc.id,
-                            ...doc.data()
-                        };
+                    const companyUsers = await getUsersByCompany(companyId);
+                    userIds = companyUsers.map(u => u.id);
+                    
+                    companyUsers.forEach(u => {
+                        usersData[u.id] = u;
                     });
                     setUsers(usersData);
                 }
-                // Team Manager: Themselves + their team - optimized with parallel queries
+                // Team Manager: Themselves + their team
                 else if (user.role === 'teamManager') {
-                    // Run both queries in parallel for better performance
-                    const [managedIds] = await Promise.all([
-                        getManagedEmployeeIdsForManager(user.userId, companyId)
+                    const [managedIds, companyUsers] = await Promise.all([
+                        getManagedEmployeeIdsForManager(user.userId, companyId),
+                        getUsersByCompany(companyId)
                     ]);
 
                     userIds = [user.userId, ...Array.from(managedIds)];
-
-                    // Optimized user data fetching with single query when possible
-                    const userIdsToFetch = Array.from(new Set(userIds));
-                    const usersData = {};
-
-                    // Get current user data immediately
-                    usersData[user.userId] = {
-                        id: user.userId,
-                        displayName: user.displayName,
-                        email: user.email,
-                        firstName: user.firstName,
-                        lastName: user.lastName,
-                        role: user?.role,
-                        primaryRole: user?.primaryRole
-                    };
-
-                    // Fetch other users more efficiently - always use company query for consistency
-                    if (userIdsToFetch.length > 1) {
-                        const otherUserIds = userIdsToFetch.filter(id => id !== user.userId);
-
-                        // Always fetch all company users and filter - more consistent and faster
-                        const allUsersQuery = query(
-                            collection(db, 'users'),
-                            where('companyId', '==', `companies/${companyId}`)
-                        );
-                        const allUsersSnap = await getDocs(allUsersQuery);
-                        allUsersSnap.docs.forEach(doc => {
-                            if (userIdsToFetch.includes(doc.id)) {
-                                usersData[doc.id] = {
-                                    id: doc.id,
-                                    ...doc.data()
-                                };
-                            }
-                        });
-                    }
-
+                    
+                    companyUsers.forEach(u => {
+                        if (userIds.includes(u.id)) {
+                            usersData[u.id] = u;
+                        }
+                    });
                     setUsers(usersData);
                 }
                 else {
@@ -418,22 +376,6 @@ const TimeEntriesPage = () => {
                 }
 
                 setAccessibleUserIds(userIds);
-
-                // Ensure current user data is always in users object
-                if (user && !users[user.userId]) {
-                    setUsers(prev => ({
-                        ...prev,
-                        [user.userId]: {
-                            id: user.userId,
-                            displayName: user.displayName,
-                            email: user.email,
-                            firstName: user.firstName,
-                            lastName: user.lastName,
-                            role: user?.role,
-                            primaryRole: user?.primaryRole
-                        }
-                    }));
-                }
 
             } catch (error) {
                 console.error('[TimeEntriesPage] Error determining accessible users:', error);

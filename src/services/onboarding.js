@@ -113,3 +113,25 @@ export async function deleteOnboardingApplication(applicationId) {
     throw error;
   }
 }
+
+export async function assignOnboardingManager(applicationId, managerId) {
+  try {
+    const { data } = await hrApiClient.put(`/hr/onboarding/${applicationId}/assign`, {
+      assignedTo: managerId
+    });
+    return data;
+  } catch (error) {
+    console.error('Error assigning onboarding manager:', error);
+    throw error;
+  }
+}
+
+export async function getOnboardingStatistics(companyId) {
+  try {
+    const { data } = await hrApiClient.get('/hr/onboarding/stats');
+    return data;
+  } catch (error) {
+    console.error('Error getting onboarding statistics:', error);
+    return { total: 0, pending: 0, completed: 0 };
+  }
+}

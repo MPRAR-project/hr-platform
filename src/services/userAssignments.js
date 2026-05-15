@@ -128,3 +128,15 @@ export async function getAssignmentById(assignmentId) {
         throw error;
     }
 }
+
+export const getAssignmentsForInvoice = async (clientId, startDate, endDate) => {
+    try {
+        const { data } = await hrApiClient.get('/hr/assignments', {
+            params: { clientId, startDate, endDate }
+        });
+        return data || [];
+    } catch (error) {
+        console.error('[userAssignments] Error getting assignments for invoice:', error);
+        return [];
+    }
+};

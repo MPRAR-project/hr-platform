@@ -4,7 +4,6 @@ import Button from '../ui/Button';
 import Badge from '../ui/Badge';
 import { trainingService } from '../../services/trainingService';
 import { toast } from 'react-toastify';
-import { Timestamp } from 'firebase/firestore';
 
 const EditTrainingAssignmentModal = ({ isOpen, onClose, assignment, training, user, onUpdate }) => {
   const [loading, setLoading] = useState(false);
@@ -252,17 +251,13 @@ const EditTrainingAssignmentModal = ({ isOpen, onClose, assignment, training, us
       }
     }
 
-    const bookedDate = newHistoryEntry.bookedDate ? Timestamp.fromDate(new Date(newHistoryEntry.bookedDate)) : null;
-    const completedDate = newHistoryEntry.completedDate ? Timestamp.fromDate(new Date(newHistoryEntry.completedDate)) : null;
-    const expiryDate = newHistoryEntry.expiryDate ? Timestamp.fromDate(new Date(newHistoryEntry.expiryDate)) : null;
-
     const entry = {
       id: `new-${Date.now()}`,
-      bookedDate: bookedDate,
-      completedDate: completedDate,
-      expiryDate: expiryDate,
-      status: calculateStatus(bookedDate, completedDate, expiryDate),
-      createdAt: Timestamp.now()
+      bookedDate: newHistoryEntry.bookedDate,
+      completedDate: newHistoryEntry.completedDate || null,
+      expiryDate: newHistoryEntry.expiryDate || null,
+      status: calculateStatus(newHistoryEntry.bookedDate, newHistoryEntry.completedDate, newHistoryEntry.expiryDate),
+      createdAt: new Date().toISOString()
     };
 
     setHistoryEntries([...historyEntries, entry]);
@@ -332,16 +327,12 @@ const EditTrainingAssignmentModal = ({ isOpen, onClose, assignment, training, us
       // Recalculate status for latest entry
       const newStatus = calculateStatus(latestEntry.bookedDate, latestEntry.completedDate, latestEntry.expiryDate);
 
-      // Helper function to convert to Timestamp
-      const toTimestamp = (date) => {
+      // Helper function to convert to ISO string
+      const toIso = (date) => {
         if (!date) return null;
-        if (date instanceof Timestamp || (date.toDate && typeof date.toDate === 'function')) {
-          return date;
-        }
-        if (date instanceof Date) {
-          return Timestamp.fromDate(date);
-        }
-        return Timestamp.fromDate(new Date(date));
+        if (date.toDate && typeof date.toDate === 'function') return date.toDate().toISOString();
+        const d = new Date(date);
+        return isNaN(d.getTime()) ? null : d.toISOString();
       };
 
       // Prepare history array - save ALL entries (both existing history and new ones)
@@ -350,26 +341,14 @@ const EditTrainingAssignmentModal = ({ isOpen, onClose, assignment, training, us
       // Get existing history from assignment (if any) - these are already in Firestore format
       const existingHistory = assignment.history && Array.isArray(assignment.history) ? assignment.history : [];
 
-      // Helper to normalize an entry to Firestore format
+      // Helper to normalize an entry to REST format
       const normalizeEntry = (entry) => {
         return {
-          bookedDate: entry.bookedDate instanceof Timestamp || (entry.bookedDate?.toDate && typeof entry.bookedDate.toDate === 'function')
-            ? entry.bookedDate
-            : toTimestamp(entry.bookedDate),
-          completedDate: entry.completedDate
-            ? (entry.completedDate instanceof Timestamp || (entry.completedDate?.toDate && typeof entry.completedDate.toDate === 'function')
-              ? entry.completedDate
-              : toTimestamp(entry.completedDate))
-            : null,
-          expiryDate: entry.expiryDate
-            ? (entry.expiryDate instanceof Timestamp || (entry.expiryDate?.toDate && typeof entry.expiryDate.toDate === 'function')
-              ? entry.expiryDate
-              : toTimestamp(entry.expiryDate))
-            : null,
+          bookedDate: toIso(entry.bookedDate),
+          completedDate: toIso(entry.completedDate),
+          expiryDate: toIso(entry.expiryDate),
           status: entry.status || calculateStatus(entry.bookedDate, entry.completedDate, entry.expiryDate),
-          createdAt: entry.createdAt instanceof Timestamp || (entry.createdAt?.toDate && typeof entry.createdAt.toDate === 'function')
-            ? entry.createdAt
-            : (entry.createdAt ? toTimestamp(entry.createdAt) : Timestamp.now())
+          createdAt: entry.createdAt ? toIso(entry.createdAt) : new Date().toISOString()
         };
       };
 
@@ -414,11 +393,11 @@ const EditTrainingAssignmentModal = ({ isOpen, onClose, assignment, training, us
 
       // Update assignment document
       const updateData = {
-        assignedDate: latestEntry.bookedDate || assignment.assignedDate,
-        completedDate: latestEntry.completedDate || null,
-        expiryDate: latestEntry.expiryDate || null,
+        assignedDate: toIso(latestEntry.bookedDate || assignment.assignedDate),
+        completedDate: toIso(latestEntry.completedDate) || null,
+        expiryDate: toIso(latestEntry.expiryDate) || null,
         history: historyArray,
-        updatedAt: Timestamp.now()
+        updatedAt: new Date().toISOString()
       };
 
       // Update status based on latest entry

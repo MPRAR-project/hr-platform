@@ -16,8 +16,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { documentService } from '../../services/documentService';
 import { getManagedEmployeeIdsForManager } from '../../services/teams';
-import { db } from '../../firebase/client';
-import { collection, query, where, limit, getDocs, documentId } from 'firebase/firestore';
+import hrApiClient from '../../lib/hrApiClient';
 import { toast } from 'react-toastify';
 import { useCache } from '../../contexts/CacheContext';
 import { usePaginatedUsers } from '../../hooks/usePaginatedUsers';
@@ -530,57 +529,30 @@ const DocumentManagementPage = () => {
   // Get company users for request creation
   const getCompanyUsers = async () => {
     try {
-      const companyId = user.companyId.includes('/') ? user.companyId.split('/')[1] : user.companyId;
-
-      // Some environments store user.companyId as `companies/<id>`, others as just `<id>`.
-      // The Employee Documents tab depends on this list; if we query only one format,
-      // the UI can show "No employees" even though requests/documents exist.
-      const fetchUsersByCompanyId = async (companyIdValue) => {
-        const usersQuery = query(
-          collection(db, 'users'),
-          where('companyId', '==', companyIdValue),
-          limit(1000)
-        );
-        const snapshot = await getDocs(usersQuery);
-        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      };
-
-      const [usersPathFormat, usersPlainFormat] = await Promise.all([
-        fetchUsersByCompanyId(`companies/${companyId}`),
-        fetchUsersByCompanyId(companyId)
-      ]);
-
-      const mergedUsersMap = new Map();
-      [...usersPathFormat, ...usersPlainFormat].forEach(u => {
-        if (u?.id) mergedUsersMap.set(u.id, u);
+      const { data } = await hrApiClient.get('/hr/employees', {
+        params: { limit: 1000, status: 'active' }
       });
-      const mergedUsers = Array.from(mergedUsersMap.values());
+      
+      const mergedUsers = data.employees || data || [];
 
       if (user.role === 'teamManager') {
         // Team managers can only see their managed employees
-        const managedEmployeeIds = await getManagedEmployeeIdsForManager(user.uid, companyId);
+        const managedIds = await getManagedEmployeeIdsForManager(user.uid, companyId);
 
-        if (managedEmployeeIds.size === 0) {
+        if (managedIds.size === 0) {
           return [];
         }
 
-        // Filter to only managed employees (exclude current user & Senior Manager)
+        // Filter to only managed employees (exclude current user)
         return mergedUsers.filter(u => {
-          if (!managedEmployeeIds.has(u.id)) return false;
+          if (!managedIds.has(u.id)) return false;
           if (u.id === user.uid) return false;
-          const primaryRole = (u.primaryRole || u.role || '').toLowerCase();
-          if (primaryRole === 'seniormanager') return false;
           return true;
         });
       } else {
-        // For elevated roles - company users capped for scalability (use pagination for 1M+)
-        // Exclude current user & Senior Manager from the list
-        return mergedUsers.filter(u => {
-          if (u.id === user.uid) return false;
-          const primaryRole = (u.primaryRole || u.role || '').toLowerCase();
-          if (primaryRole === 'seniormanager') return false;
-          return true;
-        });
+        // For elevated roles
+        // Exclude current user from the list
+        return mergedUsers.filter(u => u.id !== user.uid);
       }
     } catch (error) {
       console.error('Error getting company users:', error);

@@ -8,14 +8,13 @@ import { useAuth } from '../../hooks/useAuth';
 import { useCache } from '../../contexts/CacheContext';
 import { toast } from 'react-toastify';
 import { parseCompanyId } from '../../utils/dataParser';
-import { getBillingSummary, recordSeatTopUp } from '../../services/billing';
+import { getBillingSummary, recordSeatTopUp, listInvoices } from '../../services/billing';
 import { fetchCompanyDashboardData } from '../../services/dataCache';
 import { LoadingSkeleton } from '../../components/ui/LoadingSkeleton';
-import { collection, getDocs, limit, orderBy, query, where, doc, getDoc } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
-import { db, functions } from '../../firebase/client';
 import { createStripeCustomerPortalSession, USE_STRIPE, getStripeInvoicePDF, listStripeInvoices, getStripeInvoiceProxyUrl, downloadLatestInvoice, downloadInvoiceById, syncStripeSubscription, createSeatAdditionCheckoutSession, updateStripeSubscription, createStripeCheckoutSession, createStripeCustomer } from '../../services/stripe';
+import { getCompany } from '../../services/companyManagementService';
 import { useLocation } from 'react-router-dom';
+import hrApiClient from '../../lib/hrApiClient';
 
 /* eslint-disable react/prop-types */
 const BillingSubscriptionsPage = ({ isEmbedded }) => {
@@ -51,339 +50,15 @@ const BillingSubscriptionsPage = ({ isEmbedded }) => {
 
 
 
-  const loadInvoices = async (companyPath, companyIdForHistory, billingSummary = null) => {
-    const invoicesList = [];
-    const invoiceMap = new Map(); // To deduplicate invoices
-
-    // First, load from billing history (primary source - includes Stripe invoices)
-    if (billingSummary?.history && Array.isArray(billingSummary.history)) {
-      console.log('BillingSubscriptionsPage: Processing billing summary history:', billingSummary.history.length, 'entries');
-      console.log('BillingSubscriptionsPage: Sample entry:', billingSummary.history[0]);
-
-      billingSummary.history
-        .filter(entry => {
-          // Include all entries except trial
-          if (!entry || !entry.type) return false;
-          return entry.type !== 'trial';
-        })
-        .forEach(entry => {
-          // DEBUG: Log the raw entry to see what fields it has
-          console.log('Processing entry:', {
-            id: entry.id,
-            stripeInvoiceId: entry.stripeInvoiceId,
-            type: entry.type,
-            amount: entry.amount,
-            hasStripeId: !!entry.stripeInvoiceId
-          });
-
-          // Handle date parsing - try multiple formats
-          let createdAt = null;
-          if (entry.createdAt) {
-            createdAt = entry.createdAt instanceof Date ? entry.createdAt : new Date(entry.createdAt);
-          } else if (entry.createdAtIso) {
-            createdAt = new Date(entry.createdAtIso);
-          } else if (entry.createdAtMs) {
-            createdAt = new Date(entry.createdAtMs);
-          }
-
-          // Validate date
-          if (createdAt && isNaN(createdAt.getTime())) {
-            createdAt = null;
-          }
-
-          const amount = Number(entry.amount) || 0;
-
-          // CRITICAL: Extract stripeInvoiceId - check multiple possible field names
-          let stripeInvoiceId = entry.stripeInvoiceId ||
-            entry.stripe_invoice_id ||
-            (entry.id && entry.id.startsWith('in_') ? entry.id : null) ||
-            null;
-
-          // If entry.id contains a Stripe invoice ID pattern, extract it
-          if (!stripeInvoiceId && entry.id && typeof entry.id === 'string') {
-            // Check if id is like "stripe-invoice-in_xxxxx-timestamp"
-            const match = entry.id.match(/in_[a-zA-Z0-9]+/);
-            if (match) {
-              stripeInvoiceId = match[0];
-              console.log('Extracted Stripe invoice ID from entry.id:', stripeInvoiceId);
-            }
-          }
-
-          // CRITICAL: If stripeInvoiceId exists, use it as the invoice ID (it's the real Stripe invoice ID)
-          // Otherwise, use entry.id or generate a new one
-          const invoiceId = stripeInvoiceId || entry.id || `invoice-${Date.now()}-${Math.random()}`;
-
-          // Use stripeInvoiceId as key if available (to deduplicate), otherwise use invoice id
-          const key = stripeInvoiceId || invoiceId;
-
-          if (!invoiceMap.has(key)) {
-            invoiceMap.set(key, {
-              id: invoiceId,
-              date: createdAt,
-              status: 'paid',
-              amount: amount,
-              source: 'billingHistory',
-              stripeInvoiceId: stripeInvoiceId, // CRITICAL: Always preserve Stripe invoice ID
-              invoicePdfUrl: entry.invoicePdfUrl || null, // Store PDF URL if available
-              stripeSubscriptionId: entry.stripeSubscriptionId || null, // Store subscription ID for fallback lookup
-              note: entry.note || null,
-              type: entry.type || 'subscription'
-            });
-            console.log('✓ Added invoice to map:', { key, invoiceId, stripeInvoiceId, amount, hasStripeId: !!stripeInvoiceId, hasPdfUrl: !!entry.invoicePdfUrl });
-          } else {
-            // Deduplication: If entry with same key exists, prefer seat_topup over subscription
-            const existing = invoiceMap.get(key);
-
-            // Prefer seat_topup entries over subscription entries when they share the same stripeInvoiceId
-            if (entry.type === 'seat_topup' && existing.type === 'subscription' && stripeInvoiceId) {
-              // Replace subscription entry with seat_topup entry
-              invoiceMap.set(key, {
-                id: invoiceId,
-                date: createdAt,
-                status: 'paid',
-                amount: amount,
-                source: 'billingHistory',
-                stripeInvoiceId: stripeInvoiceId,
-                invoicePdfUrl: entry.invoicePdfUrl || existing.invoicePdfUrl || null,
-                stripeSubscriptionId: entry.stripeSubscriptionId || existing.stripeSubscriptionId || null,
-                note: entry.note || existing.note || null,
-                type: entry.type || 'seat_topup'
-              });
-              console.log('✓ Replaced subscription entry with seat_topup entry (same invoice ID):', stripeInvoiceId);
-            } else {
-              // Update existing entry with Stripe invoice ID if missing
-              if (!existing.stripeInvoiceId && stripeInvoiceId) {
-                existing.stripeInvoiceId = stripeInvoiceId;
-                existing.id = stripeInvoiceId; // Update ID to Stripe invoice ID if available
-                console.log('✓ Updated invoice with Stripe ID from summary:', stripeInvoiceId);
-              }
-              // Also update PDF URL if available (prefer new entry's PDF URL)
-              if (entry.invoicePdfUrl && !existing.invoicePdfUrl) {
-                existing.invoicePdfUrl = entry.invoicePdfUrl;
-              }
-              // Update type if new entry is seat_topup and existing is subscription
-              if (entry.type === 'seat_topup' && existing.type === 'subscription') {
-                existing.type = 'seat_topup';
-                existing.note = entry.note || existing.note;
-                console.log('✓ Updated entry type to seat_topup:', key);
-              }
-            }
-          }
-        });
-      console.log('BillingSubscriptionsPage: Added', invoiceMap.size, 'invoices from billing summary');
-    }
-
-    // Also try to load from billing history directly from company document (fallback)
-    if (companyIdForHistory) {
-      try {
-        const companyRef = doc(db, 'companies', companyIdForHistory);
-        const companySnap = await getDoc(companyRef);
-        if (companySnap.exists()) {
-          const companyData = companySnap.data();
-          const billingHistory = companyData.billingHistory || [];
-
-          console.log('BillingSubscriptionsPage: Found billing history in company doc:', billingHistory.length, 'entries');
-
-          // Process all billing history entries (not just Stripe ones, but exclude trial)
-          billingHistory
-            .filter(entry => {
-              // Include all entries except trial
-              if (!entry || !entry.type) return false;
-              return entry.type !== 'trial';
-            })
-            .forEach(entry => {
-              // Handle date parsing - try multiple formats
-              let createdAt = null;
-              if (entry.createdAtMs) {
-                createdAt = new Date(entry.createdAtMs);
-              } else if (entry.createdAt) {
-                if (typeof entry.createdAt === 'string') {
-                  createdAt = new Date(entry.createdAt);
-                } else if (entry.createdAt.toDate) {
-                  createdAt = entry.createdAt.toDate();
-                } else if (entry.createdAt instanceof Date) {
-                  createdAt = entry.createdAt;
-                }
-              }
-
-              // Validate date
-              if (createdAt && isNaN(createdAt.getTime())) {
-                createdAt = null;
-              }
-
-              const amount = Number(entry.amount) || 0;
-
-              // CRITICAL: Extract stripeInvoiceId - check multiple possible field names
-              let stripeInvoiceId = entry.stripeInvoiceId ||
-                entry.stripe_invoice_id ||
-                (entry.id && entry.id.startsWith('in_') ? entry.id : null) ||
-                null;
-
-              // If entry.id contains a Stripe invoice ID pattern, extract it
-              if (!stripeInvoiceId && entry.id && typeof entry.id === 'string') {
-                // Check if id is like "stripe-invoice-in_xxxxx-timestamp"
-                const match = entry.id.match(/in_[a-zA-Z0-9]+/);
-                if (match) {
-                  stripeInvoiceId = match[0];
-                  console.log('Extracted Stripe invoice ID from company doc entry.id:', stripeInvoiceId);
-                }
-              }
-
-              // CRITICAL: If stripeInvoiceId exists, use it as the invoice ID (it's the real Stripe invoice ID)
-              const invoiceId = stripeInvoiceId || entry.id || `invoice-${Date.now()}-${Math.random()}`;
-              const key = stripeInvoiceId || invoiceId;
-
-              // Only add if not already in map
-              if (!invoiceMap.has(key)) {
-                invoiceMap.set(key, {
-                  id: invoiceId,
-                  date: createdAt,
-                  status: 'paid',
-                  amount: amount,
-                  source: 'billingHistory',
-                  stripeInvoiceId: stripeInvoiceId, // CRITICAL: Always preserve Stripe invoice ID
-                  invoicePdfUrl: entry.invoicePdfUrl || null, // Store PDF URL if available
-                  stripeSubscriptionId: entry.stripeSubscriptionId || null, // Store subscription ID for fallback lookup
-                  note: entry.note || null,
-                  type: entry.type || 'subscription'
-                });
-                console.log('✓ Added invoice from company doc:', { key, invoiceId, stripeInvoiceId, amount, hasStripeId: !!stripeInvoiceId, hasPdfUrl: !!entry.invoicePdfUrl });
-              } else {
-                // Deduplication: If entry with same key exists, prefer seat_topup over subscription
-                const existing = invoiceMap.get(key);
-
-                // Prefer seat_topup entries over subscription entries when they share the same stripeInvoiceId
-                if (entry.type === 'seat_topup' && existing.type === 'subscription' && stripeInvoiceId) {
-                  // Replace subscription entry with seat_topup entry
-                  invoiceMap.set(key, {
-                    id: invoiceId,
-                    date: createdAt,
-                    status: 'paid',
-                    amount: amount,
-                    source: 'billingHistory',
-                    stripeInvoiceId: stripeInvoiceId,
-                    invoicePdfUrl: entry.invoicePdfUrl || existing.invoicePdfUrl || null,
-                    stripeSubscriptionId: entry.stripeSubscriptionId || existing.stripeSubscriptionId || null,
-                    note: entry.note || existing.note || null,
-                    type: entry.type || 'seat_topup'
-                  });
-                  console.log('✓ Replaced subscription entry with seat_topup entry from company doc (same invoice ID):', stripeInvoiceId);
-                } else {
-                  // Update existing entry with Stripe invoice ID if missing
-                  if (!existing.stripeInvoiceId && stripeInvoiceId) {
-                    existing.stripeInvoiceId = stripeInvoiceId;
-                    existing.id = stripeInvoiceId; // Update ID to Stripe invoice ID if available
-                    console.log('✓ Updated invoice with Stripe ID from company doc:', stripeInvoiceId);
-                  }
-                  // Also update PDF URL if available (prefer new entry's PDF URL)
-                  if (entry.invoicePdfUrl && !existing.invoicePdfUrl) {
-                    existing.invoicePdfUrl = entry.invoicePdfUrl;
-                  }
-                  // Update type if new entry is seat_topup and existing is subscription
-                  if (entry.type === 'seat_topup' && existing.type === 'subscription') {
-                    existing.type = 'seat_topup';
-                    existing.note = entry.note || existing.note;
-                    console.log('✓ Updated entry type to seat_topup from company doc:', key);
-                  }
-                }
-              }
-            });
-          console.log('BillingSubscriptionsPage: After processing company doc, total invoices:', invoiceMap.size);
-        }
-      } catch (error) {
-        console.warn('BillingSubscriptionsPage: Failed to load billing history from company doc', error);
-      }
-    }
-
-    // Also load from payments collection (for offline payments, etc.)
-    const paymentsRef = collection(db, 'payments');
-    const baseQuery = query(
-      paymentsRef,
-      where('companyId', '==', companyPath),
-      orderBy('createdAt', 'desc'),
-      limit(12)
-    );
+  const loadInvoices = async (companyId) => {
     try {
-      const snap = await getDocs(baseQuery);
-      if (!snap.empty) {
-        snap.docs.forEach((docSnap) => {
-          const data = docSnap.data();
-          const invoiceId = docSnap.id;
-          const key = data.stripeInvoiceId || invoiceId;
-
-          // Only add if not already in map (billing history takes priority)
-          if (!invoiceMap.has(key)) {
-            invoiceMap.set(key, {
-              id: invoiceId,
-              date: data.createdAt?.toDate ? data.createdAt.toDate() : null,
-              status: data.status || 'paid',
-              amount: data.amountFormatted || data.total || data.totalAmount || data.amount || 0,
-              source: 'payments',
-              stripeInvoiceId: data.stripeInvoiceId || null
-            });
-          }
-        });
-      }
+      const data = await listInvoices({ limit: 12 });
+      // Invoices from REST API are already structured correctly
+      return data.invoices || data || [];
     } catch (error) {
-      console.warn('BillingSubscriptionsPage: payments query failed (missing index?)', error);
-      try {
-        const fallbackSnap = await getDocs(
-          query(paymentsRef, where('companyId', '==', companyPath), limit(12))
-        );
-        fallbackSnap.docs.forEach((docSnap) => {
-          const data = docSnap.data();
-          const invoiceId = docSnap.id;
-          const key = data.stripeInvoiceId || invoiceId;
-
-          if (!invoiceMap.has(key)) {
-            invoiceMap.set(key, {
-              id: invoiceId,
-              date: data.createdAt?.toDate ? data.createdAt.toDate() : null,
-              status: data.status || 'paid',
-              amount: data.amountFormatted || data.total || data.totalAmount || data.amount || 0,
-              source: 'payments',
-              stripeInvoiceId: data.stripeInvoiceId || null
-            });
-          }
-        });
-      } catch (fallbackError) {
-        console.warn('BillingSubscriptionsPage: fallback payments query failed', fallbackError);
-      }
+      console.warn('BillingSubscriptionsPage: Failed to load invoices via REST', error);
+      return [];
     }
-
-    // Convert map to array, sort by date descending and limit to 12
-    const allInvoices = Array.from(invoiceMap.values());
-
-    // Log all invoices with their Stripe IDs for debugging
-    console.log('BillingSubscriptionsPage: All loaded invoices:', allInvoices.map(inv => ({
-      id: inv.id,
-      stripeInvoiceId: inv.stripeInvoiceId,
-      hasStripeId: !!inv.stripeInvoiceId,
-      amount: inv.amount,
-      type: inv.type,
-      source: inv.source
-    })));
-
-    // Warn if any subscription invoices are missing Stripe IDs (when Stripe is enabled)
-    if (USE_STRIPE) {
-      const missingStripeIds = allInvoices.filter(inv =>
-        inv.type === 'subscription' && !inv.stripeInvoiceId && !inv.id.startsWith('in_')
-      );
-      if (missingStripeIds.length > 0) {
-        console.warn('BillingSubscriptionsPage: Found subscription invoices without Stripe IDs:', missingStripeIds);
-      }
-    }
-
-    const sortedInvoices = allInvoices
-      .sort((a, b) => {
-        const dateA = a.date ? a.date.getTime() : 0;
-        const dateB = b.date ? b.date.getTime() : 0;
-        return dateB - dateA;
-      })
-      .slice(0, 12);
-
-    console.log('BillingSubscriptionsPage: Final invoice list:', sortedInvoices.length, 'invoices');
-    return sortedInvoices;
   };
 
   const loadCompanyData = useCallback(async () => {
@@ -424,15 +99,15 @@ const BillingSubscriptionsPage = ({ isEmbedded }) => {
         setSummary(summaryData);
         setItem?.(cacheKey, { summary: summaryData }, 7 * 60 * 1000);
 
-        const invoicesData = await loadInvoices(`companies/${companyId}`, companyId, summaryData);
+        const invoicesData = await loadInvoices(companyId);
         if (cancelled) return;
         setInvoices(invoicesData);
 
         if (USE_STRIPE) {
-          const companyRef = doc(db, 'companies', companyId);
-          const companySnap = await getDoc(companyRef);
-          if (companySnap.exists() && !cancelled) {
-            setStripeCustomerId(companySnap.data().stripeCustomerId || null);
+          const company = await getCompany(companyId);
+          const c = company?.company || company;
+          if (c && !cancelled) {
+            setStripeCustomerId(c.stripeCustomerId || null);
           }
         }
       } catch (error) {
@@ -515,15 +190,14 @@ const BillingSubscriptionsPage = ({ isEmbedded }) => {
 
             setSummary(summaryData);
 
-            const invoicesData = await loadInvoices(`companies/${companyId}`, companyId, summaryData);
+            const invoicesData = await loadInvoices(companyId);
             setInvoices(invoicesData);
 
             // Reload company data
-            const companyRef = doc(db, 'companies', companyId);
-            const companySnap = await getDoc(companyRef);
-            if (companySnap.exists()) {
-              const data = companySnap.data();
-              setStripeCustomerId(data.stripeCustomerId || null);
+            const company = await getCompany(companyId);
+            const c = company?.company || company;
+            if (c) {
+              setStripeCustomerId(c.stripeCustomerId || null);
             }
 
           } catch (syncErr) {
@@ -650,13 +324,11 @@ const BillingSubscriptionsPage = ({ isEmbedded }) => {
       }
     }
 
-    // SIMPLE APPROACH: If we have a Stripe invoice ID, use the simple download function (same as "Download Latest Invoice")
+    // SIMPLE APPROACH: If we have a Stripe invoice ID, use the REST API to get the PDF URL
     if (USE_STRIPE && stripeInvoiceId) {
       try {
-        // Use getInvoicePDF to get the PDF URL, then open it directly
-        const getInvoicePDF = httpsCallable(functions, 'getInvoicePDF');
-        const result = await getInvoicePDF({ invoiceId: stripeInvoiceId });
-        const pdfUrl = result.data.pdfUrl;
+        const { data } = await hrApiClient.get(`/hr/billing/invoices/${stripeInvoiceId}/pdf`);
+        const pdfUrl = data.pdfUrl;
 
         if (pdfUrl) {
           window.open(pdfUrl, '_blank');
@@ -669,8 +341,7 @@ const BillingSubscriptionsPage = ({ isEmbedded }) => {
           return;
         }
       } catch (error) {
-        console.error('Simple download failed, trying fallback:', error);
-        // Fall through to complex download logic
+        console.error('REST PDF download failed, trying fallback:', error);
       }
     }
 
@@ -744,15 +415,13 @@ const BillingSubscriptionsPage = ({ isEmbedded }) => {
         }
       }
 
-      // If we found a Stripe invoice ID, use the simple download approach (same as "Download Latest Invoice")
+      // If we found a Stripe invoice ID, use the REST API
       if (USE_STRIPE && stripeInvoiceId) {
         try {
-          const getInvoicePDF = httpsCallable(functions, 'getInvoicePDF');
-          const result = await getInvoicePDF({ invoiceId: stripeInvoiceId });
-          const pdfUrl = result.data.pdfUrl;
+          const { data } = await hrApiClient.get(`/hr/billing/invoices/${stripeInvoiceId}/pdf`);
+          const pdfUrl = data.pdfUrl;
 
           if (pdfUrl) {
-            // Open PDF directly in new window (same as downloadLatestInvoice)
             window.open(pdfUrl, '_blank');
             toast.success('Invoice opened in new window');
             setDownloadingInvoices(prev => {
@@ -763,7 +432,7 @@ const BillingSubscriptionsPage = ({ isEmbedded }) => {
             return;
           }
         } catch (error) {
-          console.error('Failed to download invoice:', error);
+          console.error('Failed to download invoice via REST:', error);
           toast.error('Failed to download invoice. Please try again.');
           setDownloadingInvoices(prev => {
             const newSet = new Set(prev);

@@ -3,8 +3,7 @@
  * Use this to test and debug mobile-web document sync issues
  */
 
-import { db } from '../firebase/client';
-import { collection, getDocs, query, where, documentId } from 'firebase/firestore';
+import hrApiClient from '../lib/hrApiClient';
 
 /**
  * 1️⃣ Check Firestore Collection Consistency
@@ -13,22 +12,22 @@ export async function checkCollectionConsistency() {
     console.log('🔍 Checking Firestore Collection Consistency...');
     
     try {
-        // Test both potential collection names
-        const documentsQuery = query(collection(db, 'documents'));
-        const onboardingDocumentsQuery = query(collection(db, 'onboarding-documents'));
-        
-        const [documentsSnap, onboardingSnap] = await Promise.all([
-            getDocs(documentsQuery),
-            getDocs(onboardingDocumentsQuery)
+        // Test REST endpoints
+        const [docsRes, onboardingRes] = await Promise.all([
+            hrApiClient.get('/hr/documents'),
+            hrApiClient.get('/hr/onboarding-documents')
         ]);
         
-        console.log('📊 Documents collection size:', documentsSnap.size);
-        console.log('📊 Onboarding-documents collection size:', onboardingSnap.size);
+        const docs = docsRes.data.documents || docsRes.data || [];
+        const onboardingDocs = onboardingRes.data.documents || onboardingRes.data || [];
         
-        if (documentsSnap.size > 0) {
+        console.log('📊 Documents collection size:', docs.length);
+        console.log('📊 Onboarding-documents collection size:', onboardingDocs.length);
+        
+        if (docs.length > 0) {
             console.log('✅ Documents collection has data');
-            documentsSnap.forEach(doc => {
-                console.log('📄 Document sample:', doc.id, doc.data());
+            docs.slice(0, 3).forEach(doc => {
+                console.log('📄 Document sample:', doc.id, doc);
             });
         }
         
@@ -57,19 +56,18 @@ export async function checkStatusFilters(companyId) {
     console.log('🔍 Checking Status Filter Consistency...');
     
     try {
-        // Get all documents without status filter
-        const allDocsQuery = query(
-            collection(db, 'documents'),
-            where('companyId', 'in', [companyId, `companies/${companyId}`])
-        );
-        const allDocsSnap = await getDocs(allDocsQuery);
+        // Get all documents without status filter via REST
+        const { data } = await hrApiClient.get('/hr/documents', {
+            params: { companyId }
+        });
+        const docs = data.documents || data || [];
         
-        console.log('📊 Total documents (no status filter):', allDocsSnap.size);
+        console.log('📊 Total documents (no status filter):', docs.length);
         
         // Check different status values
         const statusCounts = {};
-        allDocsSnap.forEach(doc => {
-            const status = doc.data().status || 'undefined';
+        docs.forEach(doc => {
+            const status = doc.status || 'undefined';
             statusCounts[status] = (statusCounts[status] || 0) + 1;
         });
         
@@ -78,13 +76,11 @@ export async function checkStatusFilters(companyId) {
         // Test common status filters
         const commonStatuses = ['uploaded', 'active', 'pending', 'approved'];
         for (const status of commonStatuses) {
-            const statusQuery = query(
-                collection(db, 'documents'),
-                where('companyId', 'in', [companyId, `companies/${companyId}`]),
-                where('status', '==', status)
-            );
-            const statusSnap = await getDocs(statusQuery);
-            console.log(`📊 Status "${status}": ${statusSnap.size} documents`);
+            const { data: sData } = await hrApiClient.get('/hr/documents', {
+                params: { companyId, status }
+            });
+            const sDocs = sData.documents || sData || [];
+            console.log(`📊 Status "${status}": ${sDocs.length} documents`);
         }
         
         return {
@@ -106,39 +102,23 @@ export async function checkQueryFilters(companyId, userId) {
     console.log('🔍 Checking Query Filter Issues...');
     
     try {
-        // Test different query combinations
-        const queries = [
-            // 1. Only company filter (safest)
-            query(
-                collection(db, 'documents'),
-                where('companyId', 'in', [companyId, `companies/${companyId}`])
-            ),
-            // 2. Company + userId
-            query(
-                collection(db, 'documents'),
-                where('companyId', 'in', [companyId, `companies/${companyId}`]),
-                where('userId', '==', userId)
-            ),
-            // 3. Company + userId + status
-            query(
-                collection(db, 'documents'),
-                where('companyId', 'in', [companyId, `companies/${companyId}`]),
-                where('userId', '==', userId),
-                where('status', '==', 'uploaded')
-            )
-        ];
-        
         const results = [];
-        for (let i = 0; i < queries.length; i++) {
-            const snap = await getDocs(queries[i]);
-            results.push({
-                query: `Query ${i + 1}`,
-                filters: getQueryDescription(i),
-                count: snap.size,
-                sample: snap.size > 0 ? snap.docs[0].data() : null
-            });
-            console.log(`📊 Query ${i + 1}: ${snap.size} documents`);
-        }
+        // 1. Only company filter
+        const res1 = await hrApiClient.get('/hr/documents', { params: { companyId } });
+        const docs1 = res1.data.documents || res1.data || [];
+        results.push({ query: 'Query 1', filters: 'companyId only', count: docs1.length, sample: docs1[0] });
+
+        // 2. Company + userId
+        const res2 = await hrApiClient.get('/hr/documents', { params: { companyId, employeeId: userId } });
+        const docs2 = res2.data.documents || res2.data || [];
+        results.push({ query: 'Query 2', filters: 'companyId + userId', count: docs2.length, sample: docs2[0] });
+
+        // 3. Company + userId + status
+        const res3 = await hrApiClient.get('/hr/documents', { params: { companyId, employeeId: userId, status: 'uploaded' } });
+        const docs3 = res3.data.documents || res3.data || [];
+        results.push({ query: 'Query 3', filters: 'companyId + userId + status', count: docs3.length, sample: docs3[0] });
+
+        results.forEach(r => console.log(`📊 ${r.query}: ${r.count} documents`));
         
         return {
             queryResults: results,
@@ -212,22 +192,18 @@ export async function testWithoutFilters() {
     console.log('🔍 Testing Without Any Filters...');
     
     try {
-        const snapshot = await getDocs(collection(db, 'documents'));
-        console.log('📊 Total documents in collection:', snapshot.size);
+        const { data } = await hrApiClient.get('/hr/documents');
+        const docs = data.documents || data || [];
+        console.log('📊 Total documents in collection:', docs.length);
         
-        const documents = [];
-        snapshot.forEach(doc => {
-            documents.push({
-                id: doc.id,
-                ...doc.data()
-            });
-            console.log('📄 Document:', doc.id, doc.data());
+        docs.forEach(doc => {
+            console.log('📄 Document:', doc.id, doc);
         });
         
         return {
-            totalDocuments: snapshot.size,
-            documents: documents,
-            recommendation: snapshot.size > 0 ? 
+            totalDocuments: docs.length,
+            documents: docs,
+            recommendation: docs.length > 0 ? 
                 'Documents exist - check your filters' : 'No documents in collection'
         };
     } catch (error) {

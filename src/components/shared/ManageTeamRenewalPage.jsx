@@ -13,8 +13,7 @@ import { getBillingSummary, recordSeatTopUp, recordSubscriptionPayment } from '.
 import { parseCompanyId } from '../../utils/dataParser';
 import { toast } from 'react-toastify';
 import { createStripeCheckoutSession, createStripeCustomer, USE_STRIPE, updateStripeSubscription } from '../../services/stripe';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../../firebase/client';
+import { fetchCompanyDetails } from '../../services/companyService';
 
 /** Roles that can see the payment/renewal flow. Only Senior Manager and Site Manager. All other roles see "Contact administrator". */
 const ROLES_CAN_ACCESS_PAYMENT = ['siteManager', 'seniorManager'];
@@ -187,10 +186,8 @@ const ManageTeamRenewalPage = ({ onContinuePayment }) => {
       if (USE_STRIPE) {
         // Use Stripe Checkout for subscription creation
         try {
-          // Get company data to check for Stripe customer
-          const companyRef = doc(db, 'companies', companyId);
-          const companySnap = await getDoc(companyRef);
-          const companyData = companySnap.exists() ? companySnap.data() : {};
+          // Get company data to check for Stripe customer via REST
+          const { company: companyData } = await fetchCompanyDetails(companyId);
 
           let customerId = companyData.stripeCustomerId;
 

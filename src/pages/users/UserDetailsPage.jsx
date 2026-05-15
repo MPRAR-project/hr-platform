@@ -1,4 +1,3 @@
-import { collection, query, where, getDocs, doc, getDoc } from "firebase/firestore";
 import { ArrowLeft, UserPlus } from "lucide-react";
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
@@ -7,7 +6,6 @@ import Header from "../../components/layout/Header";
 import AssignEmployeeModal from "../../components/modals/AssignEmployeeModal";
 import Button from "../../components/ui/Button";
 import Tabs from "../../components/ui/Tabs";
-import { db } from "../../firebase/client";
 import { useAuth } from "../../hooks/useAuth";
 import { absenceService } from "../../services/absenceService";
 import { allowanceService } from "../../services/allowanceService";
@@ -172,57 +170,9 @@ const UserDetailsPage = () => {
                 setOnboardingLoading(false);
                 allowancesYearRef.current = null;
 
-                // ✅ DUAL-READ STRATEGY: Try users collection first, then fall back to profile
-                const uref = doc(db, 'users', uid);
-                const usnap = await getDoc(uref);
-
-                let u = null;
-                let isProfileOnly = false;
-
-                if (usnap.exists()) {
-                    // User exists in users collection
-                    u = usnap.data();
-                } else {
-                    // ✅ FALLBACK: Try to find user in userCompanyProfiles
-                    console.warn(`No user document found for ${uid}, checking userCompanyProfiles...`);
-
-                    try {
-                        const pref = doc(db, 'userCompanyProfiles', uid);
-
-                        const profileSnap = await getDoc(pref);
-
-                        if (profileSnap.exists()) {
-                            const profileData = profileSnap.data();
-                            console.log('Found user in userCompanyProfiles:', profileData);
-
-                            // Construct a user object from profile data
-                            u = {
-                                uid: uid,
-                                email: profileData.email || '',
-                                displayName: profileData.displayName || '',
-                                firstName: profileData.firstName || '',
-                                lastName: profileData.lastName || '',
-                                profileImage: profileData.profileImage || null,
-                                primaryRole: profileData.primaryRole || 'employee',
-                                companyId: profileData.companyId || '',
-                                siteId: profileData.siteId || '',
-                                managerUserId: profileData.reportsTo || profileData.managerUserId || '',
-                                jobTitle: profileData.jobTitle || '',
-                                department: profileData.department || '',
-                            };
-                            isProfileOnly = true;
-                        } else {
-                            setLoadError('User not found in users or profiles');
-                            setIsLoading(false);
-                            return;
-                        }
-                    } catch (profileError) {
-                        console.error('Error fetching from userCompanyProfiles:', profileError);
-                        setLoadError('User not found');
-                        setIsLoading(false);
-                        return;
-                    }
-                }
+                // ✅ REST STRATEGY: Use getUserById
+                const { getUserById } = await import('../../services/users');
+                const u = await getUserById(uid);
 
                 if (!u) {
                     setLoadError('User not found');
@@ -242,16 +192,14 @@ const UserDetailsPage = () => {
                     console.log('⚠️ User data loaded from profile only - some features may be limited');
                 }
 
-                userSnapshotRef.current = { uid, userData: u, isProfileOnly };
+                userSnapshotRef.current = { uid, userData: u, isProfileOnly: false };
 
                 // ---- 🔹 FETCH MANAGER DETAILS ----
                 let managerName = '';
                 try {
-                    if (u.managerUserId) {
-                        const mref = doc(db, 'users', u.managerUserId);
-                        const msnap = await getDoc(mref);
-                        if (msnap.exists()) {
-                            const m = msnap.data();
+                    if (u.managerUserId || u.reportsTo) {
+                        const m = await getUserById(u.managerUserId || u.reportsTo);
+                        if (m) {
                             managerName = m.displayName || `${m.firstName || ''} ${m.lastName || ''}`.trim() || m.email || '';
                         }
                     }
@@ -334,30 +282,10 @@ const UserDetailsPage = () => {
 
         setOnboardingLoading(true);
         try {
-            const { uid, userData } = snap;
-            const appCol = collection(db, 'onboardingApplications');
-            const queries = [
-                query(appCol, where('userId', '==', uid)),
-                query(appCol, where('userId', '==', `users/${uid}`)),
-                ...(userData?.email ? [query(appCol, where('formData.personalInfo.email', '==', userData.email))] : []),
-            ];
-            const results = await Promise.allSettled(queries.map(q => getDocs(q)));
-            const allDocs = [];
-            for (const r of results) {
-                if (r.status === 'fulfilled' && !r.value.empty) {
-                    r.value.docs.forEach(d => allDocs.push({ id: d.id, ...d.data() }));
-                }
-            }
-            if (allDocs.length > 0) {
-                allDocs.sort((a, b) => {
-                    const at = (a.updatedAt?.toMillis?.() || a.createdAt?.toMillis?.() || 0);
-                    const bt = (b.updatedAt?.toMillis?.() || b.createdAt?.toMillis?.() || 0);
-                    return bt - at;
-                });
-                onboardingRef.current = allDocs[0] || null;
-            } else {
-                onboardingRef.current = null;
-            }
+            const { uid } = snap;
+            const { getUserOnboardingDetails } = await import('../../services/users');
+            const data = await getUserOnboardingDetails(uid);
+            onboardingRef.current = data || null;
 
             loadedTabsRef.current.onboarding = true;
             return onboardingRef.current;
@@ -507,17 +435,19 @@ const UserDetailsPage = () => {
         setContractDocsLoading(true);
         try {
             const onboarding = await ensureOnboardingLoaded();
-            if (onboarding?.id) {
-                const dq = query(collection(db, 'documents'), where('onboardingApplicationId', '==', onboarding.id));
-                const ds = await getDocs(dq);
-                const drows = ds.docs.map(d => {
-                    const x = d.data();
+            if (onboarding?.id || onboarding?.userId) {
+                // Documents now come from the documentService REST API
+                const { data: docsData } = await hrApiClient.get('/hr/documents', {
+                    params: { employeeId: snap.uid }
+                });
+                
+                const drows = (docsData.documents || docsData || []).map(d => {
                     return {
-                        name: x.fileName || (x.documentType || 'Document').replace(/_/g, ' ').replace(/\b\w/g, s => s.toUpperCase()),
-                        uploaded: x.uploadedAt?.toDate ? x.uploadedAt.toDate().toISOString().slice(0, 10) : '',
-                        size: x.fileSize ? `${(x.fileSize / 1024 / 1024).toFixed(2)} MB` : '',
-                        status: (x.status || 'active').replace(/_/g, ' ').replace(/\b\w/g, s => s.toUpperCase()),
-                        downloadURL: x.downloadURL
+                        name: d.fileName || (d.documentType || 'Document').replace(/_/g, ' ').replace(/\b\w/g, s => s.toUpperCase()),
+                        uploaded: d.uploadedAt ? new Date(d.uploadedAt).toISOString().slice(0, 10) : '',
+                        size: d.fileSize ? `${(d.fileSize / 1024 / 1024).toFixed(2)} MB` : '',
+                        status: (d.status || 'active').replace(/_/g, ' ').replace(/\b\w/g, s => s.toUpperCase()),
+                        downloadURL: d.downloadURL
                     };
                 });
                 setContractDocuments(drows);
@@ -770,47 +700,17 @@ const UserDetailsPage = () => {
                                     // Reload personal data after update
                                     const load = async () => {
                                         try {
-                                            const uid = normalizeUid(selectedUserId);
-                                            if (!uid) return;
+                                            const { getUserById, getUserOnboardingDetails } = await import('../../services/users');
+                                            const u = await getUserById(selectedUserId);
+                                            if (!u) return;
 
-                                            const uref = doc(db, 'users', uid);
-                                            const usnap = await getDoc(uref);
-                                            if (!usnap.exists()) return;
-                                            const u = usnap.data();
-
-                                            // Update photo URL if changed
                                             setEmployee(prev => ({
                                                 ...prev,
                                                 profileImage: u.profileImage || null
                                             }));
 
-                                            // Reload onboarding data
-                                            let onboarding = null;
-                                            try {
-                                                const appCol = collection(db, 'onboardingApplications');
-                                                const queries = [
-                                                    query(appCol, where('userId', '==', uid)),
-                                                    query(appCol, where('userId', '==', `users/${uid}`)),
-                                                    ...(u.email ? [query(appCol, where('formData.personalInfo.email', '==', u.email))] : [])
-                                                ];
-                                                const results = await Promise.allSettled(queries.map(q => getDocs(q)));
-                                                const allDocs = [];
-                                                for (const r of results) {
-                                                    if (r.status === 'fulfilled' && !r.value.empty) {
-                                                        r.value.docs.forEach(d => allDocs.push({ id: d.id, ...d.data() }));
-                                                    }
-                                                }
-                                                if (allDocs.length > 0) {
-                                                    allDocs.sort((a, b) => {
-                                                        const at = (a.updatedAt?.toMillis?.() || a.createdAt?.toMillis?.() || 0);
-                                                        const bt = (b.updatedAt?.toMillis?.() || b.createdAt?.toMillis?.() || 0);
-                                                        return bt - at;
-                                                    });
-                                                    onboarding = allDocs[0] || null;
-                                                }
-                                            } catch (e) {
-                                                console.error('Failed to reload onboarding applications', e);
-                                            }
+                                            const onboarding = await getUserOnboardingDetails(selectedUserId);
+                                            onboardingRef.current = onboarding || null;
 
                                             const pi = onboarding?.formData?.personalInfo || {};
                                             const idf = onboarding?.formData?.identification || {};
@@ -842,15 +742,13 @@ const UserDetailsPage = () => {
                                                 }
                                             });
 
-                                            // Also update employee display name if changed
                                             const newDisplay = u.displayName || `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email;
                                             setEmployee(prev => ({
                                                 ...prev,
                                                 name: newDisplay
                                             }));
-                                        } catch (error) {
-                                            console.error('Error reloading personal data:', error);
-                                            toast.error('Failed to reload personal information');
+                                        } catch (err) {
+                                            console.error('Failed to reload personal data', err);
                                         }
                                     };
                                     load();

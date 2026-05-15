@@ -1,8 +1,7 @@
-import { db } from '../firebase/client';
-import { collection, query, where, getDocs, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import hrApiClient from '../lib/hrApiClient';
 import { timesheetValidation } from '../services/timesheetValidation';
 import { timesheetDeduplication } from '../services/timesheetDeduplication';
-import { formatISODate, getWeekRange } from '../services/timesheets';
+import { formatISODate, getWeekRange, fetchWeekDetails } from '../services/timesheets';
 import { DEFAULT_WEEK_START_DAY } from './weekStartUtils';
 
 /**
@@ -34,20 +33,15 @@ export class TimesheetConsistencyManager {
         });
       }
       
-      // Get clean data after deduplication
-      const timesheetsCol = collection(db, 'timesheets');
-      const weekQuery = query(
-        timesheetsCol,
-        where('userId', '==', userId),
-        where('period', '>=', weekStart),
-        where('period', '<=', weekEnd)
-      );
-      
-      const snapshot = await getDocs(weekQuery);
-      const weekDocs = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
+      // Get clean data after deduplication via REST
+      const { data } = await hrApiClient.get('/hr/timesheets', {
+        params: {
+          employeeId: userId,
+          startDate: weekStart,
+          endDate: weekEnd
+        }
+      });
+      const weekDocs = data.timesheets || [];
       
       // Organize by date and calculate totals
       const dailyData = {};
@@ -134,18 +128,16 @@ export class TimesheetConsistencyManager {
         });
       }
       
-      // Check for orphaned documents (documents without proper week metadata)
+      // Check for orphaned documents via REST
       const weekEnd = timesheetValidation.getWeekEndDate(weekStart, weekStartDay);
-      const timesheetsCol = collection(db, 'timesheets');
-      const weekQuery = query(
-        timesheetsCol,
-        where('userId', '==', userId),
-        where('period', '>=', weekStart),
-        where('period', '<=', weekEnd)
-      );
-      
-      const snapshot = await getDocs(weekQuery);
-      const weekDocs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const { data } = await hrApiClient.get('/hr/timesheets', {
+        params: {
+          employeeId: userId,
+          startDate: weekStart,
+          endDate: weekEnd
+        }
+      });
+      const weekDocs = data.timesheets || [];
       
       // Check for missing metadata
       const missingMetadata = weekDocs.filter(doc => 
@@ -270,17 +262,10 @@ export class TimesheetConsistencyManager {
           const expectedWeekKey = timesheetValidation.generateWeekKey(userId, weekStart);
           
           for (const docInfo of issue.details) {
-            const docRef = doc(db, 'timesheets', docInfo.id);
-            await updateDoc(docRef, {
+            await hrApiClient.put(`/hr/timesheets/${docInfo.id}`, {
               weekStartDate: weekStart,
               weekKey: expectedWeekKey,
-              lastModified: serverTimestamp(),
-              auditTrail: [{
-                action: 'metadata_repair',
-                timestamp: serverTimestamp(),
-                userId: 'system',
-                details: { repairType: 'missing_metadata' }
-              }]
+              auditAction: 'metadata_repair'
             });
           }
           
@@ -303,20 +288,9 @@ export class TimesheetConsistencyManager {
       for (const warning of keyWarnings) {
         try {
           for (const docInfo of warning.details) {
-            const docRef = doc(db, 'timesheets', docInfo.id);
-            await updateDoc(docRef, {
+            await hrApiClient.put(`/hr/timesheets/${docInfo.id}`, {
               weekKey: docInfo.expectedKey,
-              lastModified: serverTimestamp(),
-              auditTrail: [{
-                action: 'key_repair',
-                timestamp: serverTimestamp(),
-                userId: 'system',
-                details: { 
-                  repairType: 'inconsistent_key',
-                  oldKey: docInfo.currentKey,
-                  newKey: docInfo.expectedKey
-                }
-              }]
+              auditAction: 'key_repair'
             });
           }
           

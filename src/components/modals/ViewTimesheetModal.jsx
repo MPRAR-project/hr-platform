@@ -1,11 +1,11 @@
-import { collection, doc as docFn, getDoc, getDocs, query, where, Timestamp } from 'firebase/firestore';
+import { fetchCompanyDetails } from '../../services/companyService';
+import { getSessionsForDateRange } from '../../services/timeClock';
 import { roundSessionRange, getDefaultRoundingRules, applyRoundingToDate, applyRoundingToTimeString } from '../../utils/timeRounding';
 import { AlertCircle, AlertTriangle, CheckCircle, ChevronDown, ChevronUp, Download, Edit2, FileText, Plus, Trash2, X, XCircle } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'react-toastify';
 import { useClockSessionContext } from '../../contexts/ClockSessionContext';
 import { useTimesheetContext } from '../../contexts/TimesheetContext';
-import { db } from '../../firebase/client';
 import { useAuth } from '../../hooks/useAuth';
 import { useEmployeeTimesheets } from '../../hooks/useEmployeeTimesheets';
 import { timesheetDeduplication } from '../../services/timesheetDeduplication';
@@ -405,21 +405,14 @@ const ViewTimesheetModal = ({
     // ALWAYS fetch fresh data - clear cache when modal opens
     console.log('[ViewTimesheetModal] Fetching fresh data (cache bypassed)');
 
-    const loadEmployeeData = async () => {
+        const loadEmployeeData = async () => {
       setIsProcessingEmployeeData(true);
       setEmployeeDataError(null);
 
       try {
         console.log('[ViewTimesheetModal] Loading employee data:', { employeeUserId, weekStartDate });
 
-        // Clear cache to ensure fresh data
-        const weekStartStr = weekStartDate instanceof Date
-          ? formatISODate(weekStartDate)
-          : weekStartDate;
-        invalidateTimesheetCache(employeeUserId, weekStartStr);
-        console.log('[ViewTimesheetModal] Cleared cache for employee:', employeeUserId, 'week:', weekStartStr);
-
-        // Use weekStartDate directly - it's already the correct week start from the timesheet
+        // Use weekStartDate directly
         const start = weekStartDate instanceof Date ? weekStartDate : new Date(weekStartDate + 'T00:00:00');
         start.setHours(0, 0, 0, 0);
 
@@ -427,47 +420,34 @@ const ViewTimesheetModal = ({
         weekEnd.setDate(start.getDate() + 6);
         weekEnd.setHours(23, 59, 59, 999);
 
-        const timesheetQuery = query(
-          collection(db, 'timesheets'),
-          where('userId', '==', employeeUserId),
-          where('period', '>=', formatISODate(new Date(start.getTime() - 8 * 24 * 60 * 60 * 1000))), // Bridge week support: look back 8 days
-          where('period', '<=', formatISODate(weekEnd))
-        );
+        const weekStartStr = formatISODate(start);
 
-        // Consolidated fetches for improved performance
-        const [userContext, timesheetSnap, sessionsSnap, absencesMap] = await Promise.all([
+        // Clear cache to ensure fresh data
+        invalidateTimesheetCache(employeeUserId, weekStartStr);
+
+        // Consolidated fetches for improved performance via REST
+        const [userContext, weekTimesheets, weekSessions, absencesMap] = await Promise.all([
           getUserWeekContext(employeeUserId, { forceRefresh: true }),
-          getDocs(timesheetQuery),
-          getDocs(
-            query(
-              collection(db, 'timeClockSessions'),
-              where('userId', '==', employeeUserId),
-              where('startedAt', '>=', Timestamp.fromDate(start)),
-              where('startedAt', '<=', Timestamp.fromDate(weekEnd))
-            )
-          ),
+          getUserTimesheetsByWeek(employeeUserId, null, weekStartStr),
+          getSessionsForDateRange({ userId: employeeUserId, startDate: start, endDate: weekEnd }),
           fetchApprovedAbsencesForWeek(employeeUserId, start, weekEnd)
         ]);
 
         const weekStart = userContext.weekStartDay || DEFAULT_WEEK_START_DAY;
         setEmployeeWeekStartDay(weekStart);
 
-        // Convert Firestore snapshots to documents
-        const weekTimesheets = timesheetSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
         console.log('[ViewTimesheetModal] Fetched week timesheets:', {
           count: weekTimesheets.length,
           timesheets: weekTimesheets.map(ts => ({
             id: ts.id,
             period: ts.period,
-            hasTotals: !!ts.totals,
-            effectiveSec: ts.totals?.effectiveSec
+            status: ts.status
           }))
         });
 
-        const approvalDoc = weekTimesheets.find(ts => ts.id === timesheet?.id && (ts.approvals || ts.approvedBy || ts.approvedByName))
-          || weekTimesheets.find(ts => ts.period === weekStartStr && (ts.approvals || ts.approvedBy || ts.approvedByName))
-          || weekTimesheets.find(ts => ts.approvals || ts.approvedBy || ts.approvedByName);
+        const approvalDoc = weekTimesheets.find(ts => ts.id === timesheet?.id && (ts.status === 'approved' || ts.approvedBy))
+          || weekTimesheets.find(ts => ts.period === weekStartStr && (ts.status === 'approved' || ts.approvedBy))
+          || weekTimesheets.find(ts => ts.status === 'approved' || ts.approvedBy);
         
         if (approvalDoc) {
           setApprovalMetadata({
@@ -478,91 +458,44 @@ const ViewTimesheetModal = ({
             siteManagerApproval: approvalDoc.approvals?.siteManager,
             teamManagerApproval: approvalDoc.approvals?.teamManager
           });
-          console.log('[ViewTimesheetModal] Extracted approval metadata:', {
-            approvedBy: approvalDoc.approvedBy,
-            approvedByName: approvalDoc.approvedByName,
-            approvedAt: approvalDoc.approvedAt
-          });
         }
 
         if (cancelled) return;
 
-        const weekEndTime = weekEnd.getTime();
-        const weekStartTime = start.getTime();
-
-        const allSessions = sessionsSnap.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
-
-        // Filter sessions for this week
-        const weekSessions = allSessions.filter(s => {
-          const startedAt = s.startedAt?.toDate ? s.startedAt.toDate() : null;
-          if (!startedAt) return false;
-          // IMPORTANT: Exclude deleted sessions which may cause ghost entries in Manager view
-          if (s.status === 'deleted') return false;
-
-          const startTime = startedAt.getTime();
-          return startTime >= weekStartTime && startTime <= weekEndTime;
-        });
-
-        console.log('[ViewTimesheetModal] Filtered sessions:', {
-          total: allSessions.length,
-          weekSessions: weekSessions.length
-        });
-
-        // Get company schedule and rounding rules
+        // Get company schedule and rounding rules via REST
         let schedule = {};
         let roundingRules = null;
         const { companyIdPath } = userContext;
         if (companyIdPath) {
           try {
-            const compKey = companyIdPath.includes('/') ? companyIdPath.split('/')[1] : companyIdPath;
-            if (compKey) {
-              const compRef = docFn(db, 'companies', compKey);
-              const compSnap = await getDoc(compRef);
-              if (compSnap.exists()) {
-                const data = compSnap.data();
-                schedule = data.workSchedule || {};
-                roundingRules = data.roundingRules || null;
-                setRoundingRules(roundingRules);
-              }
+            const companyId = companyIdPath.replace('companies/', '');
+            const { company: companyData } = await fetchCompanyDetails(companyId);
+            if (companyData) {
+              schedule = companyData.workSchedule || {};
+              roundingRules = companyData.roundingRules || null;
+              setRoundingRules(roundingRules);
             }
           } catch (err) {
-            console.warn('[ViewTimesheetModal] Error getting company schedule:', err);
+            console.warn('[ViewTimesheetModal] Error getting company schedule via REST:', err);
           }
         }
 
         if (cancelled) return;
 
-        console.log('[ViewTimesheetModal] Fetched absences:', absencesMap.size);
-
-        if (cancelled) return;
-
-        // Use the filtered timesheet documents directly
-        const timesheetDocs = weekTimesheets;
-
-        // Process week data using real-time timesheet data (client-side processing - instant!)
+        // Process week data using REST data
         const processedWeek = await processWeekData(
           start,
-          timesheetDocs,
+          weekTimesheets,
           weekSessions,
           employeeUserId,
           schedule,
-          absencesMap, // Pass absences to processor
-          roundingRules // Pass rounding rules
+          absencesMap,
+          roundingRules
         );
-
-        console.log('[ViewTimesheetModal] Processed week data:', {
-          daysCount: processedWeek.days?.length || 0,
-          totals: processedWeek.totals
-        });
-
-        if (cancelled) return;
 
         setEmployeeWeekData(processedWeek);
       } catch (error) {
-        console.error('[ViewTimesheetModal] Error loading employee timesheet:', error);
+        console.error('[ViewTimesheetModal] Error loading employee timesheet via REST:', error);
         if (!cancelled) {
           setEmployeeDataError(error);
           toast.error('Failed to load timesheet data');

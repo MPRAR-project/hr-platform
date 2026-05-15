@@ -3,8 +3,7 @@ import { X, ArrowRight, Users, Search } from 'lucide-react';
 import Button from '../ui/Button';
 import { useAuth } from '../../hooks/useAuth';
 import { trainingPermissionService } from '../../services/trainingPermissions';
-import { collection, query, where, getDocs } from 'firebase/firestore';
-import { db } from '../../firebase/client';
+import { getUsersByCompany } from '../../services/users';
 
 const AssignTrainingModal = ({ isOpen, onClose, training, onAssign }) => {
   const { user } = useAuth();
@@ -29,19 +28,10 @@ const AssignTrainingModal = ({ isOpen, onClose, training, onAssign }) => {
   const loadAvailableUsers = async () => {
     try {
       setLoadingUsers(true);
-      const companyId = user.companyId.includes('/') ? user.companyId.split('/')[1] : user.companyId;
+      const companyId = user.companyId.replace('companies/', '');
 
-      // Get all users in the company
-      const usersQuery = query(
-        collection(db, 'users'),
-        where('companyId', '==', user.companyId)
-      );
-
-      const usersSnap = await getDocs(usersQuery);
-      const allUsers = usersSnap.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
+      // Get all users in the company via REST
+      const allUsers = await getUsersByCompany(companyId);
 
       // Filter users based on permissions
       const accessibleUsers = await trainingPermissionService.filterUsersByPermissions(user, allUsers);

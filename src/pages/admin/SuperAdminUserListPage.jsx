@@ -4,8 +4,7 @@ import Button from '../../components/ui/Button';
 import SectionContainer from '../../components/shared/SectionContainer';
 import { Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow } from '../../components/shared/Table';
 import Badge from '../../components/ui/Badge';
-import { collection, getDocs, orderBy, query, startAfter, where, limit } from 'firebase/firestore';
-import { db } from '../../firebase/client';
+import { fetchAllUsers, fetchUsersByCompanyGrouped } from '../../services/superAdminService';
 import { useAuth } from '../../hooks/useAuth';
 import { toast } from 'react-toastify';
 import { Search, ChevronDown, ChevronRight } from 'lucide-react';
@@ -91,65 +90,18 @@ const SuperAdminUserListPage = () => {
     const fetchUsers = async (loadNext = true, isSearch = false) => {
         try {
             setLoading(true);
-            const usersRef = collection(db, 'users');
-            let q;
+            
+            const params = {
+                limit: PAGE_SIZE,
+                page: loadNext ? page : 1,
+                search: searchTerm && searchTerm.trim() !== '' ? searchTerm : undefined
+            };
 
-            // Search Mode (Server-side)
-            if (searchTerm && searchTerm.trim() !== '') {
-                const term = searchTerm.toLowerCase();
-                q = query(
-                    usersRef,
-                    where('email', '>=', term),
-                    where('email', '<=', term + '\uf8ff'),
-                    limit(PAGE_SIZE)
-                );
-                setPage(1);
-                setPageHistory([]);
-                setLastVisible(null);
-            }
-            // Standard Pagination Mode
-            else {
-                if (loadNext && lastVisible) {
-                    q = query(
-                        usersRef,
-                        orderBy('createdAt', 'desc'),
-                        startAfter(lastVisible),
-                        limit(PAGE_SIZE)
-                    );
-                } else {
-                    q = query(usersRef, orderBy('createdAt', 'desc'), limit(PAGE_SIZE));
-                }
-            }
-
-            const documentSnapshots = await getDocs(q);
-
-            // Update Cursor for next fetch
-            const lastVisibleDoc = documentSnapshots.docs[documentSnapshots.docs.length - 1];
-            if (loadNext) {
-                setLastVisible(lastVisibleDoc);
-                if (lastVisibleDoc) {
-                    setPageHistory(prev => [...prev, lastVisibleDoc]);
-                }
-            }
-
-            // Deduplicate by email and ID
-            const seenEmails = new Set();
-            const seenIds = new Set();
-            const uniqueUsers = [];
-
-            documentSnapshots.docs.forEach(doc => {
-                const data = doc.data();
-                const id = doc.id;
-                const email = (data.email || '').toLowerCase();
-
-                if (!seenIds.has(id)) {
-                    if (!email || !seenEmails.has(email)) {
-                        uniqueUsers.push({ id, ...data });
-                        seenIds.add(id);
-                        if (email) seenEmails.add(email);
-                    }
-                }
-            });
+            const data = await fetchAllUsers(params);
+            const uniqueUsers = (data.users || data || []).map(u => ({
+                ...u,
+                id: u.id || u.userId
+            }));
 
             setUsers(uniqueUsers);
 
@@ -159,7 +111,8 @@ const SuperAdminUserListPage = () => {
             }
 
         } catch (error) {
-            console.error("Error fetching users:", error);
+            console.error("[SuperAdmin] Error fetching users via REST:", error);
+            toast.error("Failed to load users");
         } finally {
             setLoading(false);
         }
@@ -177,103 +130,23 @@ const SuperAdminUserListPage = () => {
 
     const handleReset = () => {
         setSearchTerm('');
-        setLastVisible(null);
-        setPageHistory([]);
         setPage(1);
-        setLoading(true);
-        const usersRef = collection(db, 'users');
-        const q = query(usersRef, orderBy('createdAt', 'desc'), limit(PAGE_SIZE));
-        getDocs(q).then(snap => {
-            const usersList = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            setUsers(usersList);
-            setLastVisible(snap.docs[snap.docs.length - 1]);
-            setPageHistory([snap.docs[snap.docs.length - 1]]);
-            setLoading(false);
-        });
+        fetchUsers(false);
     };
 
     const fetchUsersByCompany = async () => {
         try {
             setLoading(true);
-
-            // Fetch all users and deduplicate by email/ID
-            const usersRef = collection(db, 'users');
-            const usersQuery = query(usersRef, orderBy('createdAt', 'desc'));
-            const usersSnapshot = await getDocs(usersQuery);
-
-            const seenEmails = new Set();
-            const seenIds = new Set();
-            const allUsers = [];
-
-            usersSnapshot.docs.forEach(doc => {
-                const data = doc.data();
-                const id = doc.id;
-                const email = (data.email || '').toLowerCase();
-
-                if (!seenIds.has(id)) {
-                    if (!email || !seenEmails.has(email)) {
-                        allUsers.push({ id, ...data });
-                        seenIds.add(id);
-                        if (email) seenEmails.add(email);
-                    }
-                }
-            });
-
-            // Group users by companyId
-            const grouped = {};
-            const companyIds = new Set();
-
-            allUsers.forEach(user => {
-                const companyId = user.companyId || 'no-company';
-                if (!grouped[companyId]) {
-                    grouped[companyId] = {
-                        name: 'Loading...',
-                        users: []
-                    };
-                }
-                grouped[companyId].users.push(user);
-                if (companyId !== 'no-company') {
-                    companyIds.add(companyId);
-                }
-            });
-
-            // Fetch company names
-            if (companyIds.size > 0) {
-                const companiesRef = collection(db, 'companies');
-                const companiesSnapshot = await getDocs(companiesRef);
-
-                console.log('[SuperAdmin] Fetched companies:', companiesSnapshot.docs.length);
-                console.log('[SuperAdmin] Company IDs to match:', Array.from(companyIds));
-
-                companiesSnapshot.docs.forEach(doc => {
-                    const docId = doc.id;
-                    const companyData = doc.data();
-
-                    // Try to match both direct ID and "companies/ID" format
-                    const possibleIds = [docId, `companies/${docId}`];
-
-                    possibleIds.forEach(possibleId => {
-                        if (grouped[possibleId]) {
-                            grouped[possibleId].name = companyData.name || companyData.companyName || 'Unknown Company';
-                            console.log('[SuperAdmin] Matched company:', possibleId, '→', grouped[possibleId].name);
-                        }
-                    });
-                });
-            }
-
-            // Set name for "no company" group
-            if (grouped['no-company']) {
-                grouped['no-company'].name = 'No Company';
-            }
-
+            const grouped = await fetchUsersByCompanyGrouped();
+            
             setCompaniesData(grouped);
-            setItem(CACHE_KEY_BY_COMPANY, grouped, 15 * 60 * 1000); // 15 mins cache
+            setItem(CACHE_KEY_BY_COMPANY, grouped, 15 * 60 * 1000);
 
             // Expand all companies by default
             setExpandedCompanies(new Set(Object.keys(grouped)));
 
         } catch (error) {
-            console.error("Error fetching users by company:", error);
+            console.error("[SuperAdmin] Error fetching users by company via REST:", error);
             toast.error("Failed to load users by company");
         } finally {
             setLoading(false);
@@ -392,7 +265,7 @@ const SuperAdminUserListPage = () => {
                                                         </TableCell>
                                                         <TableCell>
                                                             <span className="text-gray-500 text-sm">
-                                                                {user.createdAt?.toDate ? user.createdAt.toDate().toLocaleDateString() : 'N/A'}
+                                                                {user.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'N/A'}
                                                             </span>
                                                         </TableCell>
                                                     </TableRow>
@@ -505,7 +378,7 @@ const SuperAdminUserListPage = () => {
                                                                             </TableCell>
                                                                             <TableCell>
                                                                                 <span className="text-gray-500 text-sm">
-                                                                                    {user.createdAt?.toDate ? user.createdAt.toDate().toLocaleDateString() : 'N/A'}
+                                                                                    {user.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'N/A'}
                                                                                 </span>
                                                                             </TableCell>
                                                                         </TableRow>

@@ -1,8 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { getUserCurrentLocation, checkUserLocation } from '../services/locationService';
 import { useAuth } from './useAuth';
-import { db } from '../firebase/client';
-import { doc, onSnapshot } from 'firebase/firestore';
+import hrApiClient from '../lib/hrApiClient';
 
 /**
  * Hook to validate user location for clock in/out
@@ -18,50 +17,30 @@ export const useLocationValidation = (checkInterval = 30000) => {
   const [companyLocations, setCompanyLocations] = useState([]);
   const [locationsLoaded, setLocationsLoaded] = useState(false);
 
-  // Load company locations from Firestore with real-time listener
+  // Load company locations from REST
   useEffect(() => {
-    if (!user?.companyId) {
-      setCompanyLocations([]);
-      return;
-    }
+    const fetchLocations = async () => {
+      if (!user?.companyId) {
+        setCompanyLocations([]);
+        setLocationsLoaded(true);
+        return;
+      }
 
-    const companyId = user.companyId.split('/')[1];
-    if (!companyId) {
-      setCompanyLocations([]);
-      return;
-    }
-
-    const companyRef = doc(db, 'companies', companyId);
-
-    // Set up real-time listener for company locations
-    const unsubscribe = onSnapshot(
-      companyRef,
-      (companySnap) => {
-        try {
-          if (companySnap.exists()) {
-            const companyData = companySnap.data();
-            const locations = companyData.locations || [];
-            setCompanyLocations(locations);
-            setLocationsLoaded(true);
-          } else {
-            setCompanyLocations([]);
-            setLocationsLoaded(true);
-          }
-        } catch (error) {
-          console.error('Error processing company locations:', error);
-          setCompanyLocations([]);
-          setLocationsLoaded(true);
-        }
-      },
-      (error) => {
-        console.error('Error listening to company locations:', error);
+      const companyId = user.companyId.replace('companies/', '');
+      
+      try {
+        const { data } = await hrApiClient.get(`/hr/companies/${companyId}`);
+        const locations = data.locations || [];
+        setCompanyLocations(locations);
+        setLocationsLoaded(true);
+      } catch (error) {
+        console.error('Error fetching company locations:', error);
         setCompanyLocations([]);
         setLocationsLoaded(true);
       }
-    );
+    };
 
-    // Cleanup listener on unmount or when company changes
-    return () => unsubscribe();
+    fetchLocations();
   }, [user?.companyId]);
 
   // Check user location
@@ -161,8 +140,6 @@ export const useLocationValidation = (checkInterval = 30000) => {
 
   // Manual reload function (for compatibility)
   const loadCompanyLocations = useCallback(async () => {
-    // This is now handled by the real-time listener
-    // But we can trigger a location check
     checkLocation();
   }, [checkLocation]);
 

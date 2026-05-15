@@ -1,12 +1,10 @@
-import { collection, getDocs, query, where } from 'firebase/firestore';
 import { AlertTriangle, Clock, History, Loader2, Save, User, X } from 'lucide-react';
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { toast } from 'react-toastify';
 import { detectAndConvertToLocal } from '../../utils/timeDisplayUtils';
-import { db } from '../../firebase/client';
 import { useAuth } from '../../hooks/useAuth';
 import { fetchEditHistory, storeEditHistory } from '../../services/timesheetEditHistory';
-import { fetchWeekDetails, formatISODate, getUserWeekContext, getWeekRange, deleteTimeEntry } from '../../services/timesheets';
+import { fetchWeekDetails, formatISODate, getUserWeekContext, getWeekRange, deleteTimeEntry, getCompanyWorkSchedule } from '../../services/timesheets';
 import timesheetUpdateManager from '../../services/TimesheetUpdateManager';
 import { DEFAULT_WEEK_START_DAY, formatWeeklyRange, getOrderedWeekDays } from '../../utils/weekStartUtils';
 import Badge from '../ui/Badge';
@@ -16,6 +14,7 @@ import { createTimesheetEntry } from '../../utils/entryFactory'; // [FIX #4] Uni
 import { getSites } from '../../services/sites';
 import { resolveRoundingRules } from '../../services/roundingRules';
 import { roundSessionRange } from '../../utils/timeRounding';
+import { getSessionsForDateRange } from '../../services/timeClock';
 
 // FORMAT HELPERS MOVED OUT FOR SYNC INITIALIZATION
 const zeroPad = (value) => String(value).padStart(2, '0');
@@ -353,12 +352,9 @@ const EditTimesheetModal = ({ isOpen, onClose, onSave, timesheet }) => {
             const rules = await resolveRoundingRules(userWeekContext.companyIdPath);
             setRoundingRules(rules);
 
-            // Fetch company schedule
-            const compKey = userWeekContext.companyIdPath.includes('/') ? userWeekContext.companyIdPath.split('/')[1] : userWeekContext.companyIdPath;
-            const compSnap = await getDoc(doc(db, 'companies', compKey));
-            if (compSnap.exists()) {
-              setSchedule(compSnap.data().workSchedule || {});
-            }
+            // Fetch company schedule via REST
+            const schedule = await getCompanyWorkSchedule(userWeekContext.companyIdPath);
+            setSchedule(schedule || {});
           }
         } catch (error) {
           console.warn('[EditTimesheetModal] Failed to resolve user week start day, falling back to viewer preference', error);
@@ -582,21 +578,22 @@ const EditTimesheetModal = ({ isOpen, onClose, onSave, timesheet }) => {
       try {
         const userId = raw?.userId || timesheet?.userId || timesheet?.uid || timesheet?.user?.uid;
         if (userId) {
-          console.log('userId1234:', userId);
-          const sessQ = query(collection(db, 'timeClockSessions'), where('userId', '==', userId), where('status', '==', 'closed'));
-          const sessSnap = await getDocs(sessQ);
-          const sessions = sessSnap.docs.map(d => d.data());
+          const sessions = await getSessionsForDateRange({
+            userId,
+            startDate: days[0].date,
+            endDate: days[days.length - 1].date
+          });
           const isoSet = new Set(days.map(d => d.date));
           const toHM = (date) => `${zeroPad(date.getHours())}:${zeroPad(date.getMinutes())}`;
           const byIso = new Map();
           for (const s of sessions) {
-            const st = s.startedAt?.toDate?.();
-            const et = s.endedAt?.toDate?.();
+            const st = s.startedAt ? new Date(s.startedAt) : null;
+            const et = s.endedAt ? new Date(s.endedAt) : null;
             if (!st) continue;
             const iso = st.toISOString().slice(0, 10);
             if (!isoSet.has(iso)) continue;
-            const roundedStart = s.roundedStartedAt?.toDate?.() || st;
-            const roundedEnd = s.roundedEndedAt?.toDate?.() || et;
+            const roundedStart = s.roundedStartedAt ? new Date(s.roundedStartedAt) : st;
+            const roundedEnd = s.roundedEndedAt ? new Date(s.roundedEndedAt) : et;
 
             // Initialize or get accumulator
             const cur = byIso.get(iso) || {

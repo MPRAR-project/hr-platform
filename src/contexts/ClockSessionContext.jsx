@@ -6,7 +6,8 @@
 
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { useAuth } from '../hooks/useAuth';
-import { subscribeUserSessions, processRecentEntries } from '../services/firestoreSubscriptions';
+import { getMyActiveSession, getSessionsForDateRange, normalizeSession } from '../services/timeClock';
+import wsClient from '../lib/wsClient';
 
 // Provide default context value to prevent React warnings
 const defaultContextValue = {
@@ -68,7 +69,7 @@ export const ClockSessionProvider = ({ children }) => {
         }
     }, [updateRecentEntries]);
 
-    // Subscribe to session documents
+    // Subscribe to session documents via REST + WebSocket
     useEffect(() => {
         if (!user?.uid) {
             setSessionDocs([]);
@@ -77,30 +78,47 @@ export const ClockSessionProvider = ({ children }) => {
             return;
         }
 
-        setIsLoading(true);
-        isInitialLoadRef.current = true;
-
-        // Fallback timeout to ensure loading stops after reasonable time
-        const timeoutId = setTimeout(() => {
-            if (isInitialLoadRef.current) {
+        const fetchData = async () => {
+            setIsLoading(true);
+            try {
+                // Fetch sessions for the last 30 days
+                const now = new Date();
+                const startDate = new Date(now);
+                startDate.setDate(now.getDate() - 30);
+                
+                const sessions = await getSessionsForDateRange({ 
+                    userId: user.uid, 
+                    startDate, 
+                    endDate: now 
+                });
+                
+                setSessionDocs(sessions);
+                // Simple processRecentEntries equivalent for now
+                setRecentEntries(sessions.slice(0, 7));
+            } catch (err) {
+                console.error('[ClockSessionProvider] Fetch error:', err);
+                setError(err.message);
+            } finally {
                 setIsLoading(false);
-                isInitialLoadRef.current = false;
-            }
-        }, 10000); // 10 second timeout
-
-        const unsubscribe = subscribeUserSessions(user.uid, handleSessionUpdate);
-
-        unsubscribeRef.current = unsubscribe;
-
-        return () => {
-            clearTimeout(timeoutId);
-            if (unsubscribeRef.current) {
-                unsubscribeRef.current();
-                unsubscribeRef.current = null;
             }
         };
-        // Only depend on user.uid - handleSessionUpdate is stable due to useCallback
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+
+        fetchData();
+
+        // WebSocket listener for real-time updates
+        const handleWsUpdate = (data) => {
+            if (data.employeeId === user.uid || data.userId === user.uid) {
+                fetchData();
+            }
+        };
+
+        wsClient.on('time-entry:updated', handleWsUpdate);
+        wsClient.on('time-entry:created', handleWsUpdate);
+
+        return () => {
+            wsClient.off('time-entry:updated', handleWsUpdate);
+            wsClient.off('time-entry:created', handleWsUpdate);
+        };
     }, [user?.uid]);
 
     // Get current open session
@@ -110,27 +128,29 @@ export const ClockSessionProvider = ({ children }) => {
 
     // Get today's sessions
     const getTodaySessions = useCallback(() => {
-        const today = new Date();
-        const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+        const todayStr = new Date().toISOString().split('T')[0];
 
         return sessionDocs.filter(s => {
-            const startedAt = s.startedAt?.toDate ? s.startedAt.toDate() : null;
-            if (!startedAt) return false;
-            const sessionDate = `${startedAt.getFullYear()}-${String(startedAt.getMonth() + 1).padStart(2, '0')}-${String(startedAt.getDate()).padStart(2, '0')}`;
-            return sessionDate === todayStr;
+            const date = s.startedAt ? (typeof s.startedAt === 'string' ? s.startedAt : s.startedAt.toISOString()) : '';
+            return date.startsWith(todayStr);
         });
     }, [sessionDocs]);
 
     const refresh = useCallback(() => {
-        // Force refresh by re-subscribing
-        if (unsubscribeRef.current) {
-            unsubscribeRef.current();
+        if (user?.uid) {
+            setIsLoading(true);
+            const now = new Date();
+            const startDate = new Date(now);
+            startDate.setDate(now.getDate() - 30);
+            
+            getSessionsForDateRange({ userId: user.uid, startDate, endDate: now })
+                .then(sessions => {
+                    setSessionDocs(sessions);
+                    setRecentEntries(sessions.slice(0, 7));
+                })
+                .finally(() => setIsLoading(false));
         }
-        setIsLoading(true);
-        isInitialLoadRef.current = true;
-        const unsubscribe = subscribeUserSessions(user?.uid, handleSessionUpdate);
-        unsubscribeRef.current = unsubscribe;
-    }, [user?.uid, handleSessionUpdate]);
+    }, [user?.uid]);
 
     const value = React.useMemo(() => ({
         sessionDocs,

@@ -9,6 +9,20 @@ import { DEFAULT_WEEK_START_DAY, formatISODate } from '../utils/weekStartUtils';
 import { getUserWeekContext, computeTargetSecondsForDay } from './timesheets';
 import { applyRoundingToDate } from '../utils/timeRounding';
 
+// Helper to convert any date-like value to a Date object safely (Firebase-free)
+const safeToDate = (val) => {
+    if (!val) return null;
+    if (val instanceof Date) return val;
+    // Handle Firestore Timestamp shim or residual if any
+    if (val && typeof val.toDate === 'function') return val.toDate();
+    if (typeof val === 'string') {
+        const d = new Date(val);
+        return isNaN(d.getTime()) ? null : d;
+    }
+    if (typeof val === 'number') return new Date(val);
+    return null;
+};
+
 // Helper to convert time string (HH:MM) to Date for formatting
 const timeStringToDate = (timeStr, dateStr) => {
     if (!timeStr || typeof timeStr !== 'string') return null;
@@ -170,36 +184,23 @@ export function processDayData(dateStr, timesheet, daySessions, schedule = {}, a
             : (manualBreakSec + autoLunchBreakSec);
 
         const getRoundedStart = () => {
-            if (s.roundedStartedAt?.toDate) return s.roundedStartedAt.toDate();
-            if (s.startedAt?.toDate) {
-                const raw = s.startedAt.toDate();
-                if (roundingRules) return applyRoundingToDate(raw, roundingRules.clockIn);
-                return raw;
-            }
-            return null;
+            const start = safeToDate(s.roundedStartedAt) || safeToDate(s.startedAt);
+            if (!start) return null;
+            if (!s.roundedStartedAt && roundingRules) return applyRoundingToDate(start, roundingRules.clockIn);
+            return start;
         };
 
         const getRoundedEnd = () => {
             if (s.status === 'open') return null;
-            if (s.roundedEndedAt?.toDate) return s.roundedEndedAt.toDate();
-            if (s.endedAt?.toDate) {
-                const raw = s.endedAt.toDate();
-                if (roundingRules) return applyRoundingToDate(raw, roundingRules.clockOut);
-                return raw;
-            }
-            return null;
+            const end = safeToDate(s.roundedEndedAt) || safeToDate(s.endedAt);
+            if (!end) return null;
+            if (!s.roundedEndedAt && roundingRules) return applyRoundingToDate(end, roundingRules.clockOut);
+            return end;
         };
 
-        const getRawStart = () => {
-            if (s.startedAt?.toDate) return s.startedAt.toDate();
-            return null;
-        };
+        const getRawStart = () => safeToDate(s.startedAt);
 
-        const getRawEnd = () => {
-            if (s.status === 'open') return null;
-            if (s.endedAt?.toDate) return s.endedAt.toDate();
-            return null;
-        };
+        const getRawEnd = () => (s.status === 'open' ? null : safeToDate(s.endedAt));
 
         const roundedIn = getRoundedStart();
         const roundedOut = getRoundedEnd();
@@ -689,8 +690,8 @@ export async function processWeekData(weekStartDate, timesheetDocs, sessionDocs,
             uniqueTimesheetsMap.set(ts.period, ts);
         } else {
             // Keep the one with later updatedAt
-            const tsTime = ts.updatedAt?.toDate?.()?.getTime() || 0;
-            const existingTime = existing.updatedAt?.toDate?.()?.getTime() || 0;
+            const tsTime = safeToDate(ts.updatedAt)?.getTime() || 0;
+            const existingTime = safeToDate(existing.updatedAt)?.getTime() || 0;
             if (tsTime > existingTime) {
                 uniqueTimesheetsMap.set(ts.period, ts);
             }
@@ -740,8 +741,8 @@ export async function processWeekData(weekStartDate, timesheetDocs, sessionDocs,
     const weekStartTime = start.getTime();
     const weekEndTime = end.getTime() + (24 * 60 * 60 * 1000); // Include end day
 
-    const weekSessions = sessionDocs.filter(s => {
-        const startedAt = s.startedAt?.toDate ? s.startedAt.toDate() : null;
+        const weekSessions = sessionDocs.filter(s => {
+        const startedAt = safeToDate(s.startedAt);
         if (!startedAt) return false;
         const startTime = startedAt.getTime();
         return startTime >= weekStartTime && startTime < weekEndTime;
@@ -750,7 +751,7 @@ export async function processWeekData(weekStartDate, timesheetDocs, sessionDocs,
     // Group sessions by date
     const sessionsByDate = {};
     for (const session of weekSessions) {
-        const startedAt = session.startedAt?.toDate ? session.startedAt.toDate() : null;
+        const startedAt = safeToDate(session.startedAt);
         if (!startedAt) continue;
         const sessionDate = formatISODate(startedAt);
         if (!sessionsByDate[sessionDate]) {
