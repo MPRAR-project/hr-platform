@@ -59,13 +59,12 @@ const DocumentSyncDebugger = () => {
 
       {debugResults && (
         <div className="space-y-6">
-          {/* Firebase Project Info */}
+          {/* API Configuration Info */}
           <div className="border rounded-lg p-4">
-            <h4 className="font-semibold mb-2">🔧 Firebase Project</h4>
+            <h4 className="font-semibold mb-2">🔧 API Configuration</h4>
             <div className="space-y-1 text-sm">
-              <p><strong>Project ID:</strong> {debugResults.firebaseProject.projectId}</p>
-              <p><strong>Auth Domain:</strong> {debugResults.firebaseProject.authDomain}</p>
-              <p><strong>Storage Bucket:</strong> {debugResults.firebaseProject.storageBucket}</p>
+              <p><strong>HR API URL:</strong> {debugResults.firebaseProject.hrApiUrl}</p>
+              <p><strong>WebSocket URL:</strong> {debugResults.firebaseProject.wsUrl}</p>
               <p className="text-gray-600">{debugResults.firebaseProject.recommendation}</p>
             </div>
           </div>

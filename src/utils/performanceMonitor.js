@@ -1,6 +1,6 @@
 /**
  * Performance Monitoring System
- * Tracks Web Vitals, Firestore operations, and application performance metrics
+ * Tracks Web Vitals, REST API operations, and application performance metrics
  * Designed for 1M+ user scalability
  */
 
@@ -8,12 +8,12 @@ class PerformanceMonitor {
     constructor() {
         this.metrics = {
             pageLoad: null,
-            firestoreReads: 0,
-            firestoreWrites: 0,
+            apiReads: 0,
+            apiWrites: 0,
             queryLatency: [],
             cacheHits: 0,
             cacheMisses: 0,
-            subscriptionCount: 0,
+            wsSubscriptions: 0,
             memoryUsage: null,
             errors: []
         };
@@ -161,20 +161,14 @@ class PerformanceMonitor {
         });
     }
 
-    /**
-     * Track Firestore read operation
-     */
-    trackFirestoreRead(count = 1) {
-        this.metrics.firestoreReads += count;
-        this.logMetric('firestoreRead', count);
+    trackApiRead(count = 1) {
+        this.metrics.apiReads += count;
+        this.logMetric('apiRead', count);
     }
 
-    /**
-     * Track Firestore write operation
-     */
-    trackFirestoreWrite(count = 1) {
-        this.metrics.firestoreWrites += count;
-        this.logMetric('firestoreWrite', count);
+    trackApiWrite(count = 1) {
+        this.metrics.apiWrites += count;
+        this.logMetric('apiWrite', count);
     }
 
     /**
@@ -207,12 +201,9 @@ class PerformanceMonitor {
         this.logMetric('cacheMiss', 1);
     }
 
-    /**
-     * Track subscription count
-     */
-    trackSubscriptionCount(count) {
-        this.metrics.subscriptionCount = count;
-        this.logMetric('subscriptionCount', count);
+    trackWsSubscriptionCount(count) {
+        this.metrics.wsSubscriptions = count;
+        this.logMetric('wsSubscriptions', count);
     }
 
     /**
@@ -239,11 +230,11 @@ class PerformanceMonitor {
     getSummary() {
         return {
             pageLoad: this.metrics.pageLoad,
-            firestoreReads: this.metrics.firestoreReads,
-            firestoreWrites: this.metrics.firestoreWrites,
+            apiReads: this.metrics.apiReads,
+            apiWrites: this.metrics.apiWrites,
             averageQueryLatency: this.getAverageQueryLatency(),
             cacheHitRate: this.getCacheHitRate(),
-            subscriptionCount: this.metrics.subscriptionCount,
+            wsSubscriptions: this.metrics.wsSubscriptions,
             memoryUsage: this.metrics.memoryUsage,
             errorCount: this.metrics.errors.length
         };

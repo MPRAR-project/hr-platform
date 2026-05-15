@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import Header from '../../components/layout/Header';
 import { useAuth } from '../../hooks/useAuth';
 import {
@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { getCompany, updateCompanyProfile } from '../../services/companyManagementService';
 import { toast } from 'react-toastify';
+import wsClient from '../../lib/wsClient';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const fmtDate = (value) => {
@@ -101,37 +102,36 @@ const MyCompanyPage = () => {
   const [editData, setEditData] = useState({});
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
+  const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
-
-    const loadData = async () => {
-      try {
-        const companyId = user?.companyId || user?.primaryCompanyId;
-        if (!companyId) {
-          setError('No company assigned to your account.');
-          return;
-        }
-
-        const data = await getCompany(companyId);
-        if (cancelled) return;
-
-        if (!data) {
-          setError('Company details could not be loaded.');
-        } else {
-          setCompany(data.company || data);
-        }
-      } catch (err) {
-        if (!cancelled) setError(err.message || 'Failed to load company details.');
-      } finally {
-        if (!cancelled) setLoading(false);
+    try {
+      const companyId = user?.companyId || user?.primaryCompanyId;
+      if (!companyId) {
+        setError('No company assigned to your account.');
+        return;
       }
-    };
-
-    loadData();
-    return () => { cancelled = true; };
+      const data = await getCompany(companyId);
+      if (!data) {
+        setError('Company details could not be loaded.');
+      } else {
+        setCompany(data.company || data);
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to load company details.');
+    } finally {
+      setLoading(false);
+    }
   }, [user?.companyId, user?.primaryCompanyId]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  useEffect(() => {
+    wsClient.on('company:updated', loadData);
+    return () => wsClient.off('company:updated', loadData);
+  }, [loadData]);
 
   useEffect(() => {
     if (company) {
@@ -202,7 +202,7 @@ const MyCompanyPage = () => {
 
   return (
     <>
-      <Header title="My Company" subtitle="Your company profile and platform details" />
+      <Header title="My Company" subtitle="Your company profile — synced with MPRAR Central" />
 
       <div className="sm:px-8 px-4 py-6 max-w-3xl mx-auto space-y-5">
 

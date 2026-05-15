@@ -324,7 +324,7 @@ const SettingsPage = () => {
     }
 
     const companyPath = user?.companyId || '';
-    const companyId = companyPath.split('/')[1];
+    const companyId = companyPath.includes('/') ? companyPath.split('/')[1] : companyPath;
     if (!companyId) {
       toast.error('Company ID not found');
       return;
@@ -396,7 +396,7 @@ const SettingsPage = () => {
     if (!locationToDelete) return;
 
     const companyPath = user?.companyId || '';
-    const companyId = companyPath.split('/')[1];
+    const companyId = companyPath.includes('/') ? companyPath.split('/')[1] : companyPath;
     if (!companyId) {
       toast.error('Company ID not found');
       setShowDeleteModal(false);
@@ -480,7 +480,7 @@ const SettingsPage = () => {
     }
 
     const companyPath = user?.companyId || '';
-    const companyId = companyPath.split('/')[1];
+    const companyId = companyPath.includes('/') ? companyPath.split('/')[1] : companyPath;
     if (!companyId) {
       toast.error('Company ID not found');
       return;
@@ -541,7 +541,7 @@ const SettingsPage = () => {
 
   const handleLogoRemove = async () => {
     const companyPath = user?.companyId || '';
-    const companyId = companyPath.split('/')[1];
+    const companyId = companyPath.includes('/') ? companyPath.split('/')[1] : companyPath;
     if (!companyId) {
       toast.error('Company ID not found');
       return;
@@ -664,44 +664,6 @@ const SettingsPage = () => {
             </div>
           ) : activeTab === 'seats' ? (
             <SeatSettingsTab />
-          ) : activeTab === 'migrations' ? (
-            <div className="space-y-6">
-              <div className="bg-white rounded-base p-6 shadow-lg">
-                <h2 className="text-2xl font-bold text-text-primary mb-4">Data Migrations</h2>
-                <p className="text-text-secondary mb-6">
-                  Run database maintenance scripts to update data structures and improve performance.
-                </p>
-
-                <div className="border border-border-secondary rounded-lg p-4">
-                  <h3 className="text-lg font-semibold text-text-primary mb-2">Phase 3: Denormalize User Hierarchy</h3>
-                  <p className="text-sm text-text-secondary mb-4">
-                    Backfills <code>reportsTo</code> and <code>teamId</code> on User documents based on existing Assignments.
-                    This enables faster "Team View" queries.
-                  </p>
-                  <button
-                    onClick={async () => {
-                      if (!window.confirm('Are you sure you want to run this migration? It will update user documents.')) return;
-                      try {
-                        toast.info('Migration started...');
-                        const { migrateHierarchyDenormalization } = await import('../../services/migrations/hierarchyResponse');
-                        const res = await migrateHierarchyDenormalization();
-                        if (res.success) {
-                          toast.success(`Migration Complete! Updated ${res.usersUpdated} users.`);
-                        } else {
-                          toast.error('Migration failed. Check console.');
-                        }
-                      } catch (e) {
-                        console.error(e);
-                        toast.error('Failed to run migration module.');
-                      }
-                    }}
-                    className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium text-sm transition-colors"
-                  >
-                    Run Backfill Script
-                  </button>
-                </div>
-              </div>
-            </div>
           ) : (
             <>
               {/* Save Changes Button */}

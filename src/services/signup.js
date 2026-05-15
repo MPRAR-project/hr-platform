@@ -16,10 +16,10 @@ export async function submitSignup(form) {
             lastName: form.lastName,
             companyName: form.companyName,
             industry: form.industry,
-            phone: form.phone,
+            phoneNumber: form.phone,
             website: form.website,
-            addressRaw: form.addressRaw,
-            weekStartDay: form.weekStartDay || 'monday'
+            address: form.addressRaw,
+            weekStart: form.weekStartDay || 'monday'
         });
 
         console.log('Signup process completed successfully via REST');

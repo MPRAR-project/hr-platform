@@ -154,7 +154,7 @@ const PendingAllowancePage = () => {
       // Ensure sick leave allowances in background (once per day), do not block UI
       if (companyId && !getItem?.(ensuredKey)) {
         setItem?.(ensuredKey, true, 24 * 60 * 60 * 1000);
-        automaticAllowanceService.ensureCompanySickLeaveAllowances(companyId, user).catch(() => null);
+        automaticAllowanceService.ensureCompanyAllowances(companyId, user).catch(() => null);
       }
     } catch (err) {
       console.error('Error loading employees:', err);

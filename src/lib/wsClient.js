@@ -12,7 +12,16 @@
  *   wsClient.disconnect(); // called on logout
  */
 
-const WS_URL = import.meta.env.VITE_HR_WS_URL || 'ws://localhost:5001';
+const WS_URL = (() => {
+  const raw = import.meta.env.VITE_HR_WS_URL || 'ws://localhost:5001';
+  if (raw.startsWith('http://'))  return raw.replace('http://',  'ws://');
+  if (raw.startsWith('https://')) return raw.replace('https://', 'wss://');
+  if (!raw.startsWith('ws://') && !raw.startsWith('wss://')) {
+    console.warn(`[wsClient] VITE_HR_WS_URL "${raw}" is not a valid WebSocket URL — falling back to ws://localhost:5001`);
+    return 'ws://localhost:5001';
+  }
+  return raw;
+})();
 
 class WsClient {
   constructor() {

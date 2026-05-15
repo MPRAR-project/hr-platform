@@ -9,11 +9,10 @@ import { DEFAULT_WEEK_START_DAY, formatISODate } from '../utils/weekStartUtils';
 import { getUserWeekContext, computeTargetSecondsForDay } from './timesheets';
 import { applyRoundingToDate } from '../utils/timeRounding';
 
-// Helper to convert any date-like value to a Date object safely (Firebase-free)
+// Helper to convert any date-like value to a Date object safely
 const safeToDate = (val) => {
     if (!val) return null;
     if (val instanceof Date) return val;
-    // Handle Firestore Timestamp shim or residual if any
     if (val && typeof val.toDate === 'function') return val.toDate();
     if (typeof val === 'string') {
         const d = new Date(val);
@@ -709,7 +708,7 @@ export async function processWeekData(weekStartDate, timesheetDocs, sessionDocs,
     // to ensure that both daily and weekly timesheet models are supported correctly in the summary.
     let docsToSum = weekTimesheets;
 
-    const firestoreTotals = docsToSum.reduce((acc, ts) => {
+    const weekTotals = docsToSum.reduce((acc, ts) => {
         // Prefer stored totals, but calculate from entries if totals missing
         let docEffective = 0;
         let docOvertime = 0;
@@ -1137,10 +1136,10 @@ export async function processWeekData(weekStartDate, timesheetDocs, sessionDocs,
         days,
         // ✅ USE FIRESTORE TOTALS (authoritative source, do NOT recalculate)
         totals: {
-            effectiveSec: firestoreTotals.effectiveSec,
-            overtimeSec: firestoreTotals.overtimeSec,
-            breakSec: firestoreTotals.breakSec,
-            grossSec: firestoreTotals.grossSec
+            effectiveSec: weekTotals.effectiveSec,
+            overtimeSec: weekTotals.overtimeSec,
+            breakSec: weekTotals.breakSec,
+            grossSec: weekTotals.grossSec
         },
         // Keep recalculated totals for comparison/debugging (can remove later)
         recalculatedTotals: {

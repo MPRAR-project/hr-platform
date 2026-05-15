@@ -1,11 +1,4 @@
-/**
- * Real-time hook for fetching employee timesheets using Firestore listeners
- * Replaces async fetch calls with onSnapshot subscriptions
- * Processes data client-side - no Firestore queries after initial load
- */
-
 import { useState, useEffect, useRef } from 'react';
-// import { subscribeUserTimesheets, processWeeklySummaries } from '../services/firestoreSubscriptions'; // REPLACED
 import { subscribeWeeklySummaries } from '../services/summarySubscriptions';
 
 /**

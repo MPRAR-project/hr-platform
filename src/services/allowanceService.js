@@ -75,7 +75,7 @@ class AllowanceService {
       const { data } = await hrApiClient.get('/hr/allowances', {
         params: { employeeId },
       });
-      return (data.allowances || data || []).map(normalizeDates);
+      return (data.leaveAllowances || data.allowances || data || []).map(normalizeDates);
     } catch (err) {
       if (err.response?.status === 403) return [];
       throw new Error(err.response?.data?.error || 'Failed to fetch allowances');
@@ -86,7 +86,7 @@ class AllowanceService {
   async getAllowancesForCompany(companyId) {
     try {
       const { data } = await hrApiClient.get('/hr/allowances');
-      return (data.allowances || data || []).map(normalizeDates);
+      return (data.leaveAllowances || data.allowances || data || []).map(normalizeDates);
     } catch (err) {
       if (err.response?.status === 403) return [];
       throw new Error(err.response?.data?.error || 'Failed to fetch company allowances');

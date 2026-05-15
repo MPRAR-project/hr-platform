@@ -31,17 +31,17 @@ export async function checkCollectionConsistency() {
             });
         }
         
-        if (onboardingSnap.size > 0) {
+        if (onboardingDocs.length > 0) {
             console.log('✅ Onboarding-documents collection has data');
-            onboardingSnap.forEach(doc => {
-                console.log('📄 Onboarding document sample:', doc.id, doc.data());
+            onboardingDocs.slice(0, 3).forEach(doc => {
+                console.log('📄 Onboarding document sample:', doc.id, doc);
             });
         }
-        
+
         return {
-            documentsCollection: documentsSnap.size,
-            onboardingDocumentsCollection: onboardingSnap.size,
-            recommendation: documentsSnap.size > 0 ? 'Use "documents" collection' : 'Use "onboarding-documents" collection'
+            documentsCollection: docs.length,
+            onboardingDocumentsCollection: onboardingDocs.length,
+            recommendation: docs.length > 0 ? 'Use "documents" collection' : 'Use "onboarding-documents" collection'
         };
     } catch (error) {
         console.error('❌ Error checking collections:', error);
@@ -84,7 +84,7 @@ export async function checkStatusFilters(companyId) {
         }
         
         return {
-            totalDocuments: allDocsSnap.size,
+            totalDocuments: docs.length,
             statusDistribution: statusCounts,
             recommendation: Object.keys(statusCounts).length > 0 ? 
                 `Use status: "${Object.keys(statusCounts)[0]}"` : 'No status field found'
@@ -131,28 +131,26 @@ export async function checkQueryFilters(companyId, userId) {
 }
 
 /**
- * 4️⃣ Check Firebase Project Consistency
+ * 4️⃣ Check API Configuration
  */
 export function checkFirebaseProject() {
-    console.log('🔍 Checking Firebase Project Configuration...');
-    
+    console.log('🔍 Checking API Configuration...');
+
     try {
-        const firebaseConfig = {
-            projectId: import.meta.env.VITE_FB_PROJECT_ID,
-            authDomain: import.meta.env.VITE_FB_AUTH_DOMAIN,
-            storageBucket: import.meta.env.VITE_FB_STORAGE_BUCKET
+        const apiConfig = {
+            hrApiUrl: import.meta.env.VITE_HR_API_URL || 'http://localhost:5001',
+            wsUrl: import.meta.env.VITE_HR_WS_URL || 'ws://localhost:5001',
         };
-        
-        console.log('🔧 Firebase Config:', firebaseConfig);
-        
+
+        console.log('🔧 API Config:', apiConfig);
+
         return {
-            projectId: firebaseConfig.projectId,
-            authDomain: firebaseConfig.authDomain,
-            storageBucket: firebaseConfig.storageBucket,
-            recommendation: 'Ensure mobile app uses same projectId'
+            hrApiUrl: apiConfig.hrApiUrl,
+            wsUrl: apiConfig.wsUrl,
+            recommendation: 'Ensure mobile app connects to same HR API URL'
         };
     } catch (error) {
-        console.error('❌ Error checking Firebase config:', error);
+        console.error('❌ Error checking API config:', error);
         return { error: error.message };
     }
 }

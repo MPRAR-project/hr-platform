@@ -14,7 +14,7 @@ const CreateAllowanceModal = ({ isOpen, onClose, onSave, onDelete, employee, exi
 
   // Get display names of already-existing allowances (to exclude from add mode)
   const existingTypeLabels = (existingAllowances || []).map(
-    a => allowanceService.getLeaveTypeDisplayName(a.leaveType)
+    a => allowanceService.getLeaveTypeDisplay(a.leaveType)
   );
 
   // Check if a leave type is Sick Leave
@@ -51,7 +51,7 @@ const CreateAllowanceModal = ({ isOpen, onClose, onSave, onDelete, employee, exi
         const mapped = existingAllowances.map((allowance, index) => ({
           id: index + 1,
           allowanceId: allowance.id,
-          type: allowanceService.getLeaveTypeDisplayName(allowance.leaveType),
+          type: allowanceService.getLeaveTypeDisplay(allowance.leaveType),
           totalDays: String(allowance.totalDays ?? ''),
           validFrom: allowance.validFrom || '',
           validUntil: allowance.validUntil || '',

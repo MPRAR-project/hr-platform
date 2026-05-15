@@ -295,37 +295,13 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
                 return;
             }
 
-            // 2. Fallback: query sites collection for a site this user manages
-            const uid = authed?.userId || authed?.uid;
+            // 2. Fallback: query sites via REST API
+            const myUid = authed?.userId || authed?.uid;
             const sites = await getWorkLocations();
             if (sites && sites.length > 0) {
-                // Find a site where I am the manager, or just use the first one available
-                const myUid = authed?.userId || authed?.uid;
                 const managed = sites.find(s => s.managerUserId === myUid);
                 const siteId = managed ? managed.id : sites[0].id;
-                console.log('[AddUserModal] Resolved siteId from workLocations service:', siteId);
                 setResolvedSiteId(siteId);
-            }
-
-            // 3. Also try matching by companyId + primaryRole as a last resort
-            const companyPath = authed?.companyId || '';
-            if (companyPath) {
-                try {
-                    const companyIdRaw = companyPath.replace('companies/', '');
-                    const q2 = query(
-                        sitesRef,
-                        where('companyId', 'in', [companyIdRaw, `companies/${companyIdRaw}`]),
-                        limit(1)
-                    );
-                    const snap2 = await getDocs(q2);
-                    if (!snap2.empty) {
-                        const siteId = snap2.docs[0].id;
-                        console.log('[AddUserModal] Resolved siteId from company sites:', siteId);
-                        setResolvedSiteId(siteId);
-                    }
-                } catch (e) {
-                    console.error('[AddUserModal] Failed to resolve siteId by companyId:', e);
-                }
             }
         };
         resolveSiteId();
@@ -445,67 +421,28 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
             // If we passed all checks, proceed with submission
             // We will check siteId per user if baseSiteId is missing
 
-            // New flow: send invites instead of creating users immediately
-            for (const u of users) {
+            // Resolve siteId per-user fallback
+            const resolvedUsers = users.map(u => {
                 let userSiteId = baseSiteId;
-
-                // Fallback to manager's siteId if not resolved
                 if (!userSiteId && u.reportsTo) {
                     const manager = managerOptions.find(m => m.id === u.reportsTo);
-                    if (manager && manager.siteId) {
+                    if (manager?.siteId) {
                         userSiteId = manager.siteId.includes('/') ? manager.siteId.split('/')[1] : manager.siteId;
                     }
                 }
-
-                // Ultimate fallback so the user can be invited even if no site is found
-                if (!userSiteId) {
-                    userSiteId = 'unassigned';
-                }
-
-                const firstName = (u.firstName || '').trim();
-                const lastName = (u.lastName || '').trim();
-                const payload = {
-                    email: u.email.toLowerCase().trim(),
-                    firstName,
-                    lastName,
-                    hrRole: u.role,
+                return {
+                    ...u,
+                    fullName: `${(u.firstName || '').trim()} ${(u.lastName || '').trim()}`.trim(),
+                    role: u.role || 'employee',
                     reportsTo: shouldShowReportsTo(u.role) && u.reportsTo?.trim() ? u.reportsTo.trim() : null,
-                    skipInviteEmail: false
+                    siteId: userSiteId || null,
                 };
+            });
 
-                // 1. Perfect Sync: Add user to Central Platform Postgres
-                // This ensures the user is created in Central and triggers the Central reset-password email flow.
-                try {
-                    const centralApiUrl = import.meta.env.VITE_CENTRAL_API_URL || 'http://localhost:5000';
-                    const centralToken = localStorage.getItem('mprar_central_token');
+            const result = await addUsersBySiteManager(companyId, baseSiteId || null, resolvedUsers);
 
-                    if (!centralToken) {
-                        throw new Error('Central authentication token not found. Cannot create user through Central platform.');
-                    }
-
-                    const response = await fetch(`${centralApiUrl}/companies/${companyId}/users`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${centralToken}`
-                        },
-                        body: JSON.stringify(payload)
-                    });
-
-                    if (!response.ok) {
-                        const errData = await response.json().catch(() => ({}));
-                        if (response.status !== 409) {
-                            throw new Error(errData.error || `Central sync failed with status ${response.status}`);
-                        }
-                    } else {
-                        console.log(`[AddUserModal] Successfully synced ${u.email} to Central Platform`);
-                    }
-                } catch (syncErr) {
-                    console.error('[AddUserModal] Central sync failed:', syncErr);
-                    throw new Error(`Unable to create ${u.email} through Central platform. ${syncErr.message}`);
-                }
-            }
-            toast.success(`Users created successfully. Central platform will send password reset and welcome emails.`);
+            toast.success(`${users.length} user${users.length > 1 ? 's' : ''} created successfully.`);
+            if (onSubmit) onSubmit(result.created || []);
             resetForm();
             onClose();
         } catch (e) {

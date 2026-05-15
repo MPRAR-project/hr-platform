@@ -126,12 +126,16 @@ export const TimesheetProvider = ({ children }) => {
         if (!user?.uid) return;
 
         try {
-            const weekData = await processCurrentWeekTimesheets(docs, user.uid);
+            const { weekStartDay } = await getUserWeekContext(user.uid);
+            const weekStart = weekStartDay || DEFAULT_WEEK_START_DAY;
+            const { start } = getWeekRangeForDate(new Date(), weekStart);
+            const schedule = user?.companyId ? await getCompanyWorkSchedule(user.companyId) : {};
+            const weekData = await processWeekData(start, docs, sessionDocsRef.current || [], user.uid, schedule);
             setCurrentWeekData(weekData);
         } catch (err) {
             console.error('[TimesheetProvider] Error processing current week data:', err);
         }
-    }, [user?.uid]);
+    }, [user?.uid, user?.companyId]);
 
     // Get company work schedule via REST
     const scheduleLastFetched = useRef({});
