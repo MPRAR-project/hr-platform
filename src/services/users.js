@@ -95,6 +95,7 @@ export async function addUsersBySiteManager(companyId, siteId, usersPayload) {
             hrRole:      u.primaryRole || 'employee',
             reportsTo:   u.reportsTo  || null,
             centralRole: null,
+            status:      'invited',
           })
         )
     );
@@ -168,8 +169,10 @@ export async function syncUserToCentral(userId, companyId, payload) {
 
     if (payload.firstName || payload.lastName || payload.status || payload.email) {
       const rawStatus = typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : undefined;
-      const normalizedStatus = rawStatus === 'archived' ? 'inactive'
+      const normalizedStatus = 
+          rawStatus === 'archived' ? 'inactive'
         : rawStatus === 'active'   ? 'active'
+        : rawStatus === 'invited'  ? 'invited'
         : rawStatus === 'inactive' ? 'inactive'
         : undefined;
 
@@ -360,16 +363,12 @@ export async function archiveUser(userId, companyId = null) {
   }
 
   // Best-effort Central sync
-  try {
-    if (companyId) {
-      await centralFetch(
-        `/companies/${companyId.replace('companies/', '')}/users/${userId}`,
-        'DELETE'
-      );
-    }
-  } catch { /* non-fatal */ }
+  if (companyId) {
+    await syncUserToCentral(userId, companyId, { status: 'archived' });
+  }
 
   return { ok: true };
+
 }
 
 // ── Unarchive user ────────────────────────────────────────────────────────────
@@ -380,22 +379,13 @@ export async function unarchiveUser(userId, companyId = null) {
     throw new Error(err.response?.data?.error || `Failed to unarchive user: ${err.message}`);
   }
 
-  // Best-effort Central sync — reactivate user
-  try {
-    const user = await getUserById(userId);
-    if (user && companyId) {
-      await syncUserToCentral(userId, companyId, {
-        firstName:   user.firstName,
-        lastName:    user.lastName,
-        email:       user.email,
-        primaryRole: user.primaryRole || user.role,
-        reportsTo:   user.reportsTo   || user.managerUserId,
-        status:      'active',
-      });
-    }
-  } catch { /* non-fatal */ }
+  // Best-effort Central sync
+  if (companyId) {
+    await syncUserToCentral(userId, companyId, { status: 'active' });
+  }
 
   return { ok: true };
+
 }
 
 // ── Subscribe to company users (REST + focus-event poll) ─────────────────────

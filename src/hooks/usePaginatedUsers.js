@@ -3,11 +3,15 @@ import { userGroupingService } from '../services/userGroupingService';
 import { useCache } from '../contexts/CacheContext';
 import eventBus from '../services/EventBus';
 import { CACHE_EVENTS } from '../services/cacheInvalidationService';
+import wsClient from '../lib/wsClient';
+
 
 const CACHE_TTL = 7 * 60 * 1000;
 
-export function usePaginatedUsers(companyId, pageSize = 20) {
+export function usePaginatedUsers(rawCompanyId, pageSize = 20) {
+    const companyId = (rawCompanyId || '').replace(/^companies\//, '');
     const { getItem, setItem, clearItem } = useCache();
+
     const [users, setUsers] = useState([]);
     const [lastDoc, setLastDoc] = useState(null);
     const [loading, setLoading] = useState(false);
@@ -102,8 +106,9 @@ export function usePaginatedUsers(companyId, pageSize = 20) {
     }, [companyId, pageSize, lastDoc, hasMore, getItem, setItem, users]);
 
     const reload = useCallback(() => {
+        clearItem(`paginated_users_${companyId}_p1`);
         loadMore(true);
-    }, [loadMore]);
+    }, [companyId, clearItem, loadMore]);
 
     const loadMoreRef = useRef(loadMore);
     loadMoreRef.current = loadMore;
@@ -121,6 +126,25 @@ export function usePaginatedUsers(companyId, pageSize = 20) {
         }, 'usePaginatedUsers');
         return unsub;
     }, [companyId, clearItem]);
+
+    // Listen for real-time WebSocket events from Central Sync
+    useEffect(() => {
+        if (!companyId) return;
+        
+        const handleSync = () => {
+            console.log('[usePaginatedUsers] Real-time sync event received, clearing cache and reloading...');
+            clearItem(`paginated_users_${companyId}_p1`);
+            reload();
+        };
+
+        wsClient.on('employee:synced', handleSync);
+        wsClient.on('users:reload', handleSync);
+
+        return () => {
+            wsClient.off('employee:synced', handleSync);
+            wsClient.off('users:reload', handleSync);
+        };
+    }, [companyId, reload, clearItem]);
 
     return { users, loadMore, hasMore, loading, error, reload };
 }

@@ -95,6 +95,7 @@ class WsClient {
     this._ws.onmessage = (e) => {
       try {
         const { event, data } = JSON.parse(e.data);
+        console.log(`[wsClient] Message received: ${event}`, data);
         this._emit(event, data);
       } catch { /* ignore malformed */ }
     };

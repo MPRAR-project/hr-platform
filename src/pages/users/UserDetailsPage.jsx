@@ -1,6 +1,7 @@
 import { ArrowLeft, UserPlus } from "lucide-react";
-import { useEffect, useState, useMemo, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
+import hrApiClient from "../../lib/hrApiClient";
 import { toast } from 'react-toastify';
 import Header from "../../components/layout/Header";
 import AssignEmployeeModal from "../../components/modals/AssignEmployeeModal";
@@ -109,7 +110,7 @@ const UserDetailsPage = () => {
 
             const transformedAbsences = userAbsences.map(absence => ({
                 ...absence,
-                leave: allowanceService.getLeaveTypeDisplayName(absence.leaveType),
+                leave: allowanceService.getLeaveTypeDisplay(absence.leaveType),
                 reason: absence.reason || 'No reason provided',
                 date: absence.startDate && absence.endDate
                     ? `${absence.startDate} - ${absence.endDate}`
@@ -187,11 +188,6 @@ const UserDetailsPage = () => {
                     return;
                 }
 
-                // Add debug flag
-                if (isProfileOnly) {
-                    console.log('⚠️ User data loaded from profile only - some features may be limited');
-                }
-
                 userSnapshotRef.current = { uid, userData: u, isProfileOnly: false };
 
                 // ---- 🔹 FETCH MANAGER DETAILS ----
@@ -220,7 +216,6 @@ const UserDetailsPage = () => {
                     siteId: u.siteId || '',
                     companyId: u.companyId || '',
                     id: uid,
-                    isProfileOnly: isProfileOnly
                 });
 
                 // Fast, non-blocking personal data: show users/profile fields immediately.
@@ -526,7 +521,7 @@ const UserDetailsPage = () => {
             const userAbsences = await absenceService.getEmployeeAbsencesById(uid, user);
             const transformedAbsences = userAbsences.map(absence => ({
                 ...absence,
-                leave: allowanceService.getLeaveTypeDisplayName(absence.leaveType),
+                leave: allowanceService.getLeaveTypeDisplay(absence.leaveType),
                 reason: absence.reason || 'No reason provided',
                 date: absence.startDate && absence.endDate
                     ? `${absence.startDate} - ${absence.endDate}`
@@ -574,34 +569,6 @@ const UserDetailsPage = () => {
         ensurePersonalEnriched
     ]);
 
-    // Real-time subscription for allowances to ensure instant updates on save
-    useEffect(() => {
-        if (activeTab === 'Allowances' && employee?.id && user) {
-            const year = allowancesYearRef.current || new Date().getFullYear();
-            const unsubscribe = allowanceService.subscribeToEmployeeAllowances(
-                employee.id,
-                user,
-                year,
-                (updatedAllowances) => {
-                    // Update state immediately from subscription
-                    // Note: We merging with existing data to keep any extra properties if needed
-                    setAllowancesData(prev => {
-                        const merged = updatedAllowances.map(newAllowance => {
-                            const existing = prev.find(p => p.id === newAllowance.id);
-                            return {
-                                ...(existing || {}),
-                                ...newAllowance,
-                                // Ensure derived fields are recalculated if base fields changed
-                                remainingDays: (newAllowance.totalDays || 0) - (newAllowance.usedDays || 0)
-                            };
-                        });
-                        return merged;
-                    });
-                }
-            );
-            return () => unsubscribe();
-        }
-    }, [activeTab, employee?.id, user]);
 
     const allTabOptions = [
         { label: 'Personal Information', allowedRoles: ['seniorManager','siteManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor', 'teamManager'] },
@@ -763,234 +730,12 @@ const UserDetailsPage = () => {
                                 userId={employee?.id}
                                 currentEmploymentData={rawEmploymentDetails}
                                 onUpdate={() => {
-                                    // Reload employment data after update
-                                    const load = async () => {
-                                        try {
-                                            setEmploymentLoading(true);
-                                            setEmploymentError(null);
-                                            const uid = normalizeUid(selectedUserId);
-                                            if (uid) {
-                                                // Get user details for manager info
-                                                const uref = doc(db, 'users', uid);
-                                                const usnap = await getDoc(uref);
-                                                const userDetails = usnap.exists() ? usnap.data() : null;
-
-                                                let employmentDetails = await getUserEmploymentDetails(uid);
-
-                                                // Get onboarding data
-                                                let onboarding = null;
-                                                try {
-                                                    const appCol = collection(db, 'onboardingApplications');
-                                                    const queries = [
-                                                        query(appCol, where('userId', '==', uid)),
-                                                        query(appCol, where('userId', '==', `users/${uid}`)),
-                                                        ...(userDetails?.email ? [query(appCol, where('formData.personalInfo.email', '==', userDetails.email))] : [])
-                                                    ];
-                                                    const results = await Promise.allSettled(queries.map(q => getDocs(q)));
-                                                    const allDocs = [];
-                                                    for (const r of results) {
-                                                        if (r.status === 'fulfilled' && !r.value.empty) {
-                                                            r.value.docs.forEach(d => allDocs.push({ id: d.id, ...d.data() }));
-                                                        }
-                                                    }
-                                                    if (allDocs.length > 0) {
-                                                        allDocs.sort((a, b) => {
-                                                            const at = (a.updatedAt?.toMillis?.() || a.createdAt?.toMillis?.() || 0);
-                                                            const bt = (b.updatedAt?.toMillis?.() || b.createdAt?.toMillis?.() || 0);
-                                                            return bt - at;
-                                                        });
-                                                        onboarding = allDocs[0] || null;
-                                                    }
-                                                } catch (e) {
-                                                    console.error('Failed to load onboarding applications:', e);
-                                                }
-
-                                                // If no employment details, create from onboarding
-                                                if (!employmentDetails && onboarding) {
-                                                    const empDetails = onboarding?.employmentDetails || {};
-                                                    const hr = onboarding?.formData?.hrInfo || {};
-                                                    const bank = onboarding?.formData?.banking || {};
-
-                                                    employmentDetails = {
-                                                        jobTitle: empDetails.jobTitle || hr.position || '',
-                                                        department: empDetails.department || hr.department || '',
-                                                        employmentType: empDetails.employmentType || hr.employmentType || '',
-                                                        primaryWorkLocation: empDetails.primaryWorkLocation || hr.primaryWorkLocation || '',
-                                                        officeAddress: empDetails.officeAddress || '',
-                                                        workPattern: empDetails.workPattern || '',
-                                                        startDate: empDetails.startDate || hr.startDate || '',
-                                                        probationPeriod: empDetails.probationPeriod || '',
-                                                        probationEndDate: empDetails.probationEndDate || hr.probationEndDate || '',
-                                                        workingHours: hr.workingHours || '',
-                                                        noticePeriod: hr.noticePeriod || '',
-                                                        annualSalary: hr.annualSalary || '',
-                                                        payFrequency: hr.payFrequency || '',
-                                                        benefits: hr.benefits || '',
-                                                        bankAccountName: bank.accountHolderName || '',
-                                                        bankAccountNumber: bank.accountNumber || '',
-                                                        bankName: bank.bankName || '',
-                                                        sortCode: bank.sortCode || '',
-                                                        branchName: bank.branchName || '',
-                                                        iban: bank.iban || '',
-                                                        adminNotes: hr.notes || ''
-                                                    };
-                                                }
-
-                                                if (onboarding && employmentDetails) {
-                                                    const bank = onboarding?.formData?.banking || {};
-                                                    employmentDetails.bankAccountName = bank.accountHolderName || employmentDetails.bankAccountName || '';
-                                                    employmentDetails.bankAccountNumber = bank.accountNumber || employmentDetails.bankAccountNumber || '';
-                                                    employmentDetails.bankName = bank.bankName || employmentDetails.bankName || '';
-                                                    employmentDetails.sortCode = bank.sortCode || employmentDetails.sortCode || '';
-                                                    employmentDetails.branchName = bank.branchName || employmentDetails.branchName || '';
-                                                    employmentDetails.iban = bank.iban || employmentDetails.iban || '';
-                                                }
-
-                                                setRawEmploymentDetails(employmentDetails);
-
-                                                let managerName = '';
-                                                try {
-                                                    if (userDetails?.managerUserId) {
-                                                        const mref = doc(db, 'users', userDetails.managerUserId);
-                                                        const msnap = await getDoc(mref);
-                                                        if (msnap.exists()) {
-                                                            const m = msnap.data();
-                                                            managerName = m.displayName || `${m.firstName || ''} ${m.lastName || ''}`.trim() || m.email || '';
-                                                        }
-                                                    }
-                                                } catch (e) {
-                                                    console.warn('Failed to fetch manager details:', e);
-                                                }
-
-                                                const transformedEmploymentData = transformEmploymentDataForDisplay(employmentDetails, userDetails, managerName);
-                                                setEmploymentData(transformedEmploymentData);
-                                            }
-                                        } catch (e) {
-                                            console.error('Error reloading employment details:', e);
-                                            setEmploymentError('Failed to reload employment details');
-                                        } finally {
-                                            setEmploymentLoading(false);
-                                        }
-                                    };
-                                    load();
+                                    loadedTabsRef.current.employment = false;
+                                    ensureEmploymentLoaded();
                                 }}
                                 onRetry={() => {
-                                    // Trigger a reload of employment data
-                                    const load = async () => {
-                                        try {
-                                            setEmploymentLoading(true);
-                                            setEmploymentError(null);
-                                            const uid = normalizeUid(selectedUserId);
-                                            if (uid) {
-                                                // Get user details for manager info
-                                                const uref = doc(db, 'users', uid);
-                                                const usnap = await getDoc(uref);
-                                                const userDetails = usnap.exists() ? usnap.data() : null;
-
-                                                let employmentDetails = await getUserEmploymentDetails(uid);
-
-                                                // Get onboarding data for banking details
-                                                let onboarding = null;
-                                                try {
-                                                    const appCol = collection(db, 'onboardingApplications');
-                                                    const queries = [
-                                                        query(appCol, where('userId', '==', uid)),
-                                                        query(appCol, where('userId', '==', `users/${uid}`)),
-                                                        ...(userDetails?.email ? [query(appCol, where('formData.personalInfo.email', '==', userDetails.email))] : [])
-                                                    ];
-                                                    const results = await Promise.allSettled(queries.map(q => getDocs(q)));
-                                                    const allDocs = [];
-                                                    for (const r of results) {
-                                                        if (r.status === 'fulfilled' && !r.value.empty) {
-                                                            r.value.docs.forEach(d => allDocs.push({ id: d.id, ...d.data() }));
-                                                        }
-                                                    }
-                                                    if (allDocs.length > 0) {
-                                                        allDocs.sort((a, b) => {
-                                                            const at = (a.updatedAt?.toMillis?.() || a.createdAt?.toMillis?.() || 0);
-                                                            const bt = (b.updatedAt?.toMillis?.() || b.createdAt?.toMillis?.() || 0);
-                                                            return bt - at;
-                                                        });
-                                                        onboarding = allDocs[0] || null;
-                                                    }
-                                                } catch (e) {
-                                                    console.error('Failed to load onboarding applications for retry:', e);
-                                                }
-
-                                                // If no employment details, create from onboarding
-                                                if (!employmentDetails && onboarding) {
-                                                    // First check the new employmentDetails structure
-                                                    const empDetails = onboarding?.employmentDetails || {};
-                                                    const hr = onboarding?.formData?.hrInfo || {};
-                                                    const bank = onboarding?.formData?.banking || {};
-
-                                                    // Use employmentDetails if available, otherwise fall back to hrInfo
-                                                    employmentDetails = {
-                                                        jobTitle: empDetails.jobTitle || hr.position || '',
-                                                        department: empDetails.department || hr.department || '',
-                                                        employmentType: empDetails.employmentType || hr.employmentType || '',
-                                                        primaryWorkLocation: empDetails.primaryWorkLocation || hr.primaryWorkLocation || '',
-                                                        officeAddress: empDetails.officeAddress || '',
-                                                        workPattern: empDetails.workPattern || '',
-                                                        startDate: empDetails.startDate || hr.startDate || '',
-                                                        probationPeriod: empDetails.probationPeriod || '',
-                                                        probationEndDate: empDetails.probationEndDate || hr.probationEndDate || '',
-                                                        workingHours: hr.workingHours || '',
-                                                        noticePeriod: hr.noticePeriod || '',
-                                                        annualSalary: hr.annualSalary || '',
-                                                        payFrequency: hr.payFrequency || '',
-                                                        benefits: hr.benefits || '',
-                                                        // Map basic banking fields from onboarding data structure
-                                                        bankAccountName: bank.accountHolderName || '',
-                                                        bankAccountNumber: bank.accountNumber || '',
-                                                        bankName: bank.bankName || '',
-                                                        sortCode: bank.sortCode || '',
-                                                        branchName: bank.branchName || '',
-                                                        iban: bank.iban || '',
-                                                        adminNotes: hr.notes || ''
-                                                    };
-                                                }
-
-                                                // Always override basic banking details with onboarding data if available
-                                                if (onboarding && employmentDetails) {
-                                                    const bank = onboarding?.formData?.banking || {};
-                                                    employmentDetails.bankAccountName = bank.accountHolderName || employmentDetails.bankAccountName || '';
-                                                    employmentDetails.bankAccountNumber = bank.accountNumber || employmentDetails.bankAccountNumber || '';
-                                                    employmentDetails.bankName = bank.bankName || employmentDetails.bankName || '';
-                                                    employmentDetails.sortCode = bank.sortCode || employmentDetails.sortCode || '';
-                                                    employmentDetails.branchName = bank.branchName || employmentDetails.branchName || '';
-                                                    employmentDetails.iban = bank.iban || employmentDetails.iban || '';
-                                                }
-
-                                                // Store raw employment details for editing
-                                                setRawEmploymentDetails(employmentDetails);
-
-                                                // Get manager name if available
-                                                let managerName = '';
-                                                try {
-                                                    if (userDetails?.managerUserId) {
-                                                        const mref = doc(db, 'users', userDetails.managerUserId);
-                                                        const msnap = await getDoc(mref);
-                                                        if (msnap.exists()) {
-                                                            const m = msnap.data();
-                                                            managerName = m.displayName || `${m.firstName || ''} ${m.lastName || ''}`.trim() || m.email || '';
-                                                        }
-                                                    }
-                                                } catch (e) {
-                                                    console.warn('Failed to fetch manager details:', e);
-                                                }
-
-                                                const transformedEmploymentData = transformEmploymentDataForDisplay(employmentDetails, userDetails, managerName);
-                                                setEmploymentData(transformedEmploymentData);
-                                            }
-                                        } catch (e) {
-                                            console.error('Error reloading employment details:', e);
-                                            setEmploymentError('Failed to reload employment details');
-                                        } finally {
-                                            setEmploymentLoading(false);
-                                        }
-                                    };
-                                    load();
+                                    loadedTabsRef.current.employment = false;
+                                    ensureEmploymentLoaded();
                                 }}
                             />
                         )}

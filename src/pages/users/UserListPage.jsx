@@ -30,7 +30,7 @@ import { validateUserData, parseCompanyId, parseSiteId } from '../../utils/dataP
 import { ERROR_TYPES, getUserErrorMessage, isRetryableError } from '../../utils/errorHandler';
 import { BannerErrorDisplay } from '../../components/ui/ErrorDisplay';
 import DashboardLoadingState from '../../components/ui/DashboardLoadingState';
-import { ConfigurationErrorState, NetworkErrorState, EmptyTeamState } from '../../components/ui/DataUnavailableState';
+import { ConfigurationErrorState, NetworkErrorState, EmptyTeamState, NoSearchResultsState } from '../../components/ui/DataUnavailableState';
 import { getBillingSummary, recordSeatTopUp } from '../../services/billing';
 import { trackUserAction, dashboardLogger } from '../../utils/logger';
 import { invalidateCompanyCache } from '../../services/cacheInvalidationService';
@@ -117,6 +117,8 @@ const UserListPage = () => {
 
   const [totalUsersCount, setTotalUsersCount] = useState(null);
   const [countRefreshTrigger, setCountRefreshTrigger] = useState(0);
+  const [optimisticStatusUpdates, setOptimisticStatusUpdates] = useState({}); // { userId: 'active' | 'archived' }
+  const wasLoadingRef = useRef(false);
 
   // --- Team Management State (from SiteManagerDashboard) ---
   const [showSeatPaymentModal, setShowSeatPaymentModal] = useState(false);
@@ -131,7 +133,7 @@ const UserListPage = () => {
     loading: isPaginatedLoading,
     error: paginatedError,
     reload: reloadPaginated
-  } = usePaginatedUsers(activeTab === 'users' ? companyId : null, 20);
+  } = usePaginatedUsers(companyId, 100); // Larger limit for team overview
 
   // Helper: identify Site Owner / Site Manager style roles
   const normalizeRoleKey = (value) =>
@@ -145,27 +147,41 @@ const UserListPage = () => {
 
   // Normalize data for OptimizedTeamTable and filter by viewMode, site, client, and HR Advisor visibility rules
   const flatUserList = useMemo(() => {
-    let normalized = paginatedUsers.map(u => ({
-      id: u.id,
-      name: u.displayName || u.email,
-      email: u.email,
-      role: roleToJobTitle(u.primaryRole || u.role || u.hrRole), // Map camelCase to Title Case
-      status: u.status, // 'Active', 'Archived', etc.
-      profileImage: u.profileImage,
-      isInvited: u.sourceType === 'invite',
-      inviteId: u.inviteId,
-      ...u
-    }));
+    let normalized = paginatedUsers.map(u => {
+      const displayStatus = 
+        optimisticStatusUpdates[u.id] || 
+        optimisticStatusUpdates[u.userId] || 
+        optimisticStatusUpdates[u.uid] || 
+        optimisticStatusUpdates[u.email] || 
+        u.status;
+      return {
+        ...u,
+        id: u.id,
+        name: u.displayName || u.email,
+        email: u.email,
+        role: roleToJobTitle(u.primaryRole || u.role || u.hrRole), // Map camelCase to Title Case
+        status: displayStatus, // 'Active', 'Archived', etc.
+        profileImage: u.profileImage,
+        isInvited: u.sourceType === 'invite',
+        inviteId: u.inviteId,
+      };
+    });
 
     // Filter out the current user and any system owners
     const currentUserId = user?.userId || user?.uid || user?.id;
     const currentUserEmail = user?.email?.toLowerCase();
-    normalized = normalized.filter(u => 
-      u.id !== currentUserId && 
-      u.userId !== currentUserId &&
-      u.email?.toLowerCase() !== currentUserEmail &&
-      u.centralRole !== 'owner'
-    );
+    
+    // If we're on Team Management, we show all active + invited users
+    if (activeTab === 'team_management') {
+      normalized = normalized.filter(u => u.status?.toLowerCase() !== 'archived');
+    } else {
+        normalized = normalized.filter(u => 
+          u.id !== currentUserId && 
+          u.userId !== currentUserId &&
+          u.email?.toLowerCase() !== currentUserEmail &&
+          u.centralRole !== 'owner'
+        );
+    }
 
     // HR Advisors must not see Site Owner / Site Manager users
     if (user?.role === 'hrAdvisor') {
@@ -206,20 +222,22 @@ const UserListPage = () => {
       console.log('[DEBUG] Users after client filter:', normalized.length);
     }
 
-    // Filter by viewMode (active vs archived)
+    // Split by viewMode vs Team Management requirements
+    if (activeTab === 'team_management') {
+      // Team Management shows all non-archived users (Active + Invited)
+      return normalized.filter(u => (u.status || '').toLowerCase() !== 'archived');
+    }
+
     if (viewMode === 'archived') {
       return normalized.filter(u => {
-        const status = (u.status || '').toLowerCase();
-        return status === 'archived';
+        const s = (u.status || '').toLowerCase();
+        return s === 'archived' || s === 'inactive' || s === 'suspended';
       });
     } else {
-      // Active view: show all non-archived users
-      return normalized.filter(u => {
-        const status = (u.status || '').toLowerCase();
-        return status !== 'archived';
-      });
+      // Users -> Active View shows ONLY active users (excludes invited)
+      return normalized.filter(u => (u.status || '').toLowerCase() === 'active');
     }
-  }, [paginatedUsers, viewMode, user?.role, selectedSiteId, selectedClientId]);
+  }, [paginatedUsers, viewMode, activeTab, user?.role, selectedSiteId, selectedClientId, optimisticStatusUpdates]);
 
 
 
@@ -297,7 +315,7 @@ const UserListPage = () => {
     };
     window.addEventListener('users:reload', handleReload);
     return () => window.removeEventListener('users:reload', handleReload);
-  }, [reloadPaginated]);
+  }, [reloadPaginated, companyId]);
 
   // Real-time: listen for cross-platform sync events from Central
   useEffect(() => {
@@ -483,6 +501,13 @@ const UserListPage = () => {
 
       await archiveUser(selectedUser.id, effectiveCompanyId);
 
+      // Optimistically update status
+      setOptimisticStatusUpdates(prev => ({ 
+        ...prev, 
+        [selectedUser.id]: 'archived',
+        [selectedUser.email]: 'archived'
+      }));
+
       setShowDeleteModal(false);
       toast.success(`${selectedUser.name || 'User'} has been deactivated/archived.`);
 
@@ -538,6 +563,13 @@ const UserListPage = () => {
       const effectiveCompanyId = companyId || user.companyId;
       await archiveUser(user.id, effectiveCompanyId);
 
+      // Optimistically update status
+      setOptimisticStatusUpdates(prev => ({ 
+        ...prev, 
+        [user.id]: 'archived',
+        [user.email]: 'archived'
+      }));
+
       toast.success(`${user.name} has been archived.`);
 
       window.dispatchEvent(new CustomEvent('users:reload'));
@@ -564,6 +596,16 @@ const UserListPage = () => {
         return;
       }
       await unarchiveUser(u.id, effectiveCompanyId);
+
+      // Optimistically update status using all possible IDs to ensure match
+      setOptimisticStatusUpdates(prev => ({ 
+        ...prev, 
+        [u.id]: 'active',
+        [u.userId || u.id]: 'active',
+        [u.uid || u.id]: 'active',
+        [u.email]: 'active'
+      }));
+
       toast.success(`${u.name || u.email} has been unarchived and is now Active.`);
       window.dispatchEvent(new CustomEvent('users:reload'));
     } catch (error) {
@@ -837,8 +879,16 @@ const UserListPage = () => {
 
       await archiveUser(selectedUser.id, effectiveCompanyId);
 
+      // Optimistically update status
+      setOptimisticStatusUpdates(prev => ({
+        ...prev,
+        [selectedUser.id]: 'archived',
+        [selectedUser.email]: 'archived'
+      }));
+
       setShowDeleteModal(false);
       toast.success('User removed successfully');
+      window.dispatchEvent(new CustomEvent('users:reload'));
 
     } catch (e) {
       console.error('Failed to remove user:', e);
@@ -862,7 +912,21 @@ const UserListPage = () => {
         return;
       }
       await unarchiveUser(userId, effectiveCompanyId);
+
+      // Optimistically update status using all possible IDs to ensure match
+      const userObj = typeof member === 'object' ? member : flatUserList.find(x => x.id === userId);
+      if (userObj) {
+        setOptimisticStatusUpdates(prev => ({
+          ...prev,
+          [userObj.id]: 'active',
+          [userObj.userId || userObj.id]: 'active',
+          [userObj.uid || userObj.id]: 'active',
+          [userObj.email]: 'active'
+        }));
+      }
+
       toast.success('User activated successfully');
+      window.dispatchEvent(new CustomEvent('users:reload'));
     } catch (e) {
       console.error('Failed to activate user:', e);
       toast.error(e?.message || 'Failed to activate user');
@@ -894,14 +958,12 @@ const UserListPage = () => {
 
   // Render empty state for TM
   const renderTeamContentTM = () => {
-    if (dashboardData.teamMembers.length === 0 && dashboardData.hasData) {
-      return <EmptyTeamState onAddUsers={handleAddUsersTM} />;
-    }
+    const teamMembersToRender = flatUserList;
     const currentUserId = user?.userId || user?.uid || user?.id;
     const currentUserEmail = user?.email?.toLowerCase();
-    const isHighLevelAdmin = ['owner', 'siteManager', 'superUser', 'site_manager'].includes(user?.role);
+    const isHighLevelAdmin = ['owner', 'siteManager', 'superUser', 'site_manager', 'siteowner'].includes(user?.role);
     
-    const filteredTeamMembers = dashboardData.teamMembers.filter(m => {
+    const filteredTeamMembers = teamMembersToRender.filter(m => {
       const isMe = m.id === currentUserId || m.userId === currentUserId || m.email?.toLowerCase() === currentUserEmail;
       if (isMe) return false;
       
@@ -913,6 +975,18 @@ const UserListPage = () => {
       
       return true;
     });
+
+    if (filteredTeamMembers.length === 0) {
+      return (
+        <EmptyTeamState 
+          onAddUsers={handleAddUsersTM} 
+          title={selectedSiteId || selectedClientId ? "No Members Match Filters" : "No Team Members"}
+          message={selectedSiteId || selectedClientId 
+            ? "No team members found for the selected site or client." 
+            : "You haven't added any team members yet."}
+        />
+      );
+    }
 
     return (
       <>
@@ -1089,15 +1163,30 @@ const UserListPage = () => {
                   </div>
                 </div>
               ) : flatUserList.length === 0 && !isPaginatedLoading ? (
-                <div className="text-center p-8 text-gray-500">
-                  {viewMode === 'active' ? 'No active users found.' : 'No archived users found.'}
+                <div className="py-12">
+                  {selectedSiteId || selectedClientId ? (
+                    <NoSearchResultsState 
+                      searchTerm={selectedSiteId ? "Selected Site" : "Selected Client"}
+                      onClearSearch={() => {
+                        setSelectedSiteId('');
+                        setSelectedClientId('');
+                      }}
+                    />
+                  ) : (
+                    <EmptyTeamState 
+                      onAddUsers={handleAddUser}
+                      title={viewMode === 'active' ? "No Active Employees" : "No Archived Employees"}
+                      message={viewMode === 'active' 
+                        ? "There are currently no active employees in your organization." 
+                        : "No archived employee records were found."}
+                    />
+                  )}
                 </div>
               ) : (
                 <>
                   <div className="bg-white rounded-lg shadow border border-border-secondary overflow-hidden">
                     <OptimizedTeamTable
                       teamMembers={flatUserList}
-                      onEdit={handleEditLocal}
                       onDeactivate={handleDeactivate}
                       onActivate={handleUnarchiveUser}
                       onDeleteForever={handleDeleteForeverTM}
