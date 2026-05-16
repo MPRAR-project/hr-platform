@@ -24,6 +24,7 @@ import { useTimesheetContext } from '../../contexts/TimesheetContext';
 import hrApiClient from '../../lib/hrApiClient';
 import { formatISODate } from '../../utils/weekStartUtils';
 import { getUserTimesheetsByWeek } from '../../services/timesheets';
+import { useLocationValidation } from '../../hooks/useLocationValidation';
 
 // Optimized time display component
 const TimeDisplay = React.memo(({ time, isActive }) => {
@@ -97,7 +98,7 @@ const EmployeeDashboard = () => {
     const [isUpdatingShift, setIsUpdatingShift] = useState(false);
 
     // Use real-time contexts instead of fetching
-    const { sessionDocs, isLoading: isLoadingSessions, getOpenSession, getTodaySessions, refresh } = useClockSessionContext();
+    const { sessionDocs, recentEntries, isLoading: isLoadingSessions, getOpenSession, getTodaySessions, refresh } = useClockSessionContext();
     const { timesheetDocs, currentWeekData, isLoading: isLoadingTimesheets } = useTimesheetContext();
 
     // Role-based permissions

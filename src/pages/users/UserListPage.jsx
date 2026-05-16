@@ -11,6 +11,7 @@ import DeleteConfirmationModal from '../../components/modals/DeleteConfirmationM
 import { UserPlus, RefreshCw } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { usePaginatedUsers } from '../../hooks/usePaginatedUsers';
+import wsClient from '../../lib/wsClient';
 import { getEmployeeCount, addUsersBySiteManager, updateUserBySiteManager, subscribeToCompanyUsers, deleteUser } from '../../services/users';
 import { getClients } from '../../services/clients';
 import { getSites } from '../../services/sites';
@@ -148,7 +149,7 @@ const UserListPage = () => {
       id: u.id,
       name: u.displayName || u.email,
       email: u.email,
-      role: roleToJobTitle(u.primaryRole || u.role), // Map camelCase to Title Case
+      role: roleToJobTitle(u.primaryRole || u.role || u.hrRole), // Map camelCase to Title Case
       status: u.status, // 'Active', 'Archived', etc.
       profileImage: u.profileImage,
       isInvited: u.sourceType === 'invite',
@@ -168,7 +169,7 @@ const UserListPage = () => {
 
     // HR Advisors must not see Site Owner / Site Manager users
     if (user?.role === 'hrAdvisor') {
-      normalized = normalized.filter((u) => !isSiteOwnerOrManager(u.primaryRole || u.role));
+      normalized = normalized.filter((u) => !isSiteOwnerOrManager(u.primaryRole || u.role || u.hrRole));
     }
 
     // Filter by selected site
@@ -287,13 +288,27 @@ const UserListPage = () => {
   // Reload pagination when User actions happen
   useEffect(() => {
     const handleReload = () => {
-      if (companyId) clearItem?.(`user_count_${companyId}`);
+      if (companyId) {
+        clearItem?.(`user_count_${companyId}`);
+        clearItem?.(`paginated_users_${companyId}_p1`); // bust stale list cache too
+      }
       setCountRefreshTrigger((t) => t + 1);
       reloadPaginated();
     };
     window.addEventListener('users:reload', handleReload);
     return () => window.removeEventListener('users:reload', handleReload);
   }, [reloadPaginated]);
+
+  // Real-time: listen for cross-platform sync events from Central
+  useEffect(() => {
+    const fireReload = () => window.dispatchEvent(new CustomEvent('users:reload'));
+    wsClient.on('employee:synced',   fireReload);
+    wsClient.on('employee:archived', fireReload);
+    return () => {
+      wsClient.off('employee:synced',   fireReload);
+      wsClient.off('employee:archived', fireReload);
+    };
+  }, []);
 
   // Track previous viewMode to prevent unnecessary reloads
   const prevViewModeRef = useRef(viewMode);
@@ -335,7 +350,7 @@ const UserListPage = () => {
 
   // --- Existing UserListPage Handlers ---
 
-  const handleAddUser = () => setShowAddUserModal(true);
+  const handleAddUser = () => handleAddUsersClickTM();
 
   const handleUserSubmitLocal = async (users) => {
     try {
@@ -391,8 +406,8 @@ const UserListPage = () => {
   };
 
   const handleEditLocal = (userToEdit) => {
-    const roleKey = normalizeRoleKey(userToEdit?.primaryRole || userToEdit?.role);
-    const userRoleKey = normalizeRoleKey(user?.primaryRole || user?.role);
+    const roleKey = normalizeRoleKey(userToEdit?.primaryRole || userToEdit?.role || userToEdit?.hrRole);
+    const userRoleKey = normalizeRoleKey(user?.primaryRole || user?.role || user?.hrRole);
     // Prevent editing Senior Manager profiles from the Users route unless Super User/Owner
     if (roleKey === 'seniormanager' && !['superuser', 'siteowner', 'sitemanager', 'owner'].includes(userRoleKey)) {
       toast.error('Senior Manager profile cannot be edited from this view.');
@@ -643,7 +658,40 @@ const UserListPage = () => {
     }
   };
 
-  const handleUserSubmitTM = (users) => {
+  const handleUserSubmitTM = async (users) => {
+    // Smart seat check: If we have enough seats, skip payment modal
+    // We use dashboardData which is synced when the Team Management tab is active,
+    // or we fetch a fresh billing summary.
+    let seatUsage = dashboardData.seatUsageCount ?? dashboardData.totalUsers ?? 0;
+    let totalSeats = dashboardData.totalSeats || 0;
+
+    // If dashboard data is not available (e.g. on Users tab), try fetching billing summary
+    if (totalSeats === 0) {
+      try {
+        const billing = await getBillingSummary(companyId);
+        seatUsage = billing.activeSeatCount ?? 0;
+        totalSeats = billing.seatQuota || 0;
+      } catch (e) {
+        console.warn('[UserListPage] Failed to fetch billing summary for smart check:', e);
+      }
+    }
+
+    const toAdd = users.length;
+
+    if (seatUsage + toAdd <= totalSeats) {
+      try {
+        const siteId = parseSiteId(user.siteId);
+        await addUsersBySiteManager(companyId, siteId, users);
+        setShowAddUserModal(false);
+        toast.success(`${users.length} user${users.length > 1 ? 's' : ''} added successfully.`);
+        window.dispatchEvent(new CustomEvent('users:reload'));
+        return;
+      } catch (e) {
+        toast.error(e.message || 'Failed to add users');
+        return;
+      }
+    }
+
     trackUserAction('users_submitted_for_payment', {
       userCount: users.length,
       roles: users.map(u => u.role)
@@ -952,6 +1000,14 @@ const UserListPage = () => {
                 <h2 className="text-2xl font-bold text-text-primary">Users</h2>
               </div>
               <div className="flex gap-2 items-center">
+                <Button
+                  variant="gradient"
+                  icon={UserPlus}
+                  iconFirst={true}
+                  onClick={handleAddUser}
+                >
+                  Add User
+                </Button>
                 <div className="relative w-48">
                   <select
                     value={selectedSiteId}
@@ -1106,7 +1162,7 @@ const UserListPage = () => {
       <AddUserModal
         isOpen={showAddUserModal}
         onClose={() => setShowAddUserModal(false)}
-        onSubmit={activeTab === 'users' ? handleUserSubmitLocal : handleUserSubmitTM}
+        onSubmit={handleUserSubmitTM}
       />
 
       {/* Payment Confirmation */}

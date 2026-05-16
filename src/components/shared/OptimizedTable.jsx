@@ -56,7 +56,9 @@ const TeamMemberRow = memo(({ member, onEdit, onDeactivate, onActivate, onDelete
         <Badge variant={getRoleBadgeVariant(member.role)}>{member.role}</Badge>
       </TableCell>
       <TableCell>
-        <Badge variant={getStatusBadgeVariant(member.status)}>{member.status}</Badge>
+        <Badge variant={getStatusBadgeVariant(member.status)}>
+          {member.status ? member.status.charAt(0).toUpperCase() + member.status.slice(1).toLowerCase() : '—'}
+        </Badge>
       </TableCell>
       <TableCell>
         {!member.isInvited ? (
@@ -157,10 +159,12 @@ const OptimizedTeamTable = memo(({ teamMembers, onEdit, onDeactivate, onActivate
   }, []);
 
   const getStatusBadgeVariant = useMemo(() => (status) => {
-    if (status === 'Active') return 'success';
-    if (status === 'Archived') return 'danger';
-    if (status === 'Inactive') return 'warning';
-    return 'info';
+    const s = (status || '').toLowerCase();
+    if (s === 'active')   return 'success';
+    if (s === 'archived') return 'danger';
+    if (s === 'inactive') return 'warning';
+    if (s === 'invited')  return 'info';
+    return 'default';
   }, []);
 
   // Memoize the table rows to prevent unnecessary re-renders

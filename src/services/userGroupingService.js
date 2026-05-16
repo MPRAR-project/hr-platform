@@ -16,7 +16,6 @@ export async function fetchPaginatedUsers(companyId, pageSize = 20, lastDoc = nu
       params: {
         page,
         limit: pageSize,
-        status: 'active'
       }
     });
 
@@ -28,6 +27,7 @@ export async function fetchPaginatedUsers(companyId, pageSize = 20, lastDoc = nu
       id: emp.id,
       uid: emp.id,
       ...emp,
+      primaryRole: emp.hrRole,
       displayName: `${emp.firstName} ${emp.lastName}`.trim() || emp.email
     }));
 

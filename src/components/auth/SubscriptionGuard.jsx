@@ -51,14 +51,17 @@ const SubscriptionGuard = ({ children }) => {
       }
     };
 
-    if (!isLoading && user) {
+    const canAccessBilling = ['superUser', 'siteManager'].includes(user?.role);
+    if (!isLoading && user && canAccessBilling) {
       fetchSummary();
+    } else if (!isLoading && user && !canAccessBilling) {
+      setState({ checking: false, expired: false, error: null });
     } else if (!user && !isLoading) {
       setState({ checking: false, expired: false, error: null });
     }
 
     const handleBillingEvent = () => {
-      if (!isLoading && user) {
+      if (!isLoading && user && canAccessBilling) {
         fetchSummary();
       }
     };

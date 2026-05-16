@@ -51,8 +51,9 @@ function normalizeUser(u) {
   if (!u) return null;
   return {
     ...u,
-    userId: u.id || u.userId || u.employeeId,
-    id:     u.id || u.userId || u.employeeId,
+    userId:      u.id || u.userId || u.employeeId,
+    id:          u.id || u.userId || u.employeeId,
+    primaryRole: u.hrRole || u.primaryRole || u.role,
   };
 }
 
@@ -321,6 +322,32 @@ export async function getUsersByCompany(companyId) {
   } catch (err) {
     if (err.response?.status === 403) return [];
     throw new Error(err.response?.data?.error || 'Failed to fetch users');
+  }
+}
+
+// ── Fetch HR employees (paginated + search) ─────────────────────────────────
+export async function fetchHrEmployees(companyId, { limit = 20, cursor = null, search = '' } = {}) {
+  try {
+    const page = cursor?.page || 1;
+    const { data } = await hrApiClient.get('/hr/employees', {
+      params: {
+        limit,
+        page,
+        search: search || undefined,
+        companyId: companyId.replace('companies/', ''),
+      },
+    });
+
+    const employees = (data.employees || []).map(normalizeUser);
+    const hasMore   = (data.page * data.limit) < data.total;
+
+    return {
+      employees,
+      nextCursor: hasMore ? { page: data.page + 1 } : null,
+      total:      data.total,
+    };
+  } catch (err) {
+    throw new Error(err.response?.data?.error || 'Failed to fetch employees');
   }
 }
 
