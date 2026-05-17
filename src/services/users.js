@@ -46,6 +46,27 @@ async function centralFetch(path, method = 'GET', body = null) {
   }
 }
 
+// ── Canonical role names (camelCase) ────────────────────────────────────────
+const ROLE_CANONICAL_MAP = {
+  sitemanager:     'siteManager',
+  teammanager:     'teamManager',
+  seniormanager:   'seniorManager',
+  adminmanager:    'adminManager',
+  hrmanager:       'hrManager',
+  adminadvisor:    'adminAdvisor',
+  hradvisor:       'hrAdvisor',
+  contractmanager: 'contractManager',
+  superuser:       'superUser',
+  owner:           'owner',
+  employee:        'employee',
+};
+
+function toCanonicalRole(raw) {
+  if (!raw) return undefined;
+  const key = String(raw).toLowerCase().replace(/[^a-z]/g, '');
+  return ROLE_CANONICAL_MAP[key] || raw;
+}
+
 // ── Normalize user shape ──────────────────────────────────────────────────────
 function normalizeUser(u) {
   if (!u) return null;
@@ -125,30 +146,39 @@ export async function addUsersBySiteManager(companyId, siteId, usersPayload) {
 
 // ── Update user (safe fields only) ───────────────────────────────────────────
 export async function updateUserBySiteManager(userId, updates, contextCompanyId = null) {
-  const allowed = [
-    'displayName','firstName','lastName','email','primaryRole','roles',
-    'reportsTo','managerUserId','status','rates','cisDeduction','utrNumber','siteId','companyId',
+  // Build HR-backend-compatible payload (field names the HR REST API accepts)
+  const hrAllowed = [
+    'firstName', 'lastName', 'phone', 'jobTitle', 'department', 'hrRole',
+    'shift', 'hourlyRate', 'contractType', 'startDate', 'siteId', 'teamId',
+    'reportsTo', 'status', 'isOnboarded',
   ];
-  const payload = {};
-  for (const k of allowed) {
-    if (k in updates) payload[k] = updates[k];
+  const hrPayload = {};
+  for (const k of hrAllowed) {
+    if (k in updates) hrPayload[k] = updates[k];
   }
+  // Map frontend field alias → HR backend field name, and normalize role casing
+  if (updates.primaryRole !== undefined) {
+    hrPayload.hrRole = toCanonicalRole(updates.primaryRole);
+  }
+  // Convert empty strings to null for nullable FK fields
+  if (hrPayload.reportsTo === '') hrPayload.reportsTo = null;
+  if (hrPayload.siteId    === '') hrPayload.siteId    = null;
+  if (hrPayload.teamId    === '') hrPayload.teamId    = null;
 
   try {
-    await hrApiClient.put(`/hr/employees/${userId}`, payload);
+    await hrApiClient.put(`/hr/employees/${userId}`, hrPayload);
   } catch (err) {
     throw new Error(err.response?.data?.error || 'Failed to update user');
   }
 
-  // Best-effort Central sync
-  const companyId = contextCompanyId || payload.companyId;
+  // Best-effort Central sync (reliable path is now HR backend → Central via syncProfileToCentral)
+  const companyId = contextCompanyId || updates.companyId;
   await syncUserToCentral(userId, companyId, {
-    primaryRole: payload.primaryRole,
-    reportsTo:   payload.reportsTo === '' ? null : (payload.reportsTo || undefined),
-    firstName:   payload.firstName,
-    lastName:    payload.lastName,
-    status:      payload.status,
-    email:       payload.email,
+    primaryRole: hrPayload.hrRole,
+    reportsTo:   hrPayload.reportsTo === '' ? null : (hrPayload.reportsTo || undefined),
+    firstName:   hrPayload.firstName,
+    lastName:    hrPayload.lastName,
+    status:      hrPayload.status,
   });
 
   return { ok: true };
