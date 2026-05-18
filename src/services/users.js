@@ -70,11 +70,15 @@ function toCanonicalRole(raw) {
 // ── Normalize user shape ──────────────────────────────────────────────────────
 function normalizeUser(u) {
   if (!u) return null;
+  const firstName = u.firstName || '';
+  const lastName  = u.lastName  || '';
+  const displayName = u.displayName || `${firstName} ${lastName}`.trim() || u.email || 'Employee';
   return {
     ...u,
     userId:      u.id || u.userId || u.employeeId,
     id:          u.id || u.userId || u.employeeId,
     primaryRole: u.hrRole || u.primaryRole || u.role,
+    displayName,
   };
 }
 

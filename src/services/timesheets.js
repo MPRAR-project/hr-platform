@@ -189,6 +189,10 @@ export async function getTimesheetsByWeek(companyId, weekStartStr) {
   }
 }
 
+export async function fetchCompanyTimesheetsForWeek(companyId, weekStartStr) {
+  return getTimesheetsByWeek(companyId, weekStartStr);
+}
+
 // ── Get timesheets in a date range (reporting/invoices) ────────────────────────
 export async function getTimesheetsInRange(companyId, startDate, endDate) {
   try {
@@ -319,12 +323,43 @@ export async function deleteTimeEntry(userId, dateStr, entryId, sessionId) {
   }
 }
 
-// ── Add manual time entry ─────────────────────────────────────────────────────
-export async function addManualTimeEntry({
-  userId, companyId, siteId, date, clockIn, clockOut,
-  breakMin = 0, notes = '', source = 'manual',
-}) {
+export async function addManualTimeEntry(
+  firstArg,
+  _date,
+  _clockIn,
+  _clockOut,
+  _weekStartDay,
+  _timesheetId,
+  _options = {}
+) {
+  let userId, companyId, siteId, date, clockIn, clockOut;
+  let breakMin = 0;
+  let notes = '';
+  let source = 'manual';
+
+  if (firstArg && typeof firstArg === 'object') {
+    userId = firstArg.userId;
+    companyId = firstArg.companyId;
+    siteId = firstArg.siteId;
+    date = firstArg.date;
+    clockIn = firstArg.clockIn;
+    clockOut = firstArg.clockOut;
+    breakMin = firstArg.breakMin ?? firstArg.breakMinutes ?? 0;
+    notes = firstArg.notes ?? '';
+    source = firstArg.source ?? 'manual';
+  } else {
+    userId = firstArg;
+    date = _date;
+    clockIn = _clockIn;
+    clockOut = _clockOut;
+    siteId = _options?.siteId || null;
+    breakMin = _options?.breakMin || _options?.breakMinutes || 0;
+    notes = _options?.notes || _options?.description || '';
+    source = _options?.source || 'manual';
+  }
+
   const payload = {
+    employeeId: userId,
     date,
     clockIn,
     clockOut,

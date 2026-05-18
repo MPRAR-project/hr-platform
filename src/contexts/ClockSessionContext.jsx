@@ -93,8 +93,7 @@ export const ClockSessionProvider = ({ children }) => {
                 });
                 
                 setSessionDocs(sessions);
-                // Simple processRecentEntries equivalent for now
-                setRecentEntries(sessions.slice(0, 7));
+                setRecentEntries(processRecentEntries(sessions, 7));
             } catch (err) {
                 console.error('[ClockSessionProvider] Fetch error:', err);
                 setError(err.message);
@@ -146,7 +145,7 @@ export const ClockSessionProvider = ({ children }) => {
             getSessionsForDateRange({ userId: user.uid, startDate, endDate: now })
                 .then(sessions => {
                     setSessionDocs(sessions);
-                    setRecentEntries(sessions.slice(0, 7));
+                    setRecentEntries(processRecentEntries(sessions, 7));
                 })
                 .finally(() => setIsLoading(false));
         }
@@ -168,4 +167,74 @@ export const ClockSessionProvider = ({ children }) => {
         </ClockSessionContext.Provider>
     );
 };
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function processRecentEntries(sessions = [], limit = 7) {
+  if (!Array.isArray(sessions)) return [];
+  
+  // Group sessions by date
+  const groups = {};
+  
+  // Sort sessions descending by startedAt
+  const sortedSessions = [...sessions].sort((a, b) => {
+    const da = a.startedAt ? new Date(a.startedAt) : new Date(0);
+    const db = b.startedAt ? new Date(b.startedAt) : new Date(0);
+    return db - da;
+  });
+  
+  for (const s of sortedSessions) {
+    if (!s.startedAt) continue;
+    const startDate = new Date(s.startedAt);
+    if (isNaN(startDate.getTime())) continue;
+    
+    const dateKey = startDate.toISOString().split('T')[0]; // YYYY-MM-DD
+    if (!groups[dateKey]) {
+      groups[dateKey] = [];
+    }
+    groups[dateKey].push(s);
+  }
+  
+  const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  
+  const entries = Object.keys(groups).slice(0, limit).map(dateKey => {
+    const daySessions = groups[dateKey];
+    const dateObj = new Date(dateKey);
+    
+    const dayName = daysOfWeek[dateObj.getDay()] || 'Unknown';
+    const dateStr = `${months[dateObj.getMonth()]} ${dateObj.getDate()}`;
+    
+    let totalMins = 0;
+    let breakMins = 0;
+    
+    const clockInOutPairs = daySessions.map(s => {
+      totalMins += Number(s.totalMinutes) || 0;
+      breakMins += Number(s.breakMinutes) || 0;
+      
+      const inTime = s.startedAt 
+        ? new Date(s.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+        : '—';
+      const outTime = s.endedAt 
+        ? new Date(s.endedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+        : '—';
+        
+      return { clockIn: inTime, clockOut: outTime };
+    });
+    
+    const totalHours = (totalMins / 60).toFixed(1);
+    const breakHours = (breakMins / 60).toFixed(1);
+    const overtime = totalMins > 480 ? ((totalMins - 480) / 60).toFixed(1) : '0.0';
+    
+    return {
+      day: dayName,
+      date: dateStr,
+      clockInOutPairs,
+      totalHours,
+      breakHours,
+      overtime
+    };
+  });
+  
+  return entries;
+}
 

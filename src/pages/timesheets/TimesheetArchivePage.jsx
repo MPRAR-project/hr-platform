@@ -1,3 +1,4 @@
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { FileText, Download, User as UserIcon, RefreshCw, Filter, Menu, Calendar } from 'lucide-react';
 import Loader from '../../components/ui/Loader';
@@ -17,6 +18,7 @@ const TimesheetArchivePage = ({ isEmbedded = false }) => {
     const [archives, setArchives] = useState([]);
     const [realtimeLoading, setRealtimeLoading] = useState(true);
     const [managedEmployeeIds, setManagedEmployeeIds] = useState(new Set());
+    const [userCache, setUserCache] = useState({});
 
     // Generate last 18 months for tabs
     const months = useMemo(() => {
