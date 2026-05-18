@@ -29,6 +29,9 @@ export const getBillingSummary = async (companyId) => {
     const { data } = await hrApiClient.get('/hr/billing/summary');
     return data;
   } catch (error) {
+    if (error.response?.status === 403) {
+      return null;
+    }
     console.error('Error fetching billing summary:', error);
     throw error;
   }

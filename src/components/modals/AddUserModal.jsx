@@ -139,13 +139,10 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
         return managerRoles.includes(getCanonicalRole(role));
     };
 
-    // Updated: Reports To visibility depends on role
+    // Updated: Reports To visibility depends on role (Managers report to no one)
     const shouldShowReportsTo = (role) => {
         const canonicalRole = getCanonicalRole(role);
-        if (['siteManager', 'superUser', 'owner'].includes(canonicalRole)) return false;
-
-        // Everyone else (including all other manager types) reports to someone
-        return true;
+        return ['employee', 'adminAdvisor', 'hrAdvisor', 'contractManager'].includes(canonicalRole);
     };
 
     // Check if form can be submitted (no validation errors and all required fields filled)
@@ -172,19 +169,14 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
     // Updated: Get allowed manager roles based on user role and hierarchy
     const getAllowedManagerRoles = (userRole) => {
         const normalizedRole = getCanonicalRole(userRole);
-        // If user is a mid-level manager, they report to Senior Manager (or fallback to Site Manager)
-        if (['teamManager', 'adminManager', 'hrManager', 'seniorManager'].includes(normalizedRole)) {
-            return ['seniorManager', 'siteManager', 'superUser'];
-        }
-
         const roleMapping = {
-            'employee': ['teamManager', 'siteManager', 'seniorManager'],
-            'hrAdvisor': ['hrManager', 'siteManager', 'seniorManager'],
-            'adminAdvisor': ['adminManager', 'siteManager', 'seniorManager'],
-            'contractManager': ['teamManager', 'siteManager', 'seniorManager']
+            'employee': ['teamManager'],
+            'hrAdvisor': ['hrManager'],
+            'adminAdvisor': ['adminManager'],
+            'contractManager': ['teamManager']
         };
 
-        return roleMapping[normalizedRole] || ['siteManager', 'superUser', 'seniorManager', 'owner', 'siteManager'];
+        return roleMapping[normalizedRole] || [];
     };
 
     // Filter managers based on user role
@@ -198,7 +190,7 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
                 return normalizedAllowed.includes(mRole);
             });
         }
-        return allManagers;
+        return [];
     };
 
     const handleAddMore = () => {

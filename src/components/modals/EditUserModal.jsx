@@ -104,8 +104,48 @@ const EditUserModal = ({ isOpen, onClose, user, onSave }) => {
         loadManagers();
     }, [authed?.companyId, isOpen, user?.id]);
 
+    const getAllowedManagerRoles = (userRole) => {
+        const normalizedRole = getCanonicalRole(userRole);
+        const roleMapping = {
+            'employee': ['teamManager'],
+            'hrAdvisor': ['hrManager'],
+            'adminAdvisor': ['adminManager'],
+            'contractManager': ['teamManager']
+        };
+
+        return roleMapping[normalizedRole] || [];
+    };
+
+    const getFilteredManagers = (allManagers, userRole) => {
+        const allowedRoles = getAllowedManagerRoles(userRole);
+        const normalizedAllowed = allowedRoles.map(getCanonicalRole);
+
+        if (allowedRoles.length > 0) {
+            return allManagers.filter(manager => {
+                const mRole = getCanonicalRole(manager.role);
+                return normalizedAllowed.includes(mRole);
+            });
+        }
+        return [];
+    };
+
     const handleChange = (field, value) => {
-        setFormData(prev => ({ ...prev, [field]: value }));
+        setFormData(prev => {
+            const updated = { ...prev, [field]: value };
+            if (field === 'role') {
+                const canonicalVal = getCanonicalRole(value);
+                if (!shouldShowReportsTo(canonicalVal)) {
+                    updated.reportsTo = '';
+                } else {
+                    const currentManager = managerOptions.find(m => m.id === prev.reportsTo);
+                    const allowedRoles = getAllowedManagerRoles(canonicalVal);
+                    if (currentManager && !allowedRoles.includes(getCanonicalRole(currentManager.role))) {
+                        updated.reportsTo = '';
+                    }
+                }
+            }
+            return updated;
+        });
     };
 
     const handleSubmit = async (e) => {
@@ -116,9 +156,18 @@ const EditUserModal = ({ isOpen, onClose, user, onSave }) => {
             return;
         }
 
+        if (shouldShowReportsTo(formData.role) && !formData.reportsTo) {
+            toast.error('Line Manager is required');
+            return;
+        }
+
         setIsLoading(true);
         try {
-            const dataToSave = { ...formData, role: getCanonicalRole(formData.role) };
+            const dataToSave = { 
+                ...formData, 
+                role: getCanonicalRole(formData.role),
+                reportsTo: shouldShowReportsTo(formData.role) ? formData.reportsTo : null
+            };
             await onSave(dataToSave);
             onClose();
         } catch (error) {
@@ -131,7 +180,7 @@ const EditUserModal = ({ isOpen, onClose, user, onSave }) => {
 
     const shouldShowReportsTo = (role) => {
         const r = getCanonicalRole(role);
-        return !['siteManager', 'superUser', 'owner'].includes(r);
+        return ['employee', 'adminAdvisor', 'hrAdvisor', 'contractManager'].includes(r);
     };
 
     if (!isOpen) return null;
@@ -213,12 +262,17 @@ const EditUserModal = ({ isOpen, onClose, user, onSave }) => {
                                         className="w-full h-11 px-4 pr-10 border border-border-secondary rounded-lg text-sm appearance-none focus:outline-none focus:border-border-accent-purple"
                                     >
                                         <option value="">Select Manager</option>
-                                        {managerOptions.map(m => (
+                                        {getFilteredManagers(managerOptions, formData.role).map(m => (
                                             <option key={m.id} value={m.id}>{m.name} ({getRoleLabel(m.role)})</option>
                                         ))}
                                     </select>
                                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-secondary pointer-events-none" />
                                 </div>
+                                {getFilteredManagers(managerOptions, formData.role).length === 0 && (
+                                    <p className="text-xs text-orange-600">
+                                        No {getAllowedManagerRoles(formData.role).map(r => getRoleLabel(r)).join(' or ')} found for this role
+                                    </p>
+                                )}
                             </div>
                         )}
                     </div>

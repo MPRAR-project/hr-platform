@@ -268,11 +268,29 @@ class AllowanceService {
     }
   }
 
+  getLeaveTypeDisplayName(leaveType) {
+    return this.getLeaveTypeDisplay(leaveType);
+  }
+
   // ── Subscription wrappers (polling based fallback) ────────────────────────
   subscribeEmployeesForAllowances(user, callback, onError) {
     const poll = async () => {
       try {
         const data = await this.getEmployeesForAllowances(user);
+        callback(data);
+      } catch (err) {
+        if (onError) onError(err);
+      }
+    };
+    poll();
+    const interval = setInterval(poll, 60000); // 1 min poll
+    return () => clearInterval(interval);
+  }
+
+  subscribeToEmployeeAllowances(employeeId, user, year, callback, onError) {
+    const poll = async () => {
+      try {
+        const data = await this.getEmployeeAllowances(employeeId);
         callback(data);
       } catch (err) {
         if (onError) onError(err);
