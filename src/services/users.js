@@ -98,8 +98,9 @@ export async function addUsersBySiteManager(companyId, siteId, usersPayload) {
           firstName:             parts[0] || '',
           lastName:              parts.slice(1).join(' ').trim(),
           displayName:           full,
-          primaryRole:           u.role,
+          hrRole:                u.role || u.hrRole || 'employee',
           reportsTo:             u.reportsTo || null,
+          siteId:                u.siteId || null,
           isOnboardingMandatory: u.isOnboardingMandatory || false,
         };
       }),

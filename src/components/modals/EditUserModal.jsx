@@ -107,10 +107,10 @@ const EditUserModal = ({ isOpen, onClose, user, onSave }) => {
     const getAllowedManagerRoles = (userRole) => {
         const normalizedRole = getCanonicalRole(userRole);
         const roleMapping = {
-            'employee': ['teamManager'],
-            'hrAdvisor': ['hrManager'],
-            'adminAdvisor': ['adminManager'],
-            'contractManager': ['teamManager']
+            'employee': ['teamManager', 'siteManager'],
+            'hrAdvisor': ['hrManager', 'siteManager'],
+            'adminAdvisor': ['adminManager', 'siteManager'],
+            'contractManager': ['teamManager', 'siteManager']
         };
 
         return roleMapping[normalizedRole] || [];
