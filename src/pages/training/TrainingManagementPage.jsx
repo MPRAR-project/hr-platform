@@ -214,6 +214,7 @@ const TrainingManagementPage = () => {
     if (loading) return;
     if (loadingEmployeeData) return;
     if ((assignments || []).length === 0) return;
+    if (employeeTrainingData && employeeTrainingData.length > 0) return; // Prevent double load if already populated
 
     const run = async () => {
       try {
@@ -236,7 +237,7 @@ const TrainingManagementPage = () => {
     };
 
     run();
-  }, [user, superTab, subTab, loading, loadingEmployeeData, employeeTrainingData, assignments]);
+  }, [user, superTab, subTab, loading, assignments]);
 
   const loadTrainingData = async () => {
     if (!user || !user.companyId) return;

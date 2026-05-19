@@ -189,11 +189,25 @@ export function subscribeTrainings(companyId, callback) {
   return () => wsClient.off('training:updated', fetch);
 }
 
+export async function getTrainingAssignments(companyId, filters, role, userId) {
+  try {
+    const { data } = await hrApiClient.get('/hr/training/assignments', {
+        params: { ...filters, role, userId }
+    });
+    return { success: true, data: (data.assignments || data || []).map(normalizeDates) };
+  } catch (err) {
+    return { success: false, error: err.response?.data?.error || err.message };
+  }
+}
+
 export function subscribeAssignments(companyId, userId, callback) {
   const fetch = () => {
-    const p = userId ? getMyTrainingAssignments(userId) : getTrainingCourses(companyId); // Fallback logic
-    p.then((data) => callback({ success: true, data }))
-     .catch((err) => callback({ success: false, error: err.message }));
+    // For managers loading the management page, we need all assignments for the company.
+    // getTrainingAssignments will hit /hr/training/assignments. 
+    // We pass userId just in case the backend uses it for role-based scoping.
+    getTrainingAssignments(companyId, {}, null, userId)
+      .then((result) => callback(result))
+      .catch((err) => callback({ success: false, error: err.message }));
   };
 
   fetch();

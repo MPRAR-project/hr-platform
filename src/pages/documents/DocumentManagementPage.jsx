@@ -89,7 +89,7 @@ const DocumentManagementPage = () => {
   const [managedEmployeeIds, setManagedEmployeeIds] = useState(new Set());
   useEffect(() => {
     if (user?.role === 'teamManager' && companyId) {
-      getManagedEmployeeIdsForManager(user.uid, companyId).then(setManagedEmployeeIds);
+      getManagedEmployeeIdsForManager(user.uid, companyId).then(ids => setManagedEmployeeIds(new Set(ids)));
     }
   }, [user?.role, user?.uid, companyId]);
 

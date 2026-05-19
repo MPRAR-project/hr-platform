@@ -136,7 +136,7 @@ const TimesheetArchivePage = ({ isEmbedded = false }) => {
                         user.userId,
                         user.companyId.replace('companies/', '')
                     );
-                    setManagedEmployeeIds(employeeIds);
+                    setManagedEmployeeIds(new Set(employeeIds));
                     // Team Manager ${user.userId} manages ${employeeIds.size} employees
                 } catch (error) {
                     // Error fetching managed employees

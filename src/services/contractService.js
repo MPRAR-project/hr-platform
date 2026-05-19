@@ -1,85 +1,76 @@
-import apiClient from '../api/apiClient';
-import axios from 'axios';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+import hrApiClient from '../lib/hrApiClient';
 
 /**
  * Genuinely refactored Contract Service
- * Communicates with the Central Backend (Postgres) instead of Firebase Firestore.
- * 0% Firebase dependencies.
+ * Communicates with the HR Backend (Postgres) instead of Firebase Firestore or Central.
+ * Uses the /hr/documents endpoints since contracts are a type of HrDocument.
  */
 
 export const uploadContract = async (userId, file, metadata) => {
-    const cleanCompanyId = (metadata.companyId || '').replace('companies/', '');
-    const token = localStorage.getItem('mprar_central_token');
-
-    // 1. Upload File to Central Storage API
+    // 1. Upload File to HR Storage API
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('path', `contracts/${userId}/${Date.now()}_${file.name}`);
-
-    const uploadRes = await axios.post(`${API_BASE}/hr/storage/upload`, formData, {
-        headers: {
-            'Content-Type': 'multipart/form-data',
-            'Authorization': `Bearer ${token}`
-        }
+    
+    const { data: uploadRes } = await hrApiClient.post('/hr/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
     });
 
-    const { url } = uploadRes.data;
-
-    // 2. Save Metadata to PostgreSQL
-    const response = await apiClient.post(`/hr/${cleanCompanyId}/contracts`, {
-        userId,
-        companyId: cleanCompanyId,
+    // 2. Save Metadata to HR PostgreSQL as a document
+    const { data: docRes } = await hrApiClient.post('/hr/documents', {
+        employeeId: userId,
         title: metadata.title || file.name,
-        fileName: file.name,
-        fileUrl: url,
-        type: metadata.type || 'Employment Contract',
-        uploadedBy: metadata.uploadedBy,
-        uploadedByName: metadata.uploadedByName || 'Manager'
+        documentType: 'employment_contract',
+        fileKey: uploadRes.fileKey,
+        fileName: uploadRes.fileName,
+        fileMimeType: uploadRes.mimeType,
+        fileSizeBytes: uploadRes.size,
+        fileUrl: uploadRes.url,
+        isConfidential: true,
+        requiresSignature: true,
+        uploadedBy: metadata.uploadedBy || userId,
     });
-
-    return response.data;
+    
+    // Polyfill status based on signedAt
+    return { ...docRes, status: docRes.signedAt ? 'signed' : 'pending', uploadedByName: metadata.uploadedByName || 'Manager' };
 };
 
 export const getContracts = async (userId, companyId) => {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const response = await apiClient.get(`/hr/${cleanCompanyId}/contracts`, {
-        params: { userId }
+    const { data } = await hrApiClient.get('/hr/documents', {
+        params: { employeeId: userId, type: 'employment_contract' }
     });
-    return response.data;
+    
+    const docs = data.documents || data || [];
+    
+    // Map to the shape expected by the frontend
+    return docs.map(doc => ({
+        ...doc,
+        status: doc.signedAt ? 'signed' : 'pending',
+        uploadedByName: doc.employee ? `${doc.employee.firstName} ${doc.employee.lastName}`.trim() : 'Manager'
+    }));
 };
 
 export const signContract = async (userId, contractId, signatureBlob, typedName, companyId) => {
-    const cleanCompanyId = companyId.replace('companies/', '');
-    const token = localStorage.getItem('mprar_central_token');
-
     // 1. Upload signature image
     const formData = new FormData();
     formData.append('file', signatureBlob, 'signature.png');
-    formData.append('path', `signatures/${userId}/${contractId}_${Date.now()}.png`);
+    
+    const { data: uploadRes } = await hrApiClient.post('/hr/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+    });
 
-    const uploadRes = await axios.post(`${API_BASE}/hr/storage/upload`, formData, {
-        headers: {
-            'Content-Type': 'multipart/form-data',
-            'Authorization': `Bearer ${token}`
+    // 2. Update document record (using signedAt to represent signed status)
+    const { data } = await hrApiClient.put(`/hr/documents/${contractId}`, {
+        signedAt: new Date().toISOString(),
+        metadata: {
+            signatureUrl: uploadRes.url,
+            typedSignature: typedName
         }
     });
 
-    const signatureUrl = uploadRes.data.url;
-
-    // 2. Update contract record
-    const response = await apiClient.put(`/hr/contracts/${contractId}`, {
-        status: 'signed',
-        signedAt: new Date(),
-        signatureUrl,
-        typedSignature: typedName
-    });
-
-    return response.data;
+    return { ...data, status: 'signed' };
 };
 
 export const deleteContract = async (userId, contractId) => {
-    const response = await apiClient.delete(`/hr/contracts/${contractId}`);
-    return response.data;
+    const { data } = await hrApiClient.delete(`/hr/documents/${contractId}`);
+    return data;
 };

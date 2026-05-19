@@ -269,7 +269,7 @@ const AbsenceManagementPage = () => {
           let managedIds = null;
           if (user.role === 'teamManager') {
             try {
-              managedIds = await getManagedEmployeeIdsForManager(user.userId, companyIdRaw);
+              managedIds = new Set(await getManagedEmployeeIdsForManager(user.userId, companyIdRaw));
             } catch (_) {
               managedIds = new Set();
             }
@@ -321,7 +321,7 @@ const AbsenceManagementPage = () => {
       let managedEmployeeIds = null;
       if (user.role === 'teamManager') {
         try {
-          managedEmployeeIds = await getManagedEmployeeIdsForManager(user.userId, normalizeId(user.companyId));
+          managedEmployeeIds = new Set(await getManagedEmployeeIdsForManager(user.userId, normalizeId(user.companyId)));
         } catch (error) {
           console.error('Error fetching managed employees:', error);
           managedEmployeeIds = new Set();

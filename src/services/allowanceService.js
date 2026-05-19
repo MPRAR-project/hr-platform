@@ -319,6 +319,20 @@ class AllowanceService {
     return () => clearInterval(interval);
   }
 
+  // ── Calculate days between dates (inclusive) ─────────────────────────────
+  calculateDaysFromDates(startDate, endDate) {
+    if (!startDate || !endDate) return 0;
+    try {
+      const start = new Date(startDate);
+      const end   = new Date(endDate);
+      const diffTime = Math.max(0, end.getTime() - start.getTime());
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+      return diffDays;
+    } catch {
+      return 0;
+    }
+  }
+
   // ── Ensure sick leave allowance exists (called from users.js) ─────────────
   async ensureSickLeaveAllowance(employeeId, employeeData = {}) {
     try {

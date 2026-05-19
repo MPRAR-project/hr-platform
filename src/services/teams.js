@@ -30,6 +30,25 @@ export async function getManagedEmployeeIdsForManager(userId, companyId) {
   }
 }
 
+// ── Get managed employee objects for a manager (used by MyTeamPage) ───────────
+export async function getManagedEmployeesForManager(userId, companyId) {
+  try {
+    const { data } = await hrApiClient.get('/hr/employees', {
+      params: { managerId: userId },
+    });
+    const employees = data.employees || data || [];
+    return employees.map((e) => ({
+      ...e,
+      userId:      e.id || e.userId || e.employeeId,
+      id:          e.id || e.userId || e.employeeId,
+      primaryRole: e.hrRole || e.primaryRole || e.role,
+      displayName: e.displayName || `${e.firstName || ''} ${e.lastName || ''}`.trim() || e.email || 'Employee',
+    }));
+  } catch {
+    return [];
+  }
+}
+
 // ── Role-based approver match (pure logic, no Firebase) ──────────────────────
 // Used by timesheets.js to determine if an approver's role matches the employee.
 // Rules: teamManager can approve their reports, siteManager can approve anyone
@@ -156,6 +175,7 @@ const teamsService = {
   addMemberToTeam,
   removeMemberFromTeam,
   subscribeToTeams,
+  getManagedEmployeesForManager,
 };
 
 export default teamsService;

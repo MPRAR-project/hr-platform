@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import Header from "../../components/layout/Header";
 import UserListItem from "../../components/shared/UserListItem";
 import { useAuth } from "../../hooks/useAuth";
-import { getTeamMembers } from "../../services/teams";
+import { getTeamMembers, getManagedEmployeesForManager } from "../../services/teams";
 import { getUserDisplayName } from "../../utils/dataParser";
 import Loader from "../../components/ui/Loader";
 import OnboardingManagementPage from "../onboarding/OnboardingManagementPage";
@@ -106,7 +106,7 @@ const MyTeamPage = () => {
         } else {
           // Other managers only see their direct reports
           console.log('[MyTeamPage] Regular manager detected - fetching direct reports only');
-          members = await getTeamMembers(user.uid, companyId);
+          members = await getManagedEmployeesForManager(user.uid, companyId);
           console.log('[MyTeamPage] Fetched team members:', members.length);
         }
 
