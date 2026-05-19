@@ -554,7 +554,7 @@ const DocumentManagementPage = () => {
 
       if (user.role === 'teamManager') {
         // Team managers can only see their managed employees
-        const managedIds = await getManagedEmployeeIdsForManager(user.uid, companyId);
+        const managedIds = new Set(await getManagedEmployeeIdsForManager(user.uid, companyId));
 
         if (managedIds.size === 0) {
           return [];

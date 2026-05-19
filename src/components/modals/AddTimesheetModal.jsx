@@ -4,7 +4,7 @@ import { toast } from 'react-toastify';
 import Button from '../ui/Button';
 import { useAuth } from '../../hooks/useAuth';
 import { useTimesheetContext } from '../../contexts/TimesheetContext';
-import { getWeekStartIndex, formatISODate, getWeekRangeForDate, WEEKDAY_CODES_LIST } from '../../utils/weekStartUtils';
+import { getWeekStartIndex, formatISODate, getWeekRangeForDate, WEEKDAY_CODES_LIST, DEFAULT_WEEK_START_DAY } from '../../utils/weekStartUtils';
 import { createBlankTimesheet } from '../../services/timesheetCreation';
 
 /**

@@ -59,7 +59,7 @@ const BillingMockTools = () => {
         historyNote: ''
       });
 
-      const currentSummary = await getBillingSummary(normalizedCompanyId);
+      const currentSummary = await getBillingSummary();
       setSummary(currentSummary);
       toast.success('Company loaded via REST');
     } catch (error) {
@@ -85,7 +85,7 @@ const BillingMockTools = () => {
         currentEmployeeCount: Number(billingState.currentEmployees) || 0,
       });
       
-      const currentSummary = await getBillingSummary(normalizedCompanyId);
+      const currentSummary = await getBillingSummary();
       setSummary(currentSummary);
       toast.success('Billing fields saved via REST');
     } catch (error) {
@@ -105,7 +105,7 @@ const BillingMockTools = () => {
     try {
       setIsLoading(true);
       await startTrial(normalizedCompanyId, seats);
-      const currentSummary = await getBillingSummary(normalizedCompanyId);
+      const currentSummary = await getBillingSummary();
       setSummary(currentSummary);
       toast.success('Trial initialized');
     } catch (error) {
@@ -125,7 +125,7 @@ const BillingMockTools = () => {
     try {
       setIsLoading(true);
       await recordSubscriptionPayment(normalizedCompanyId, seats);
-      const currentSummary = await getBillingSummary(normalizedCompanyId);
+      const currentSummary = await getBillingSummary();
       setSummary(currentSummary);
       toast.success('Subscription renewed (mock)');
     } catch (error) {
@@ -145,7 +145,7 @@ const BillingMockTools = () => {
     try {
       setIsLoading(true);
       await recordSeatTopUp(normalizedCompanyId, increment);
-      const currentSummary = await getBillingSummary(normalizedCompanyId);
+      const currentSummary = await getBillingSummary();
       setSummary(currentSummary);
       toast.success(`Added ${increment} seat(s)`);
     } catch (error) {

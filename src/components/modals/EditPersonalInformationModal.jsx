@@ -69,7 +69,7 @@ const EditPersonalInformationModal = ({ isOpen, onClose, userId, companyId, curr
       const identification = currentData.identification || {};
 
       // Prioritize firstName/lastName from user document over parsed display name
-      // Get user document data to access actual firstName/lastName fields
+      let userDocData = {};
       try {
         const userData = await getUserById(userId);
         if (userData) {

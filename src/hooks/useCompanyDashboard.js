@@ -67,7 +67,7 @@ export function useCompanyDashboard(companyId) {
       setData(prev => ({
         ...prev,
         // Employee counts
-        totalUsers:    activeEmployees,
+        totalUsers:    totalEmployees,
         activeUsers:   activeEmployees,
         totalEmployees,
         activeEmployees,

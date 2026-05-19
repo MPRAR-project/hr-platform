@@ -183,12 +183,13 @@ const MyCompanyPage = () => {
   const initials     = name.trim().split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
   const isActive     = status === 'active';
 
-  // Normalise addons
+  // Normalise addons — backend returns `plugins` field
+  const rawAddons = company?.plugins ?? company?.addons;
   let addons = [];
-  if (Array.isArray(company?.addons)) {
-    addons = company.addons;
-  } else if (company?.addons && typeof company.addons === 'object') {
-    addons = Object.entries(company.addons).map(([k, v]) => ({
+  if (Array.isArray(rawAddons)) {
+    addons = rawAddons;
+  } else if (rawAddons && typeof rawAddons === 'object') {
+    addons = Object.entries(rawAddons).map(([k, v]) => ({
       addon_key: k,
       active: v === true || v?.active === true,
     }));

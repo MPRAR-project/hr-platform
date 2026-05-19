@@ -57,6 +57,13 @@ const TimesheetManagementPage = ({ userRole = 'employee' }) => {
     }
   }, [effectiveRoleKey]);
   const [activeTab, setActiveTab] = useState(location.state?.activeTab || availableTabs[0].label);
+
+  // Keep activeTab valid when the available tabs change (e.g. role resolves after auth loads)
+  useEffect(() => {
+    if (!availableTabs.some(t => t.label === activeTab)) {
+      setActiveTab(availableTabs[0].label);
+    }
+  }, [availableTabs, activeTab]);
   const [mainTab, setMainTab] = useState('timesheet'); // 'timesheet' or 'browser'
   const [searchQuery, setSearchQuery] = useState('');
   const deferredSearchQuery = useDeferredValue(searchQuery); // ✅ Debounced search
@@ -218,7 +225,7 @@ const TimesheetManagementPage = ({ userRole = 'employee' }) => {
       if (user?.uid && user?.companyId && roleKey && !COMPANY_WIDE_ACCESS_ROLE_KEYS.has(roleKey)) {
         try {
           const ids = await getManagedEmployeeIdsForManager(user.uid, user.companyId);
-          setManagedIds(ids);
+          setManagedIds(new Set(ids));
         } catch (e) {
           console.error("Failed to fetch managed IDs", e);
         }

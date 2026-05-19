@@ -79,7 +79,7 @@ const ManageTeamRenewalPage = ({ onContinuePayment }) => {
     }
     try {
       setIsBillingLoading(true);
-      const summary = await getBillingSummary(companyId);
+      const summary = await getBillingSummary();
       setBillingSummary(summary);
     } catch (error) {
       console.error('Failed to load billing summary:', error);

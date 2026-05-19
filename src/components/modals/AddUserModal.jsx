@@ -159,7 +159,7 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
         }
 
         // Check reportsTo field only for non-manager roles
-        if (shouldShowReportsTo(user.role) && !user.reportsTo?.trim()) {
+        if (shouldShowReportsTo(getCanonicalRole(user.role)) && !user.reportsTo?.trim()) {
             return false;
         }
 

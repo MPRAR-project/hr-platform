@@ -20,11 +20,25 @@ function normalizeDates(obj) {
   return out;
 }
 
+// ── Helper: normalize course fields (DB uses `title`, UI uses `name`) ─────────
+function normalizeCourse(course) {
+  if (!course || typeof course !== 'object') return course;
+  return {
+    ...normalizeDates(course),
+    name:              course.name  || course.title  || '',
+    title:             course.title || course.name   || '',
+    estimatedDuration: course.estimatedDuration || course.duration || 60,
+    category:          course.category || (course.isMandatory ? 'Mandatory' : 'Technical'),
+    trainingType:      course.trainingType || course.category || (course.isMandatory ? 'Mandatory on Sign Up' : 'Technical'),
+    status:            course.status || 'active',
+  };
+}
+
 // ── Get All Training Courses ──────────────────────────────────────────────────
 export async function getTrainingCourses(companyId) {
   try {
     const { data } = await hrApiClient.get('/hr/training');
-    return (data.courses || data || []).map(normalizeDates);
+    return (data.courses || data || []).map(normalizeCourse);
   } catch (err) {
     if (err.response?.status === 403) return [];
     throw new Error(err.response?.data?.error || 'Failed to fetch training courses');
@@ -35,7 +49,7 @@ export async function getTrainingCourses(companyId) {
 export async function getTrainingCourse(courseId) {
   try {
     const { data } = await hrApiClient.get(`/hr/training/${courseId}`);
-    return normalizeDates(data);
+    return normalizeCourse(data);
   } catch (err) {
     if (err.response?.status === 404) return null;
     throw new Error(err.response?.data?.error || 'Failed to fetch training course');
@@ -63,7 +77,7 @@ export async function createTrainingCourse(courseData, companyId, createdBy) {
 export async function updateTrainingCourse(courseId, updateData) {
   try {
     const { data } = await hrApiClient.put(`/hr/training/${courseId}`, updateData);
-    return normalizeDates(data);
+    return normalizeCourse(data);
   } catch (err) {
     if (err.response?.status === 404) throw new Error('Training course not found');
     if (err.response?.status === 403) throw new Error('Permission denied');

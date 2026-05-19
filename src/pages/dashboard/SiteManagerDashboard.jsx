@@ -82,7 +82,7 @@ const SiteManagerDashboard = () => {
       try {
         const companyId = parseCompanyId(user?.companyId);
         if (companyId) {
-          const billingSummary = await getBillingSummary(companyId);
+          const billingSummary = await getBillingSummary();
           setIsInTrial(billingSummary?.subscriptionStatus === 'trial' && !billingSummary?.isExpired);
         }
       } catch (error) {
@@ -97,7 +97,7 @@ const SiteManagerDashboard = () => {
 
   const handleSeatPaymentConfirm = async (seatCount = 1) => {
     try {
-      const companyId = parseCompanyId(user.companyId);
+      if (!user) return;
       console.log('handleSeatPaymentConfirm called with:', { seatCount, companyId });
 
       const result = await recordSeatTopUp(companyId, seatCount);
@@ -162,7 +162,7 @@ const SiteManagerDashboard = () => {
       }
 
       // seat availability check via billing
-      const billingSummary = await getBillingSummary(companyId);
+      const billingSummary = await getBillingSummary();
       if (billingSummary) {
         const seat = billingSummary.seatCount || 0;
         const curr = billingSummary.currentEmployeeCount || 0;
@@ -190,7 +190,7 @@ const SiteManagerDashboard = () => {
   };
 
   const handleEdit = (id) => {
-    const member = dashboardData.teamMembers.find(m => m.id === id);
+    const member = dashboardData?.teamMembers?.find(m => m.id === id);
     setSelectedUser(member);
     setShowEditModal(true);
   };

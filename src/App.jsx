@@ -10,6 +10,7 @@ import AppRouter from './Router';
 import ScrollToTop from './components/layout/ScrollToTop';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
+import ErrorBoundary from './components/ui/ErrorBoundary';
 // Performance monitoring
 import performanceMonitor from './utils/performanceMonitor';
 
@@ -28,7 +29,9 @@ const App = () => {
                     <UIProvider>
                         <ClockSessionProvider>
                             <TimesheetProvider>
-                                <AppRouter />
+                                <ErrorBoundary>
+                                  <AppRouter />
+                                </ErrorBoundary>
                                 <ScrollToTop showAfter={500} position="right" />
                                 <ToastContainer
                                     position="top-right"

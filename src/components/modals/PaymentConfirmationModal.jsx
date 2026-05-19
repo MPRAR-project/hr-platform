@@ -23,7 +23,8 @@ const PaymentConfirmationModal = ({
   if (!isOpen) return null;
 
   const totalUnits = isSeatPurchase ? seatCount : users.length;
-  const totalCost = (totalUnits * pricePerUser).toFixed(2);
+  const _rawCost = totalUnits * Number(pricePerUser);
+  const totalCost = isNaN(_rawCost) ? '—' : _rawCost.toFixed(2);
 
   const handleConfirmClick = async () => {
     if (typeof onConfirm !== 'function') return;
@@ -94,7 +95,7 @@ const PaymentConfirmationModal = ({
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-[13px] text-text-secondary">Price per seat:</span>
-                    <span className="text-md font-semibold text-text-primary">£{pricePerUser.toFixed(2)}</span>
+                    <span className="text-md font-semibold text-text-primary">£{Number(pricePerUser || 0).toFixed(2)}</span>
                   </div>
                 </>
               ) : (
@@ -105,7 +106,7 @@ const PaymentConfirmationModal = ({
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-[13px] text-text-secondary">Price per user per month:</span>
-                    <span className="text-md font-semibold text-text-primary">£{pricePerUser.toFixed(2)}</span>
+                    <span className="text-md font-semibold text-text-primary">£{Number(pricePerUser || 0).toFixed(2)}</span>
                   </div>
                 </>
               )}

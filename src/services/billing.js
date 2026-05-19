@@ -24,7 +24,7 @@ export const updateBillingConfig = async (companyId, config) => {
   }
 };
 
-export const getBillingSummary = async (companyId) => {
+export const getBillingSummary = async () => {
   try {
     const { data } = await hrApiClient.get('/hr/billing/summary');
     return data;
@@ -50,7 +50,7 @@ export const startTrial = async (companyId, seatCount) => {
 
 export const recordSubscriptionPayment = async (companyId, seatCountOverride = null) => {
   // This is now handled server-side or via Stripe
-  return getBillingSummary(companyId);
+  return getBillingSummary();
 };
 
 export const recordSeatTopUp = async (companyId, addedSeats = 1, requestId = null) => {

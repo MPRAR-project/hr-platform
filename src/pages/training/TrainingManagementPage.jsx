@@ -42,32 +42,14 @@ const TrainingManagementPage = () => {
   const [statistics, setStatistics] = useState({});
   const [error, setError] = useState(null);
 
-  // Skeleton-first: show layout shell when user not yet available
-  if (!user) {
-    return (
-      <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-6 animate-pulse">
-        <div className="h-8 bg-gray-200 rounded w-64" />
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="bg-white rounded-lg border border-gray-200 p-6">
-              <div className="h-4 bg-gray-200 rounded w-20 mb-2" />
-              <div className="h-8 bg-gray-200 rounded w-16 mb-2" />
-              <div className="h-3 bg-gray-200 rounded w-32" />
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  // Determine available tabs based on role
+  // Determine available tabs based on role — safe when user is null
   const getAvailableTabs = () => {
+    if (!user) return [{ label: 'My Training' }];
     if (user.role === 'siteManager') {
       return [{ label: 'Employee Training' }];
     } else if (user.role === 'employee') {
       return [{ label: 'My Training' }];
     } else {
-      // teamManager, admin, superUser, etc. have both
       return [{ label: 'My Training' }, { label: 'Employee Training' }];
     }
   };
@@ -75,7 +57,7 @@ const TrainingManagementPage = () => {
   const availableTabs = getAvailableTabs();
   // Read params from URL to persist state across refreshes
   const queryParams = new URL(window.location.href).searchParams;
-  
+
   const getInitialSuperTab = () => {
     const urlTab = queryParams.get('tab');
     if (urlTab && availableTabs.some(t => t.label === urlTab)) return urlTab;
@@ -125,12 +107,12 @@ const TrainingManagementPage = () => {
 
   // User capabilities based on role
   const userCapabilities = {
-    canCreateTraining: trainingPermissionService.hasPermission(user.role, 'createTraining'),
-    canEditTraining: trainingPermissionService.hasPermission(user.role, 'editTraining'),
-    canDeleteTraining: trainingPermissionService.hasPermission(user.role, 'deleteTraining'),
-    canAssignTraining: trainingPermissionService.hasPermission(user.role, 'assignTraining'),
-    canApproveTraining: trainingPermissionService.hasPermission(user.role, 'approveTraining'),
-    canViewAnalytics: trainingPermissionService.hasPermission(user.role, 'viewAnalytics')
+    canCreateTraining: trainingPermissionService.hasPermission(user?.role, 'createTraining'),
+    canEditTraining: trainingPermissionService.hasPermission(user?.role, 'editTraining'),
+    canDeleteTraining: trainingPermissionService.hasPermission(user?.role, 'deleteTraining'),
+    canAssignTraining: trainingPermissionService.hasPermission(user?.role, 'assignTraining'),
+    canApproveTraining: trainingPermissionService.hasPermission(user?.role, 'approveTraining'),
+    canViewAnalytics: trainingPermissionService.hasPermission(user?.role, 'viewAnalytics')
   };
 
   // Extension approval permission check
@@ -374,10 +356,11 @@ const TrainingManagementPage = () => {
     let filtered = trainings;
 
     if (searchQuery) {
+      const q = searchQuery.toLowerCase();
       filtered = filtered.filter(training =>
-        training.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        training.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        training.category.toLowerCase().includes(searchQuery.toLowerCase())
+        (training.name || training.title || '').toLowerCase().includes(q) ||
+        (training.description || '').toLowerCase().includes(q) ||
+        (training.category || '').toLowerCase().includes(q)
       );
     }
 
@@ -1021,6 +1004,24 @@ const TrainingManagementPage = () => {
   const pretty = (role) =>
     role.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase());
 
+  // Show skeleton while auth context resolves — must be AFTER all hook declarations
+  if (!user) {
+    return (
+      <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-6 animate-pulse">
+        <div className="h-8 bg-gray-200 rounded w-64" />
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="bg-white rounded-lg border border-gray-200 p-6">
+              <div className="h-4 bg-gray-200 rounded w-20 mb-2" />
+              <div className="h-8 bg-gray-200 rounded w-16 mb-2" />
+              <div className="h-3 bg-gray-200 rounded w-32" />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   // Render My Training Content
   const renderMyTraining = () => {
     const userStats = getUserStats();
@@ -1145,8 +1146,9 @@ const TrainingManagementPage = () => {
                 })
                 .filter(training => {
                   if (!searchQuery) return true;
-                  return training.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                    training.description.toLowerCase().includes(searchQuery.toLowerCase());
+                  const q = searchQuery.toLowerCase();
+                  return (training.title || training.name || '').toLowerCase().includes(q) ||
+                    (training.description || '').toLowerCase().includes(q);
                 })
                 .map((training) => (
                   <div key={training.id} className="border border-border-primary rounded-base p-4xl">
@@ -1398,7 +1400,7 @@ const TrainingManagementPage = () => {
                               const userInfo = employee.userInfo;
                               if (!userInfo) return false;
                               const searchTerm = searchQuery.toLowerCase();
-                              const userName = userInfo.displayName || (userInfo.firstName + ' ' + userInfo.lastName).trim();
+                              const userName = userInfo.displayName || `${userInfo.firstName || ''} ${userInfo.lastName || ''}`.trim() || userInfo.email || '';
                               const userEmail = userInfo.email || '';
                               return (
                                 userEmail.toLowerCase().includes(searchTerm) ||
@@ -1407,16 +1409,19 @@ const TrainingManagementPage = () => {
                             }
                             return true;
                           })
+                          .filter((employee) => {
+                            const userInfo = employee.userInfo;
+                            const userName = userInfo?.displayName ||
+                              `${userInfo?.firstName || ''} ${userInfo?.lastName || ''}`.trim() ||
+                              userInfo?.email || '';
+                            return userName && userName !== 'Unknown User';
+                          })
                           .map((employee) => {
-                            // Get user info from the database
                             const userInfo = employee.userInfo;
                             const userName = userInfo?.displayName ||
                               `${userInfo?.firstName || ''} ${userInfo?.lastName || ''}`.trim() ||
                               userInfo?.email ||
                               '';
-
-                            // Skip unidentified users
-                            if (!userName || userName === 'Unknown User') return null;
 
                             const userEmail = userInfo?.email || 'unknown@company.com';
                             const userDepartment = userInfo?.employmentDetails?.department || userInfo?.department || 'Development';

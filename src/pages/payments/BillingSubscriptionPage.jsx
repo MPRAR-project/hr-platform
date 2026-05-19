@@ -94,7 +94,7 @@ const BillingSubscriptionsPage = ({ isEmbedded }) => {
         setIsLoading(true);
       }
       try {
-        const summaryData = await getBillingSummary(companyId);
+        const summaryData = await getBillingSummary();
         if (cancelled) return;
         setSummary(summaryData);
         setItem?.(cacheKey, { summary: summaryData }, 7 * 60 * 1000);
@@ -157,7 +157,7 @@ const BillingSubscriptionsPage = ({ isEmbedded }) => {
             const invoiceCount = syncResult.data?.invoiceCount || 0;
 
             // Fetch latest summary to check if it has updated
-            const summaryData = await getBillingSummary(companyId);
+            const summaryData = await getBillingSummary();
 
             // Check if the data is "fresh" - i.e., lastPaymentAt is very recent (within 5 mins)
             // or if we have a seat topup history entry from just now.
@@ -203,7 +203,7 @@ const BillingSubscriptionsPage = ({ isEmbedded }) => {
           } catch (syncErr) {
             console.warn('Failed to force sync with Stripe:', syncErr);
             // Still try to load data even if sync failed
-            const summaryData = await getBillingSummary(companyId);
+            const summaryData = await getBillingSummary();
             setSummary(summaryData);
           }
         }
@@ -709,7 +709,7 @@ const BillingSubscriptionsPage = ({ isEmbedded }) => {
         toast.success(`Successfully added ${seatsToAdd} seats.`);
 
         // Reload billing data
-        const summaryData = await getBillingSummary(companyId);
+        const summaryData = await getBillingSummary();
         setSummary(summaryData);
         setShowAddSeatsModal(false);
       }

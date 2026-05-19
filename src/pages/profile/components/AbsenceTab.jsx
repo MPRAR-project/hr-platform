@@ -21,10 +21,11 @@ export const AbsencesTab = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Load user's absences on component mount
+  // Load user's absences on component mount and when user changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     loadAbsences();
-  }, [user]);
+  }, [user?.userId]);
 
   const loadAbsences = async () => {
     if (!user) return;

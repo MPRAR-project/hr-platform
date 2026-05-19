@@ -41,7 +41,7 @@ const OfflinePaymentSubmissionPage = () => {
       const companyName = c?.name || 'Your Company';
 
       // Fetch billing summary for amount
-      const summary = await getBillingSummary(companyId);
+      const summary = await getBillingSummary();
       setBillingSummary(summary);
       
       const amount = summary?.monthlyAmount || 0;

@@ -124,6 +124,7 @@ const UserListPage = () => {
   const [showSeatPaymentModal, setShowSeatPaymentModal] = useState(false);
   const [isInTrial, setIsInTrial] = useState(false);
   const [unarchivingUserId, setUnarchivingUserId] = useState(null);
+  const [isCheckingSeats, setIsCheckingSeats] = useState(false);
 
   // --- Pagination Hook ---
   const {
@@ -376,7 +377,7 @@ const UserListPage = () => {
       const siteId = sitePath.split('/')[1];
 
       // pre-check seat availability via billing service
-      const billingSummary = await getBillingSummary(companyId);
+      const billingSummary = await getBillingSummary();
       if (billingSummary) {
         const seat = billingSummary.seatCount || 0;
         const curr = billingSummary.currentEmployeeCount || 0;
@@ -403,7 +404,7 @@ const UserListPage = () => {
       const siteId = sitePath.split('/')[1];
 
       // pre-check seat limit via billing
-      const billingSummary = await getBillingSummary(companyId);
+      const billingSummary = await getBillingSummary();
       if (billingSummary) {
         const seat = billingSummary.seatCount || 0;
         const curr = billingSummary.currentEmployeeCount || 0;
@@ -489,7 +490,8 @@ const UserListPage = () => {
   };
 
   const handleDeleteConfirmLocal = async () => {
-    if (!selectedUser?.id) {
+    const userId = selectedUser?.id;
+    if (!userId) {
       toast.error('No user selected.');
       throw new Error('No user selected');
     }
@@ -497,19 +499,19 @@ const UserListPage = () => {
       const { archiveUser } = await import('../../services/users');
 
       // [FIX] Pass companyId to ensure we archive from the correct company and update seats
-      const effectiveCompanyId = companyId || user?.companyId || selectedUser.companyId;
+      const effectiveCompanyId = companyId || user?.companyId || selectedUser?.companyId;
 
-      await archiveUser(selectedUser.id, effectiveCompanyId);
+      await archiveUser(userId, effectiveCompanyId);
 
       // Optimistically update status
-      setOptimisticStatusUpdates(prev => ({ 
-        ...prev, 
-        [selectedUser.id]: 'archived',
-        [selectedUser.email]: 'archived'
+      setOptimisticStatusUpdates(prev => ({
+        ...prev,
+        [userId]: 'archived',
+        [selectedUser?.email]: 'archived'
       }));
 
       setShowDeleteModal(false);
-      toast.success(`${selectedUser.name || 'User'} has been deactivated/archived.`);
+      toast.success(`${selectedUser?.name || 'User'} has been deactivated/archived.`);
 
       // Trigger reload of user lists
       window.dispatchEvent(new CustomEvent('users:reload'));
@@ -639,8 +641,11 @@ const UserListPage = () => {
   };
 
   const handleAddUsersClickTM = async () => {
-    let seatUsage = dashboardData.seatUsageCount ?? dashboardData.totalUsers ?? 0;
-    let totalSeats = dashboardData.totalSeats || 0;
+    if (isCheckingSeats) return;
+    setIsCheckingSeats(true);
+    try {
+    let seatUsage = dashboardData?.seatUsageCount ?? dashboardData?.totalUsers ?? 0;
+    let totalSeats = dashboardData?.totalSeats || 0;
 
     // Smart refresh: If limit reached, try refreshing claims first to see if they bought seats
     if (seatUsage >= totalSeats && refreshClaims) {
@@ -659,7 +664,7 @@ const UserListPage = () => {
       try {
         const companyId = parseCompanyId(user?.companyId);
         if (companyId) {
-          const billingSummary = await getBillingSummary(companyId);
+          const billingSummary = await getBillingSummary();
           setIsInTrial(billingSummary?.subscriptionStatus === 'trial' && !billingSummary?.isExpired);
         }
       } catch (error) {
@@ -669,6 +674,9 @@ const UserListPage = () => {
       setShowSeatPaymentModal(true);
     } else {
       handleAddUsersTM();
+    }
+    } finally {
+      setIsCheckingSeats(false);
     }
   };
 
@@ -704,13 +712,13 @@ const UserListPage = () => {
     // Smart seat check: If we have enough seats, skip payment modal
     // We use dashboardData which is synced when the Team Management tab is active,
     // or we fetch a fresh billing summary.
-    let seatUsage = dashboardData.seatUsageCount ?? dashboardData.totalUsers ?? 0;
-    let totalSeats = dashboardData.totalSeats || 0;
+    let seatUsage = dashboardData?.seatUsageCount ?? dashboardData?.totalUsers ?? 0;
+    let totalSeats = dashboardData?.totalSeats || 0;
 
     // If dashboard data is not available (e.g. on Users tab), try fetching billing summary
     if (totalSeats === 0) {
       try {
-        const billing = await getBillingSummary(companyId);
+        const billing = await getBillingSummary();
         seatUsage = billing.activeSeatCount ?? 0;
         totalSeats = billing.seatQuota || 0;
       } catch (e) {
@@ -767,7 +775,7 @@ const UserListPage = () => {
       }
 
       // seat availability check via billing
-      const billingSummary = await getBillingSummary(companyId);
+      const billingSummary = await getBillingSummary();
       if (billingSummary) {
         const seat = billingSummary.seatCount || 0;
         const curr = billingSummary.currentEmployeeCount || 0;
@@ -866,24 +874,23 @@ const UserListPage = () => {
   };
 
   const handleDeleteConfirmTM = async () => {
-    if (!selectedUser?.id) {
+    const userId = selectedUser?.id;
+    if (!userId) {
       toast.error('No user selected.');
       throw new Error('No user selected');
     }
     try {
       const { archiveUser } = await import('../../services/users');
 
-      // Pass companyId to ensure we archive from the correct company and update seats
-      // companyId is available in component scope
-      const effectiveCompanyId = companyId || user?.companyId || selectedUser.companyId;
+      const effectiveCompanyId = companyId || user?.companyId || selectedUser?.companyId;
 
-      await archiveUser(selectedUser.id, effectiveCompanyId);
+      await archiveUser(userId, effectiveCompanyId);
 
       // Optimistically update status
       setOptimisticStatusUpdates(prev => ({
         ...prev,
-        [selectedUser.id]: 'archived',
-        [selectedUser.email]: 'archived'
+        [userId]: 'archived',
+        [selectedUser?.email]: 'archived'
       }));
 
       setShowDeleteModal(false);

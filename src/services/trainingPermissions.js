@@ -154,6 +154,25 @@ class TrainingPermissionService {
   }
 
   /**
+   * Filter a list of users down to those the current user is allowed to assign training to.
+   * Elevated roles → all users; teamManager → managed employees only; others → none.
+   */
+  async filterUsersByPermissions(user, allUsers) {
+    if (!user || !Array.isArray(allUsers)) return [];
+
+    const elevatedRoles = ['siteManager', 'adminManager', 'hrManager', 'adminAdvisor', 'hrAdvisor', 'seniorManager', 'superUser'];
+    if (elevatedRoles.includes(user.role)) return allUsers;
+
+    if (user.role === 'teamManager') {
+      const managedIds = await getManagedEmployeeIdsForManager(user.userId || user.uid, user.companyId);
+      const managedSet = new Set(managedIds);
+      return allUsers.filter(u => managedSet.has(u.id));
+    }
+
+    return [];
+  }
+
+  /**
    * Filter trainings based on user permissions
    */
   async filterTrainingsByPermissions(user, trainings) {

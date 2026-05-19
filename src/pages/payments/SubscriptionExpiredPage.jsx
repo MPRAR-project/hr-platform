@@ -95,7 +95,7 @@ const SubscriptionExpiredPage = () => {
         }
         try {
             setIsLoading(true);
-            const summary = await getBillingSummary(user.companyId);
+            const summary = await getBillingSummary();
             setBillingSummary(summary);
         } catch (error) {
             console.error('Failed to load billing summary', error);

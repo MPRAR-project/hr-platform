@@ -64,7 +64,7 @@ const SeatSettingsTab = () => {
                 // Check if company is in trial period
                 let trialStatus = false;
                 try {
-                    const billingSummary = await getBillingSummary(companyId);
+                    const billingSummary = await getBillingSummary();
                     trialStatus = billingSummary?.subscriptionStatus === 'trial' && !billingSummary?.isExpired;
                     setIsInTrial(trialStatus);
                 } catch (error) {

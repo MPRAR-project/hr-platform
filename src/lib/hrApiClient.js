@@ -16,22 +16,25 @@ import axios from 'axios';
 
 const BASE_URL = import.meta.env.VITE_HR_API_URL || 'http://localhost:5001';
 
-// ── Token storage keys ────────────────────────────────────────────────────────
-const ACCESS_KEY  = 'hr_access_token';
-const REFRESH_KEY = 'hr_refresh_token';
+// ── Token storage ─────────────────────────────────────────────────────────────
+// Access token is kept in memory only (never localStorage) to mitigate XSS.
+// Refresh token lives exclusively in an httpOnly cookie set by the backend.
+let _accessToken = null;
 
 export const tokenStore = {
-  getAccess:     ()      => localStorage.getItem(ACCESS_KEY),
-  getRefresh:    ()      => localStorage.getItem(REFRESH_KEY),
-  setAccess:     (token) => localStorage.setItem(ACCESS_KEY, token),
-  setTokens:     (access, refresh) => {
-    localStorage.setItem(ACCESS_KEY,  access);
-    if (refresh) localStorage.setItem(REFRESH_KEY, refresh);
+  getAccess:  ()      => _accessToken,
+  getRefresh: ()      => null, // httpOnly cookie — not accessible from JS
+  setAccess:  (token) => { _accessToken = token; },
+  setTokens:  (access, _refresh) => {
+    _accessToken = access;
+    // refresh is in httpOnly cookie — nothing to store here
   },
   clearAll: () => {
-    localStorage.removeItem(ACCESS_KEY);
-    localStorage.removeItem(REFRESH_KEY);
+    _accessToken = null;
     localStorage.removeItem('mprar_auth_cache_v1');
+    // Legacy cleanup in case old tokens exist in localStorage
+    localStorage.removeItem('hr_access_token');
+    localStorage.removeItem('hr_refresh_token');
   },
 };
 
@@ -80,13 +83,6 @@ hrApiClient.interceptors.response.use(
       error.response?.status === 401 &&
       !originalRequest._retry
     ) {
-      // If no refresh token stored, go straight to logout
-      const refreshToken = tokenStore.getRefresh();
-      if (!refreshToken) {
-        handleLogout();
-        return Promise.reject(error);
-      }
-
       if (isRefreshing) {
         // Queue requests while refresh is in progress
         return new Promise((resolve, reject) => {
@@ -103,9 +99,10 @@ hrApiClient.interceptors.response.use(
       isRefreshing = true;
 
       try {
+        // Refresh token lives in httpOnly cookie — sent automatically via withCredentials
         const { data } = await axios.post(
           `${BASE_URL}/hr/auth/refresh`,
-          { refreshToken },
+          {},
           { withCredentials: true }
         );
 

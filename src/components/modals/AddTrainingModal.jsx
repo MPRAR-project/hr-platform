@@ -193,7 +193,7 @@ const AddTrainingModal = ({ isOpen, onClose, employee, onAdd, training = null })
               value={formData.name}
               onChange={(e) => handleChange('name', e.target.value)}
               placeholder="Enter training name..."
-              pattern="[A-Za-z\s\-\_\.\/\,\!\?\:\;\(\)\[\]\{\}]+"
+              pattern="[A-Za-z\s\-.\/,!?:;()\[\]{}]+"
               title="Only alphabetic characters and special symbols are allowed (no numbers)"
               className="w-full h-12 px-4 border border-border-secondary rounded-lg text-md text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-border-accent-purple"
             />

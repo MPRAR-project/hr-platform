@@ -121,11 +121,9 @@ export async function getCompanyPlugins(companyId) {
 export async function updateCompanyProfile(companyId, updateData) {
     try {
         const { data } = await hrApiClient.put('/hr/company', updateData);
-        toast.success('Company profile updated successfully');
         return data;
     } catch (error) {
         console.error('[companyManagementService] Profile update failed:', error);
-        toast.error(error.response?.data?.error || 'Failed to update company profile');
         throw error;
     }
 }

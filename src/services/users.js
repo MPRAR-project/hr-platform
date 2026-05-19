@@ -396,14 +396,10 @@ export async function archiveUser(userId, companyId = null) {
   } catch (err) {
     throw new Error(err.response?.data?.error || `Failed to archive user: ${err.message}`);
   }
-
-  // Best-effort Central sync
-  if (companyId) {
-    await syncUserToCentral(userId, companyId, { status: 'archived' });
-  }
-
+  // HR backend already syncs status to Central via the internal route.
+  // Do NOT call syncUserToCentral here — it triggers a Central→HR back-sync
+  // that corrupts the HR DB status ('inactive' overwrites 'archived').
   return { ok: true };
-
 }
 
 // ── Unarchive user ────────────────────────────────────────────────────────────
@@ -413,14 +409,8 @@ export async function unarchiveUser(userId, companyId = null) {
   } catch (err) {
     throw new Error(err.response?.data?.error || `Failed to unarchive user: ${err.message}`);
   }
-
-  // Best-effort Central sync
-  if (companyId) {
-    await syncUserToCentral(userId, companyId, { status: 'active' });
-  }
-
+  // HR backend already syncs status to Central via the internal route.
   return { ok: true };
-
 }
 
 // ── Subscribe to company users (REST + focus-event poll) ─────────────────────

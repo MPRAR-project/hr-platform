@@ -23,6 +23,9 @@ const WS_URL = (() => {
   return raw;
 })();
 
+// REST base derived from the WS URL (used to fetch ws-tickets)
+const REST_BASE = WS_URL.startsWith('wss://') ? WS_URL.replace('wss://', 'https://') : WS_URL.replace('ws://', 'http://');
+
 class WsClient {
   constructor() {
     this._ws       = null;
@@ -32,6 +35,8 @@ class WsClient {
     this._reconnectDelay = 2000;
     this._maxDelay       = 30000;
     this._intentionalClose = false;
+    this._retryCount       = 0;
+    this._maxRetries       = 10;
   }
 
   // ── Register event handler ─────────────────────────────────────────────────
@@ -72,6 +77,7 @@ class WsClient {
   disconnect() {
     this._intentionalClose = true;
     this._token = null;
+    this._retryCount = 0;
     if (this._reconnectTimer) {
       clearTimeout(this._reconnectTimer);
       this._reconnectTimer = null;
@@ -83,13 +89,27 @@ class WsClient {
   }
 
   // ── Phase 6 — real socket ─────────────────────────────────────────────────
-  _openSocket() {
+  async _openSocket() {
     this._intentionalClose = false;
-    this._ws = new WebSocket(`${WS_URL}?token=${this._token}`);
+
+    // Fetch a one-time ticket so the JWT never appears in the WS URL
+    let wsUrl = `${WS_URL}?token=${this._token}`; // fallback
+    try {
+      const resp = await fetch(`${REST_BASE}/hr/auth/ws-ticket`, {
+        headers: { Authorization: `Bearer ${this._token}` },
+      });
+      if (resp.ok) {
+        const { ticket } = await resp.json();
+        wsUrl = `${WS_URL}?ticket=${ticket}`;
+      }
+    } catch { /* fallback to token in URL if ticket fetch fails */ }
+
+    this._ws = new WebSocket(wsUrl);
 
     this._ws.onopen = () => {
       console.log('[wsClient] Connected');
-      this._reconnectDelay = 2000; // Reset backoff
+      this._reconnectDelay = 2000;
+      this._retryCount = 0; // reset on successful connection
     };
 
     this._ws.onmessage = (e) => {
@@ -102,7 +122,13 @@ class WsClient {
 
     this._ws.onclose = () => {
       if (!this._intentionalClose) {
-        console.log(`[wsClient] Disconnected — retrying in ${this._reconnectDelay}ms`);
+        this._retryCount++;
+        if (this._retryCount > this._maxRetries) {
+          console.warn('[wsClient] Max reconnect attempts reached — giving up. Refresh the page to reconnect.');
+          this._emit('ws:disconnected', { reason: 'max_retries' });
+          return;
+        }
+        console.log(`[wsClient] Disconnected — retrying in ${this._reconnectDelay}ms (attempt ${this._retryCount}/${this._maxRetries})`);
         this._reconnectTimer = setTimeout(() => {
           this._reconnectDelay = Math.min(this._reconnectDelay * 2, this._maxDelay);
           this._openSocket();

@@ -61,7 +61,9 @@ export const AuthProvider = ({ children }) => {
   });
 
   const [role, setRole]                           = useState(() => authedUser?.role || null);
-  const [isLoading, setIsLoading]                 = useState(!authedUser);
+  // Always start loading=true so components don't fire API calls before bootstrap
+  // restores the in-memory access token (memory-only token is lost on every page load).
+  const [isLoading, setIsLoading]                 = useState(true);
   const [weekStartDay, setWeekStartDay]           = useState(DEFAULT_WEEK_START_DAY);
   const [isWeekStartLoading, setIsWeekStartLoading] = useState(false);
   const [companySettings, setCompanySettings]     = useState(null);
@@ -75,10 +77,23 @@ export const AuthProvider = ({ children }) => {
     initDoneRef.current = true;
 
     const bootstrap = async () => {
-      const tokenUser = getCurrentUser(); // decode JWT from localStorage — no network
+      // Access token is memory-only — refresh from httpOnly cookie on every page load
+      let tokenUser = getCurrentUser();
 
       if (!tokenUser) {
-        // No valid token — clear stale cache and show login
+        // No token in memory — try refreshing from the httpOnly refresh cookie
+        try {
+          const { data } = await import('../lib/hrApiClient').then(m => m.default.post('/hr/auth/refresh'));
+          if (data?.accessToken) {
+            tokenStore.setAccess(data.accessToken);
+            tokenUser = getCurrentUser();
+          }
+        } catch {
+          // Cookie absent or expired — require re-login
+        }
+      }
+
+      if (!tokenUser) {
         tokenStore.clearAll();
         localStorage.removeItem(AUTH_CACHE_KEY);
         setAuthedUser(null);
@@ -87,7 +102,7 @@ export const AuthProvider = ({ children }) => {
         return;
       }
 
-      // We have a valid token — fetch fresh employee profile in background
+      // We have a valid token — fetch fresh employee profile
       try {
         const employee = await fetchMyProfile();
         if (employee) {
@@ -96,14 +111,12 @@ export const AuthProvider = ({ children }) => {
           wsClient.connect(tokenStore.getAccess());
           await loadCompanySettings(normalized.companyId);
         } else {
-          // Profile 404 — clear and require re-login
           handleForceLogout();
         }
       } catch (err) {
         // Network error — use cache for offline resilience
         console.warn('[AuthContext] Profile fetch failed, using cache:', err.message);
         if (authedUser) {
-          // Keep existing cache — don't clear
           setIsLoading(false);
         } else {
           handleForceLogout();

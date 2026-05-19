@@ -31,7 +31,7 @@ const SubscriptionGuard = ({ children }) => {
       }
 
       try {
-        const summary = await getBillingSummary(user.companyId);
+        const summary = await getBillingSummary();
         if (isMounted) {
           setState({
             checking: false,

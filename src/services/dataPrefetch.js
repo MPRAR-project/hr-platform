@@ -72,7 +72,7 @@ async function prefetchHROnboarding(companyId, setItem) {
 
 async function prefetchBilling(companyId, setItem) {
   try {
-    const summary = await getBillingSummary(companyId);
+    const summary = await getBillingSummary();
     setItem(`billing_${companyId}`, { summary }, CACHE_TTL);
   } catch (_) { }
 }
