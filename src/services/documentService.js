@@ -21,8 +21,8 @@ class DocumentService {
     /**
      * Get document types
      */
-    async getDocumentTypes() {
-        return [
+    async getDocumentTypes(companyId) {
+        const defaults = [
             { value: 'passport', label: 'Passport' },
             { value: 'driving_license', label: 'Driving License' },
             { value: 'national_id', label: 'National ID' },
@@ -37,6 +37,64 @@ class DocumentService {
             { value: 'insurance_document', label: 'Insurance Document' },
             { value: 'other', label: 'Other Document' }
         ];
+        
+        try {
+            if (companyId) {
+                const stored = localStorage.getItem(`document_types_${companyId}`);
+                if (stored) {
+                    const customTypes = JSON.parse(stored);
+                    return [...defaults, ...customTypes];
+                }
+            }
+        } catch (e) {
+            console.error('[DocumentService] Error reading custom document types:', e);
+        }
+        
+        return defaults;
+    }
+
+    /**
+     * Add a custom document type
+     */
+    async addDocumentType(companyId, typeData) {
+        try {
+            if (!companyId) throw new Error('Company ID is required to add document type');
+            const stored = localStorage.getItem(`document_types_${companyId}`);
+            const customTypes = stored ? JSON.parse(stored) : [];
+            
+            const newType = {
+                id: `custom_${Date.now()}`,
+                value: typeData.label.toLowerCase().replace(/[^a-z0-9]+/g, '_'),
+                label: typeData.label,
+                description: typeData.description || ''
+            };
+            
+            customTypes.push(newType);
+            localStorage.setItem(`document_types_${companyId}`, JSON.stringify(customTypes));
+            return { success: true, data: newType };
+        } catch (error) {
+            console.error('[DocumentService] Error adding custom document type:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Delete a custom document type
+     */
+    async deleteDocumentType(companyId, typeId) {
+        try {
+            if (!companyId) throw new Error('Company ID is required to delete document type');
+            const stored = localStorage.getItem(`document_types_${companyId}`);
+            if (stored) {
+                let customTypes = JSON.parse(stored);
+                customTypes = customTypes.filter(t => t.id !== typeId);
+                localStorage.setItem(`document_types_${companyId}`, JSON.stringify(customTypes));
+            }
+            return { success: true };
+        } catch (error) {
+            console.error('[DocumentService] Error deleting custom document type:', error);
+            throw error;
+        }
     }
 
     /**
@@ -158,6 +216,34 @@ class DocumentService {
     }
 
     /**
+     * Approve a document
+     */
+    async approveDocument(documentId, userId, role, companyId, notes = null) {
+        try {
+            const { data: docs } = await this.getDocuments(companyId, role, userId, { id: documentId });
+            const matchingDoc = Array.isArray(docs) ? docs.find(d => d.id === documentId) : docs;
+            const requestId = matchingDoc?.requestId || null;
+            return this.updateDocumentStatus(documentId, requestId, 'approved', notes);
+        } catch (error) {
+            return this.updateDocumentStatus(documentId, null, 'approved', notes);
+        }
+    }
+
+    /**
+     * Decline a document
+     */
+    async declineDocument(documentId, userId, role, companyId, reason = null) {
+        try {
+            const { data: docs } = await this.getDocuments(companyId, role, userId, { id: documentId });
+            const matchingDoc = Array.isArray(docs) ? docs.find(d => d.id === documentId) : docs;
+            const requestId = matchingDoc?.requestId || null;
+            return this.updateDocumentStatus(documentId, requestId, 'declined', reason);
+        } catch (error) {
+            return this.updateDocumentStatus(documentId, null, 'declined', reason);
+        }
+    }
+
+    /**
      * Delete document
      */
     async deleteDocument(documentId) {
@@ -166,6 +252,43 @@ class DocumentService {
             return { success: true };
         } catch (error) {
             console.error('[DocumentService] Error deleting document:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Update document
+     */
+    async updateDocument(documentId, updates, userId, role, companyId) {
+        try {
+            const { data } = await hrApiClient.put(`/hr/documents/${documentId}`, {
+                title: updates.documentTitle || updates.title,
+                description: updates.description,
+                documentType: updates.documentType,
+                metadata: updates.metadata
+            });
+            return { success: true, data };
+        } catch (error) {
+            console.error('[DocumentService] Error updating document:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Update a document request
+     */
+    async updateDocumentRequest(requestId, updates, userId, role, companyId) {
+        try {
+            const { data } = await hrApiClient.put(`/hr/document-requests/${requestId}`, {
+                documentTitle: updates.documentTitle,
+                description: updates.description,
+                documentType: updates.documentType,
+                priority: updates.priority,
+                dueDate: updates.dueDate
+            });
+            return { success: true, data };
+        } catch (error) {
+            console.error('[DocumentService] Error updating document request:', error);
             throw error;
         }
     }
@@ -214,6 +337,20 @@ class DocumentService {
         this.getDocuments(companyId, 'employee', userId).then(res => callback(res));
         
         return () => wsClient.off('document:updated');
+    }
+
+    subscribeUserRequests(companyId, userId, callback) {
+        // Use wsClient for real-time updates in Phase 6
+        wsClient.on('document-request:updated', (data) => {
+            if (data.employeeId === userId) {
+                this.getDocumentRequests(companyId, 'employee', userId).then(res => callback(res));
+            }
+        });
+        
+        // Initial fetch
+        this.getDocumentRequests(companyId, 'employee', userId).then(res => callback(res));
+        
+        return () => wsClient.off('document-request:updated');
     }
 
     subscribeDocuments(companyId, role, userId, callback) {

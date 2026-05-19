@@ -188,6 +188,10 @@ const DocumentManagementPage = () => {
   // Filtered list for "Employee Documents" tab
   const filteredEmployeeData = useMemo(() => {
     return (employeeTrainingData || []).filter(employee => {
+      const name = (employee?.userInfo?.displayName || 
+                    (employee?.userInfo?.firstName ? `${employee?.userInfo?.firstName} ${employee?.userInfo?.lastName || ''}`.trim() : '')).toLowerCase();
+      if (!name || name.includes('unknown user') || name === '') return false;
+
       const role = (employee?.userInfo?.primaryRole || '').toLowerCase();
       // Exclude senior roles (Site Manager, Senior Manager)
       if (role === 'sitemanager' || role === 'seniormanager') return false;
@@ -260,6 +264,11 @@ const DocumentManagementPage = () => {
   useEffect(() => {
     if (!user?.uid || !companyId) return;
     loadDocumentData();
+    try {
+      loadMoreUsers(true);
+    } catch (e) {
+      console.error('Error pre-loading users list:', e);
+    }
   }, [user?.uid, companyId]);
 
   // Guard: render spinner if user not yet loaded (must be after all hooks)
@@ -440,19 +449,23 @@ const DocumentManagementPage = () => {
     const deduplicatedDocs = Array.from(latestDocsMap.values());
 
     deduplicatedDocs.forEach(document => {
-      const userId = document.userId;
+      const userId = document.employeeId || document.userId;
+      if (!userId) return;
 
       // Create a placeholder entry if the user isn't in paginatedUsers yet
       if (!employeeMap.has(userId)) {
-        const embeddedUser = document.user || {};
+        const embeddedUser = document.employee || document.user || {};
+        const name = embeddedUser.displayName || 
+                     (embeddedUser.firstName ? `${embeddedUser.firstName} ${embeddedUser.lastName || ''}`.trim() : '') || 
+                     'Unknown User';
         employeeMap.set(userId, {
           userId,
           userInfo: {
             id: userId,
-            displayName: embeddedUser.name || embeddedUser.displayName || 'Unknown User',
+            displayName: name,
             email: embeddedUser.email || '',
-            primaryRole: embeddedUser.role || '',
-            department: embeddedUser.department || '',
+            primaryRole: embeddedUser.role || embeddedUser.primaryRole || 'Employee',
+            department: embeddedUser.department || 'Development',
             ...embeddedUser
           },
           documents: [],
@@ -478,19 +491,23 @@ const DocumentManagementPage = () => {
     // Add requests to users, but deduplicate by title if a document exists for that title.
     // Also create placeholder entries for request owners not yet in the map.
     (requestsData || []).forEach(request => {
-      const userId = request.userId;
+      const userId = request.employeeId || request.userId;
+      if (!userId) return;
 
       // Create placeholder if the request owner isn't in paginatedUsers either
       if (!employeeMap.has(userId)) {
-        const embeddedUser = request.user || {};
+        const embeddedUser = request.employee || request.user || {};
+        const name = embeddedUser.displayName || 
+                     (embeddedUser.firstName ? `${embeddedUser.firstName} ${embeddedUser.lastName || ''}`.trim() : '') || 
+                     'Unknown User';
         employeeMap.set(userId, {
           userId,
           userInfo: {
             id: userId,
-            displayName: embeddedUser.name || embeddedUser.displayName || 'Unknown User',
+            displayName: name,
             email: embeddedUser.email || '',
-            primaryRole: embeddedUser.role || '',
-            department: embeddedUser.department || '',
+            primaryRole: embeddedUser.role || embeddedUser.primaryRole || 'Employee',
+            department: embeddedUser.department || 'Development',
             ...embeddedUser
           },
           documents: [],

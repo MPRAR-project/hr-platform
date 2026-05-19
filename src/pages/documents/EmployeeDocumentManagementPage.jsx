@@ -354,20 +354,36 @@ const EmployeeDocumentManagementPage = () => {
             if (!updatedDoc?.id) return;
 
             const companyId = user.companyId.includes('/') ? user.companyId.split('/')[1] : user.companyId;
-            const result = await documentService.updateDocument(
-                updatedDoc.id,
-                {
-                    documentTitle: updatedDoc.documentTitle,
-                    description: updatedDoc.description,
-                    documentType: updatedDoc.documentType
-                },
-                user.uid,
-                user.role,
-                companyId
-            );
+            let result;
+
+            if (updatedDoc.isRequest) {
+                result = await documentService.updateDocumentRequest(
+                    updatedDoc.id,
+                    {
+                        documentTitle: updatedDoc.documentTitle,
+                        description: updatedDoc.description,
+                        documentType: updatedDoc.documentType
+                    },
+                    user.uid,
+                    user.role,
+                    companyId
+                );
+            } else {
+                result = await documentService.updateDocument(
+                    updatedDoc.id,
+                    {
+                        documentTitle: updatedDoc.documentTitle,
+                        description: updatedDoc.description,
+                        documentType: updatedDoc.documentType
+                    },
+                    user.uid,
+                    user.role,
+                    companyId
+                );
+            }
 
             if (result.success) {
-                toast.success('Document updated successfully');
+                toast.success(updatedDoc.isRequest ? 'Document request updated successfully' : 'Document updated successfully');
                 setShowEditModal(false);
                 setSelectedItem(null);
 
@@ -379,7 +395,7 @@ const EmployeeDocumentManagementPage = () => {
                 await loadEmployeeDocumentData();
             }
         } catch (error) {
-            console.error('Error updating document:', error);
+            console.error('Error updating item:', error);
             toast.error(error.message);
         }
     };

@@ -490,10 +490,10 @@ const TrainingManagementPage = () => {
         companyId
       }, user.userId);
 
-      if (result.success) {
+      if (result) {
         toast.success('Training created successfully');
         setShowAddTrainingModal(false);
-        // Real-time subscriptions will automatically update the UI
+        loadTrainingData();
       }
     } catch (error) {
       console.error('Error creating training:', error);
@@ -512,11 +512,11 @@ const TrainingManagementPage = () => {
         companyId
       );
 
-      if (result.success) {
+      if (result) {
         toast.success('Training updated successfully');
         setShowAddTrainingModal(false);
         setSelectedTraining(null);
-        // Real-time subscriptions will automatically update the UI
+        loadTrainingData();
       }
     } catch (error) {
       console.error('Error updating training:', error);
@@ -534,11 +534,11 @@ const TrainingManagementPage = () => {
         companyId
       );
 
-      if (result.success) {
+      if (result) {
         toast.success('Training deleted successfully');
         setShowDeclineModal(false);
         setSelectedTraining(null);
-        // Real-time subscriptions will automatically update the UI
+        loadTrainingData();
       }
     } catch (error) {
       console.error('Error deleting training:', error);

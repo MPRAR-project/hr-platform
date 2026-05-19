@@ -242,13 +242,17 @@ class AllowanceService {
   // ── Get employees (those eligible for allowances) ────────────────────────
   async getEmployeesForAllowances(user) {
     try {
-      const { data } = await hrApiClient.get('/hr/users', {
+      const { data } = await hrApiClient.get('/hr/employees', {
         params: { 
-          role: 'employee',
-          includeContractors: true
+          hrRole: 'employee',
         }
       });
-      return data.users || data || [];
+      const list = data.employees || data || [];
+      return list.map(emp => ({
+        ...emp,
+        name: `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || emp.email,
+        location: emp.siteId || 'Main Office'
+      }));
     } catch (err) {
       console.error('[allowanceService] Error fetching employees:', err);
       return [];

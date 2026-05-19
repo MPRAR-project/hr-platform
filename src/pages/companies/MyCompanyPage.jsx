@@ -23,21 +23,23 @@ const fmtDate = (value) => {
 // Roles that are considered "managers" — see more company details
 const MANAGER_ROLES = ['siteManager', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor', 'superUser', 'contractManager'];
 
+const BRAND = '#7718A8';
+
 // ── Sub-components ────────────────────────────────────────────────────────────
 const InfoRow = ({ icon: Icon, label, value, href }) => (
   <div className="flex items-start gap-3 py-3 border-b border-gray-100 last:border-0">
-    <div className="w-8 h-8 rounded-lg bg-purple-50 flex items-center justify-center shrink-0 mt-0.5">
-      <Icon size={14} className="text-purple-600" />
+    <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5" style={{ background: '#F4EDFB' }}>
+      <Icon size={14} style={{ color: BRAND }} />
     </div>
     <div className="flex-1 min-w-0">
-      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-0.5">{label}</p>
+      <p className="text-[11px] font-bold text-[#667085] uppercase tracking-wider mb-0.5">{label}</p>
       {href ? (
         <a href={href} target="_blank" rel="noopener noreferrer"
-          className="text-sm font-semibold text-purple-600 hover:underline flex items-center gap-1 truncate">
+          className="text-[13px] font-semibold hover:underline flex items-center gap-1 truncate" style={{ color: BRAND }}>
           {value} <ExternalLink size={11} />
         </a>
       ) : (
-        <p className="text-sm font-semibold text-gray-800 break-words">{value || '—'}</p>
+        <p className="text-[13px] font-semibold text-[#101828] break-words">{value || '—'}</p>
       )}
     </div>
   </div>
@@ -45,33 +47,34 @@ const InfoRow = ({ icon: Icon, label, value, href }) => (
 
 const StatCard = ({ icon: Icon, label, value, color = 'purple' }) => {
   const colors = {
-    purple: 'bg-purple-50 text-purple-600',
-    green:  'bg-green-50 text-green-600',
-    blue:   'bg-blue-50 text-blue-600',
-    orange: 'bg-orange-50 text-orange-600',
+    purple: { bg: '#F4EDFB', fg: BRAND },
+    green:  { bg: '#ECFDF3', fg: '#027A48' },
+    blue:   { bg: '#EFF8FF', fg: '#175CD3' },
+    orange: { bg: '#FFF6ED', fg: '#B93815' },
   };
+  const c = colors[color] || colors.purple;
   return (
-    <div className="bg-white border border-gray-100 rounded-xl p-4 flex items-center gap-4 shadow-sm hover:shadow-md transition-shadow">
-      <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${colors[color]}`}>
-        <Icon size={20} />
+    <div className="bg-white border border-[#EAECF0] rounded-2xl p-4 flex items-center gap-4 shadow-sm hover:shadow-md transition-shadow">
+      <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: c.bg }}>
+        <Icon size={18} style={{ color: c.fg }} />
       </div>
       <div>
-        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">{label}</p>
-        <p className="text-xl font-black text-gray-800 mt-0.5 leading-none">{value}</p>
+        <p className="text-[11px] font-bold text-[#667085] uppercase tracking-wider">{label}</p>
+        <p className="text-xl font-black text-[#101828] mt-0.5 leading-none">{value}</p>
       </div>
     </div>
   );
 };
 
 const AddonBadge = ({ name, active }) => (
-  <div className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border text-sm font-semibold ${
+  <div className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border text-[13px] font-semibold ${
     active
-      ? 'bg-green-50 border-green-100 text-green-700'
-      : 'bg-gray-50 border-gray-100 text-gray-400'
+      ? 'bg-[#ECFDF3] border-[#ABEFC6] text-[#027A48]'
+      : 'bg-[#F9FAFB] border-[#EAECF0] text-[#98A2B3]'
   }`}>
     {active ? <CheckCircle2 size={14} className="shrink-0" /> : <Clock size={14} className="shrink-0" />}
     <span>{name}</span>
-    <span className={`ml-auto text-xs font-bold ${active ? 'text-green-600' : 'text-gray-400'}`}>
+    <span className={`ml-auto text-[11px] font-bold ${active ? 'text-[#027A48]' : 'text-[#98A2B3]'}`}>
       {active ? 'Active' : 'Inactive'}
     </span>
   </div>
@@ -79,17 +82,18 @@ const AddonBadge = ({ name, active }) => (
 
 const LoadingState = () => (
   <div className="space-y-4 animate-pulse">
-    <div className="bg-white border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
-      <div className="h-24 bg-purple-200" />
+    <div className="bg-white border border-[#EAECF0] rounded-2xl overflow-hidden shadow-sm">
+      <div className="h-20 bg-gradient-to-br from-purple-200 to-indigo-200" />
       <div className="p-5 space-y-3">
-        {[1,2,3,4].map(i => <div key={i} className="h-9 bg-gray-100 rounded-lg" />)}
+        {[1,2,3,4].map(i => <div key={i} className="h-9 bg-[#F2F2F7] rounded-xl" />)}
       </div>
     </div>
     <div className="grid grid-cols-2 gap-3">
-      {[1,2].map(i => <div key={i} className="h-16 bg-gray-100 rounded-xl" />)}
+      {[1,2].map(i => <div key={i} className="h-16 bg-[#F2F2F7] rounded-xl" />)}
     </div>
   </div>
 );
+
 const MyCompanyPage = () => {
   const { user } = useAuth();
   const [company, setCompany] = useState(null);
@@ -204,16 +208,16 @@ const MyCompanyPage = () => {
     <>
       <Header title="My Company" subtitle="Your company profile — synced with MPRAR Central" />
 
-      <div className="sm:px-8 px-4 py-6 max-w-3xl mx-auto space-y-5">
+      <div className="space-y-4 sm:space-y-5">
 
         {loading && <LoadingState />}
 
         {!loading && error && (
-          <div className="bg-red-50 border border-red-200 rounded-xl p-5 flex items-start gap-3 text-red-700">
-            <AlertCircle size={18} className="shrink-0 mt-0.5" />
+          <div className="bg-[#FEF3F2] border border-[#FECDCA] rounded-2xl p-5 flex items-start gap-3">
+            <AlertCircle size={18} className="shrink-0 mt-0.5 text-[#F04438]" />
             <div>
-              <p className="font-bold text-sm">Could not load company details</p>
-              <p className="text-sm mt-1 text-red-600">{error}</p>
+              <p className="font-bold text-[13px] text-[#B42318]">Could not load company details</p>
+              <p className="text-[13px] mt-1 text-[#F04438]">{error}</p>
             </div>
           </div>
         )}
@@ -221,8 +225,9 @@ const MyCompanyPage = () => {
         {!loading && !error && company && (
           <>
             {/* ── Identity Header Card ── */}
-            <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
-              <div className="px-6 py-5 bg-gradient-to-br from-purple-600 via-purple-700 to-indigo-700 flex items-center gap-4">
+            <div className="bg-white border border-[#EAECF0] rounded-2xl shadow-sm overflow-hidden">
+              {/* Header banner */}
+              <div className="px-6 py-5 flex items-center gap-4" style={{ background: `linear-gradient(135deg, ${BRAND}, #5B21B6, #4338CA)` }}>
                 {logoSrc ? (
                   <img src={logoSrc} alt={name}
                     className="w-14 h-14 rounded-xl object-contain bg-white p-1 shadow-md"
@@ -236,14 +241,14 @@ const MyCompanyPage = () => {
                 <div>
                   <h2 className="text-xl font-black text-white leading-tight">{name}</h2>
                   <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
                       isActive ? 'bg-green-400/25 text-green-100' : 'bg-red-400/25 text-red-200'
                     }`}>
                       <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-green-300' : 'bg-red-300'}`} />
                       {isActive ? 'Active' : status.charAt(0).toUpperCase() + status.slice(1)}
                     </span>
                     {industry !== '—' && !isEditing && (
-                      <span className="text-purple-200 text-xs font-medium">{industry}</span>
+                      <span className="text-purple-200 text-[11px] font-medium">{industry}</span>
                     )}
                   </div>
                 </div>
@@ -252,59 +257,60 @@ const MyCompanyPage = () => {
               {/* Detail rows */}
               <div className="px-6 py-1">
                 {isEditing ? (
-                  <div className="py-4 space-y-4">
+                  <div className="py-5 space-y-4">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
-                        <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Company Name</label>
+                        <label className="block text-[11px] font-bold text-[#667085] uppercase tracking-wider mb-1.5">Company Name</label>
                         <input 
                           type="text" 
                           value={editData.name} 
                           onChange={(e) => setEditData({...editData, name: e.target.value})}
-                          className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 outline-none transition-all"
+                          className="w-full bg-[#F9FAFB] border border-[#EAECF0] rounded-xl px-3.5 py-2.5 text-[13px] focus:ring-4 focus:ring-[#7718A8]/10 focus:border-[#7718A8] outline-none transition-all"
                         />
                       </div>
                       <div>
-                        <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Industry</label>
+                        <label className="block text-[11px] font-bold text-[#667085] uppercase tracking-wider mb-1.5">Industry</label>
                         <input 
                           type="text" 
                           value={editData.industry} 
                           onChange={(e) => setEditData({...editData, industry: e.target.value})}
-                          className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 outline-none transition-all"
+                          className="w-full bg-[#F9FAFB] border border-[#EAECF0] rounded-xl px-3.5 py-2.5 text-[13px] focus:ring-4 focus:ring-[#7718A8]/10 focus:border-[#7718A8] outline-none transition-all"
                         />
                       </div>
                       <div>
-                        <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Website</label>
+                        <label className="block text-[11px] font-bold text-[#667085] uppercase tracking-wider mb-1.5">Website</label>
                         <input 
                           type="text" 
                           value={editData.website} 
                           onChange={(e) => setEditData({...editData, website: e.target.value})}
-                          className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 outline-none transition-all"
+                          className="w-full bg-[#F9FAFB] border border-[#EAECF0] rounded-xl px-3.5 py-2.5 text-[13px] focus:ring-4 focus:ring-[#7718A8]/10 focus:border-[#7718A8] outline-none transition-all"
                         />
                       </div>
                       <div>
-                        <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Phone</label>
+                        <label className="block text-[11px] font-bold text-[#667085] uppercase tracking-wider mb-1.5">Phone</label>
                         <input 
                           type="text" 
                           value={editData.phone} 
                           onChange={(e) => setEditData({...editData, phone: e.target.value})}
-                          className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 outline-none transition-all"
+                          className="w-full bg-[#F9FAFB] border border-[#EAECF0] rounded-xl px-3.5 py-2.5 text-[13px] focus:ring-4 focus:ring-[#7718A8]/10 focus:border-[#7718A8] outline-none transition-all"
                         />
                       </div>
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Address</label>
+                      <label className="block text-[11px] font-bold text-[#667085] uppercase tracking-wider mb-1.5">Address</label>
                       <textarea 
                         rows={2}
                         value={editData.address} 
                         onChange={(e) => setEditData({...editData, address: e.target.value})}
-                        className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 outline-none transition-all resize-none"
+                        className="w-full bg-[#F9FAFB] border border-[#EAECF0] rounded-xl px-3.5 py-2.5 text-[13px] focus:ring-4 focus:ring-[#7718A8]/10 focus:border-[#7718A8] outline-none transition-all resize-none"
                       />
                     </div>
                     <div className="flex items-center gap-3 pt-2">
                       <button 
                         onClick={handleSave}
                         disabled={saving}
-                        className="flex-1 bg-purple-600 text-white py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-purple-200 hover:bg-purple-700 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                        className="flex-1 text-white py-2.5 rounded-xl text-[13px] font-bold shadow-lg hover:opacity-90 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                        style={{ background: BRAND, boxShadow: '0 4px 14px rgba(119,24,168,0.25)' }}
                       >
                         {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
                         Save Changes
@@ -312,7 +318,7 @@ const MyCompanyPage = () => {
                       <button 
                         onClick={() => setIsEditing(false)}
                         disabled={saving}
-                        className="px-4 py-2.5 border border-gray-200 text-gray-600 rounded-xl text-sm font-bold hover:bg-gray-50 transition-all flex items-center gap-2"
+                        className="px-5 py-2.5 bg-[#F2F4F7] text-[#344054] rounded-xl text-[13px] font-bold hover:bg-[#E4E7EC] transition-all flex items-center gap-2"
                       >
                         <X size={16} />
                         Cancel
@@ -338,17 +344,18 @@ const MyCompanyPage = () => {
                         <InfoRow icon={Mail}   label="Contact Email"  value={contactEmail} />
                         {phone !== '—' && <InfoRow icon={Phone} label="Phone" value={phone} />}
                         <InfoRow icon={Shield} label="Company Owner"  value={ownerName} />
-                    {canEdit && (
-                      <div className="py-4">
-                         <button 
-                           onClick={() => setIsEditing(true)}
-                           className="flex items-center gap-2 text-sm font-bold text-purple-600 hover:text-purple-700 transition-colors"
-                         >
-                           <Edit3 size={14} />
-                           Edit Company Profile
-                         </button>
-                      </div>
-                    )}
+                        {canEdit && (
+                          <div className="py-4">
+                             <button 
+                               onClick={() => setIsEditing(true)}
+                               className="flex items-center gap-2 text-[13px] font-bold transition-colors hover:opacity-80"
+                               style={{ color: BRAND }}
+                             >
+                               <Edit3 size={14} />
+                               Edit Company Profile
+                             </button>
+                          </div>
+                        )}
                       </>
                     )}
                   </>
@@ -371,17 +378,17 @@ const MyCompanyPage = () => {
 
             {/* ── Platform Add-ons — managers only ── */}
             {isManager && addons.length > 0 && (
-              <div className="bg-white border border-gray-100 rounded-2xl shadow-sm p-5">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-9 h-9 rounded-xl bg-purple-50 flex items-center justify-center">
-                    <Shield size={16} className="text-purple-600" />
+              <div className="bg-white border border-[#EAECF0] rounded-2xl shadow-sm overflow-hidden">
+                <div className="px-6 py-4 border-b border-[#EAECF0] bg-[#FAFAFA] flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: '#F4EDFB' }}>
+                    <Shield size={15} style={{ color: BRAND }} />
                   </div>
                   <div>
-                    <h3 className="text-sm font-bold text-gray-800">Platform Add-ons</h3>
-                    <p className="text-xs text-gray-400">Modules activated for your company</p>
+                    <h3 className="text-[14px] font-bold text-[#101828]">Platform Add-ons</h3>
+                    <p className="text-[12px] text-[#667085] mt-0.5">Modules activated for your company</p>
                   </div>
                 </div>
-                <div className="space-y-2">
+                <div className="px-6 py-4 space-y-2">
                   {addons.map((a) => (
                     <AddonBadge
                       key={a.addon_key}
@@ -395,9 +402,9 @@ const MyCompanyPage = () => {
 
             {/* ── Employee privacy notice ── */}
             {!isManager && (
-              <div className="bg-purple-50 border border-purple-100 rounded-xl p-4 flex items-start gap-3">
-                <Lock size={16} className="text-purple-400 shrink-0 mt-0.5" />
-                <p className="text-xs text-purple-600 font-medium">
+              <div className="bg-[#F9F5FF] border border-[#F4EBFF] rounded-xl p-4 flex items-start gap-3">
+                <Lock size={16} style={{ color: '#9E77ED' }} className="shrink-0 mt-0.5" />
+                <p className="text-[12px] font-medium" style={{ color: BRAND }}>
                   Some company details are visible to managers only. Contact your site manager for further information.
                 </p>
               </div>
@@ -405,10 +412,10 @@ const MyCompanyPage = () => {
 
             {/* ── Company reference ID — managers only ── */}
             {isManager && (
-              <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
-                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Company Reference ID</p>
-                <p className="text-xs font-mono text-gray-600 break-all select-all">{company.id || user?.companyId}</p>
-                <p className="text-xs text-gray-400 mt-1">Quote this ID when contacting MPRAR support.</p>
+              <div className="bg-[#F9FAFB] border border-[#EAECF0] rounded-xl p-4">
+                <p className="text-[11px] font-bold text-[#667085] uppercase tracking-wider mb-1">Company Reference ID</p>
+                <p className="text-[12px] font-mono font-semibold text-[#344054] break-all select-all">{company.id || user?.companyId}</p>
+                <p className="text-[11px] text-[#98A2B3] mt-1">Quote this ID when contacting MPRAR support.</p>
               </div>
             )}
           </>
