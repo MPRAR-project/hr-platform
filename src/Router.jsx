@@ -97,10 +97,26 @@ const AppRouter = () => {
         }>
           <Route path="/" element={<DashboardLoader />} />
           <Route path="/company" element={<CompanyDetailsPage />} />
-          <Route path="/payments" element={<PaymentsPage />} />
-          <Route path="/users" element={<UserListPage />} />
-          <Route path="/userDetails" element={<UserDetailsPage />} />
-          <Route path="/allowance" element={<PendingAllowancePage />} />
+          <Route path="/payments" element={
+            <RoleGuard allowedRoles={['superUser']}>
+              <PaymentsPage />
+            </RoleGuard>
+          } />
+          <Route path="/users" element={
+            <RoleGuard allowedRoles={['siteManager', 'seniorManager', 'adminManager', 'hrManager', 'hrAdvisor', 'adminAdvisor', 'contractManager']}>
+              <UserListPage />
+            </RoleGuard>
+          } />
+          <Route path="/userDetails" element={
+            <RoleGuard allowedRoles={['siteManager', 'seniorManager', 'adminManager', 'hrManager', 'hrAdvisor', 'adminAdvisor', 'contractManager']}>
+              <UserDetailsPage />
+            </RoleGuard>
+          } />
+          <Route path="/allowance" element={
+            <RoleGuard allowedRoles={['siteManager', 'seniorManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor']}>
+              <PendingAllowancePage />
+            </RoleGuard>
+          } />
           <Route path="/subscription-expired" element={<SubscriptionExpiredPage />} />
           <Route path="/manageSubscription" element={<ManageTeamRenewalPage />} />
           <Route path="/offlinePayment" element={<OfflinePaymentSubmissionPage />} />
@@ -110,9 +126,21 @@ const AppRouter = () => {
               <SettingsPage />
             </RoleGuard>
           } />
-          <Route path="/debug/timesheet-test" element={<TimesheetTestPage />} />
-          <Route path="/debug/timesheet-inspector" element={<TimesheetInspectorPage />} />
-          <Route path="/debug/sessions" element={<SessionDebugPage />} />
+          <Route path="/debug/timesheet-test" element={
+            <RoleGuard allowedRoles={['superUser']}>
+              <TimesheetTestPage />
+            </RoleGuard>
+          } />
+          <Route path="/debug/timesheet-inspector" element={
+            <RoleGuard allowedRoles={['superUser']}>
+              <TimesheetInspectorPage />
+            </RoleGuard>
+          } />
+          <Route path="/debug/sessions" element={
+            <RoleGuard allowedRoles={['superUser']}>
+              <SessionDebugPage />
+            </RoleGuard>
+          } />
           <Route path="/approvals" element={<ApprovalsPage />} />
           <Route path="/documents/:id" element={<EmployeeDocumentManagementPage />} />
           <Route path="/training" element={<TrainingManagementPage />} />
@@ -123,7 +151,11 @@ const AppRouter = () => {
               <HROnboardingManagementPage />
             </RoleGuard>
           } />
-          <Route path="/myteam" element={<MyTeamPage />} />
+          <Route path="/myteam" element={
+            <RoleGuard allowedRoles={['teamManager', 'seniorManager']}>
+              <MyTeamPage />
+            </RoleGuard>
+          } />
           <Route path="/myabsences" element={
             <PluginGuard pluginName="absence">
               <MyAbsencesPage />
@@ -142,9 +174,11 @@ const AppRouter = () => {
           <Route path="/time-entries" element={<TimeEntriesPage />} />
           <Route path="/documents" element={<DocumentManagementPage />} />
           <Route path="/incidents" element={
-            <PluginGuard pluginName="scheduling">
-              <IncidentReportsPage />
-            </PluginGuard>
+            <RoleGuard allowedRoles={['siteManager', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor', 'contractManager', 'employee']}>
+              <PluginGuard pluginName="scheduling">
+                <IncidentReportsPage />
+              </PluginGuard>
+            </RoleGuard>
           } />
           <Route path='/absences' element={
             <PluginGuard pluginName="absence">
@@ -157,9 +191,11 @@ const AppRouter = () => {
             </PluginGuard>
           } />
           <Route path="/schedule" element={
-            <PluginGuard pluginName="scheduling">
-              <SchedulePage />
-            </PluginGuard>
+            <RoleGuard allowedRoles={['siteManager', 'adminManager', 'employee']}>
+              <PluginGuard pluginName="scheduling">
+                <SchedulePage />
+              </PluginGuard>
+            </RoleGuard>
           } />
           <Route path="/locations" element={
             <RoleGuard allowedRoles={['siteManager', 'seniorManager']}>
@@ -168,19 +204,51 @@ const AppRouter = () => {
               </PluginGuard>
             </RoleGuard>
           } />
-          <Route path="/admin/migration" element={<MigrationPage />} />
+          <Route path="/admin/migration" element={
+            <RoleGuard allowedRoles={['superUser']}>
+              <MigrationPage />
+            </RoleGuard>
+          } />
           <Route path="/admin/multi-company-migration" element={
             <RoleGuard allowedRoles={['siteManager', 'superUser']}>
               <MultiCompanyMigrationPage />
             </RoleGuard>
           } />
-          <Route path="/admin/week-start-helper" element={<WeekStartHelper />} />
-          <Route path="/admin/billing-mock-tools" element={<BillingMockTools />} />
-          <Route path="/loader-test" element={<LoaderTestPage />} />
-          <Route path="/clients" element={<ClientsPage />} />
-          <Route path="/admin/sites-management" element={<SitesPage />} />
-          <Route path="/admin/data-cleanup" element={<DataCleanupPage />} />
-          <Route path="/admin/plugin-manager" element={<PluginManagerPage />} />
+          <Route path="/admin/week-start-helper" element={
+            <RoleGuard allowedRoles={['superUser']}>
+              <WeekStartHelper />
+            </RoleGuard>
+          } />
+          <Route path="/admin/billing-mock-tools" element={
+            <RoleGuard allowedRoles={['superUser']}>
+              <BillingMockTools />
+            </RoleGuard>
+          } />
+          <Route path="/loader-test" element={
+            <RoleGuard allowedRoles={['superUser']}>
+              <LoaderTestPage />
+            </RoleGuard>
+          } />
+          <Route path="/clients" element={
+            <RoleGuard allowedRoles={['superUser']}>
+              <ClientsPage />
+            </RoleGuard>
+          } />
+          <Route path="/admin/sites-management" element={
+            <RoleGuard allowedRoles={['superUser']}>
+              <SitesPage />
+            </RoleGuard>
+          } />
+          <Route path="/admin/data-cleanup" element={
+            <RoleGuard allowedRoles={['superUser']}>
+              <DataCleanupPage />
+            </RoleGuard>
+          } />
+          <Route path="/admin/plugin-manager" element={
+            <RoleGuard allowedRoles={['superUser']}>
+              <PluginManagerPage />
+            </RoleGuard>
+          } />
           <Route path="/admin/manual-entry-migration" element={
             <RoleGuard allowedRoles={['superUser']}>
               <ManualEntryMigrationPage />
@@ -238,6 +306,11 @@ const AppRouter = () => {
               <SuperAdminUserListPage />
             </RoleGuard>
           } />
+          <Route path="/manual" element={
+            <RoleGuard allowedRoles={['superUser']}>
+              <DummyTimesheetGenerator />
+            </RoleGuard>
+          } />
         </Route>
 
         {/* Onboarding route */}
@@ -254,12 +327,11 @@ const AppRouter = () => {
           </PublicRoute>
         } />
         <Route path="/bridge" element={<BridgePage />} />
-        <Route path='/manual' element={<DummyTimesheetGenerator />} />
-        {/* <Route path="/signup" element={
+        <Route path="/signup" element={
           <PublicRoute>
             <SignupPage />
           </PublicRoute>
-        } /> */}
+        } />
         {/* <Route path="/team-size-selection" element={
           <PublicRoute>
             <TeamSizeSelection />

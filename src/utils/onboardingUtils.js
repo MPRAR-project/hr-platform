@@ -6,7 +6,7 @@ import hrApiClient from '../lib/hrApiClient';
  */
 
 // Roles that are exempt from onboarding requirements
-const EXEMPT_ROLES = ['siteManager', 'superUser'];
+const EXEMPT_ROLES = ['siteManager', 'superUser', 'seniorManager'];
 
 /**
  * Check if a user role is exempt from onboarding requirements
@@ -101,9 +101,10 @@ export function shouldRequireOnboarding(user, companySettings = null) {
 
     // Check if user has already completed onboarding
     // Handle both old and new field names for backward compatibility
-    const isOnboardingCompleted = 
-      user.isOnboardingCompleted ?? 
-      user.isOnbordingCompleted ?? 
+    // NOTE: `isOnbordingCompleted` (typo) is intentional — kept for backward compat with legacy Firebase data
+    const isOnboardingCompleted =
+      user.isOnboardingCompleted ??
+      user.isOnbordingCompleted ??
       false;
 
     // Require onboarding if it's mandatory and user hasn't completed it

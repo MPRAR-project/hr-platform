@@ -10,12 +10,12 @@ import Loader from '../../components/ui/Loader';
 const dashboards = {
   superUser: <SuperUserDashboard />,
   siteManager: <SiteManagerDashboard />,
-  teamManager: <EmployeeDashboard />,
-  hrManager: <EmployeeDashboard />,
-  seniorManager: <EmployeeDashboard />,
-  adminManager: <EmployeeDashboard />,
-  hrAdvisor: <EmployeeDashboard />,
-  adminAdvisor: <EmployeeDashboard />,
+  seniorManager: <SiteManagerDashboard />,
+  teamManager: <SiteManagerDashboard />,
+  hrManager: <SiteManagerDashboard />,
+  adminManager: <SiteManagerDashboard />,
+  hrAdvisor: <SiteManagerDashboard />,
+  adminAdvisor: <SiteManagerDashboard />,
   contractManager: <EmployeeDashboard />,
   employee: <EmployeeDashboard />
 };

@@ -53,7 +53,7 @@ const MandatoryTrainingGuard = ({ children }) => {
             const missingTrainings = allMandatoryTrainings.filter(t => !assignedTrainingIds.has(t.id));
 
             if (missingTrainings.length > 0) {
-                console.log(`MandatoryTrainingGuard: Auto-assigning ${missingTrainings.length} trainings to ${user.uid}`);
+                console.log(`MandatoryTrainingGuard: Auto-assigning ${missingTrainings.length} trainings to ${user.userId}`);
                 const today = new Date();
                 const dueDate = new Date();
                 dueDate.setDate(today.getDate() + 7);

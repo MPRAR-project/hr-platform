@@ -238,6 +238,18 @@ const Sidebar = () => {
       roles: ['siteManager', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor', 'employee']
     },
     {
+      to: '/approvals',
+      label: 'Approvals',
+      icon: CalendarCheck,
+      roles: ['siteManager', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor']
+    },
+    {
+      to: '/onboardings-management',
+      label: 'Onboardings',
+      icon: UserPlus,
+      roles: ['siteManager', 'seniorManager', 'hrManager', 'adminManager']
+    },
+    {
       to: '/absences',
       label: 'Absences',
       icon: Calendar,
@@ -279,13 +291,6 @@ const Sidebar = () => {
           roles: ['siteManager', 'seniorManager'],
           condition: hasSchedulingPlugin
         },
-        {
-          to: '/incidents',
-          label: 'Incidents',
-          icon: AlertTriangle,
-          roles: ['siteManager', 'seniorManager'],
-          condition: hasSchedulingPlugin
-        }
       ]
     },
     {
@@ -304,22 +309,21 @@ const Sidebar = () => {
       to: '/incidents',
       label: 'Incidents',
       icon: AlertTriangle,
-      roles: ['teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor', 'employee'],
+      roles: ['siteManager', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor', 'employee'],
       condition: hasSchedulingPlugin
     },
-    // {
-    //   to: '/hr-onboarding',
-    //   label: 'HR Onboarding',
-    //   icon: UserPlus,
-    //   roles: ['siteManager', 'seniorManager', 'hrManager', 'adminManager']
-    // },
+    {
+      to: '/hr-onboarding',
+      label: 'HR Onboarding',
+      icon: UserPlus,
+      roles: ['siteManager', 'seniorManager', 'hrManager', 'adminManager']
+    },
 
     {
       to: '/users',
       label: 'Users',
       icon: Users,
-      roles: ['siteManager', 'seniorManager', 'adminManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor', 'contractManager'
-      ]
+      roles: ['siteManager', 'seniorManager', 'adminManager', 'hrManager', 'hrAdvisor', 'adminAdvisor', 'contractManager']
     },
     {
       to: '/allowance',
@@ -327,12 +331,6 @@ const Sidebar = () => {
       icon: DollarSign,
       roles: ['siteManager', 'seniorManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor'],
       condition: hasAbsencePlugin
-    },
-    {
-      to: '/payment-reports',
-      label: 'Payment Reports',
-      icon: Receipt,
-      roles: ['']
     },
     {
       to: '/myteam',
@@ -344,14 +342,14 @@ const Sidebar = () => {
       to: '/seat-management',
       label: 'Seat Request',
       icon: PlusCircle,
-      roles: ['hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor']
+      roles: ['seniorManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor']
     },
-    // {
-    //   to: '/myabsences',
-    //   label: 'My Absences',
-    //   icon: Calendar,
-    //   roles: ['employee', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor']
-    // },
+    {
+      to: '/myabsences',
+      label: 'My Absences',
+      icon: Calendar,
+      roles: ['employee', 'siteManager', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor']
+    },
 
     {
       to: '/settings',
@@ -380,7 +378,7 @@ const Sidebar = () => {
       to: '/myprofile',
       label: 'Profile',
       icon: UserCircle,
-      roles: ['employee', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor']
+      roles: ['employee', 'siteManager', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor']
     },
     {
       to: '/my-company',

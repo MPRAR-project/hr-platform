@@ -37,7 +37,7 @@ import { getOnboardingRedirectPath, isRoleExemptFromOnboarding, shouldRequireOnb
 export const AuthContext = createContext(null);
 
 const ALL_ROLES = [
-  'superUser', 'siteManager', 'teamManager', 'adminManager',
+  'superUser', 'siteManager', 'seniorManager', 'teamManager', 'adminManager',
   'hrManager', 'employee', 'adminAdvisor', 'hrAdvisor', 'contractManager',
 ];
 

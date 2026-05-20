@@ -75,6 +75,7 @@ const ProfilePage = () => {
         { label: 'Personal', allowedRoles: ['all'] },
         { label: 'Contracts', allowedRoles: ['all'] },
         { label: 'Allowances', allowedRoles: ['all'] },
+        { label: 'Onboarding', allowedRoles: ['all'] },
         { label: 'Documents', allowedRoles: ['all'] },
         { label: 'Training', allowedRoles: ['all'] },
         { label: 'Timesheets', allowedRoles: ['all'] },
@@ -240,6 +241,8 @@ const ProfilePage = () => {
                 return <ContractTab userId={user?.uid} allowUpload={false} />;
             case 'Allowances':
                 return <AllowancesTab selectedLeaveType={selectedLeaveType} onLeaveTypeChange={setSelectedLeaveType} />;
+            case 'Onboarding':
+                return <OnboardingTab onboardingData={onboardingData} isLoading={isLoadingOnboarding} onUpdate={reloadOnboardingData} />;
             case 'Documents':
                 return <DocumentsTab />;
             case 'Training':

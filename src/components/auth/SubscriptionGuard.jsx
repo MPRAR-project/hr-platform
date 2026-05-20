@@ -110,7 +110,7 @@ const SubscriptionGuard = ({ children }) => {
         <div className="bg-red-600 text-white px-4 py-2 text-center text-sm font-bold sticky top-0 z-[100] shadow-lg flex items-center justify-center gap-3 animate-in slide-in-from-top duration-300">
           <AlertCircle size={16} />
           <span>Your subscription has expired. Some features may be restricted until payment is processed.</span>
-          <a href="/owner-billing" className="bg-white text-red-600 px-3 py-1 rounded-lg hover:bg-red-50 transition-colors ml-2">
+          <a href="/billing" className="bg-white text-red-600 px-3 py-1 rounded-lg hover:bg-red-50 transition-colors ml-2">
             Manage Subscription
           </a>
         </div>
