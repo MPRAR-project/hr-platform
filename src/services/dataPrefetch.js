@@ -66,7 +66,9 @@ async function prefetchOnboarding(companyId, setItem) {
 async function prefetchHROnboarding(companyId, setItem) {
   try {
     const result = await getHROnboardingProfiles({ companyId, limitCount: 50 });
-    setItem(`hr_onboarding_${companyId}`, { profiles: result.profiles || [], userDataMap: {} }, CACHE_TTL);
+    const apps = result.applications || result.profiles || (Array.isArray(result) ? result : []);
+    const profiles = apps.map(p => ({ ...p, userId: p.employeeId || p.userId }));
+    setItem(`hr_onboarding_${companyId}`, { profiles, userDataMap: {} }, CACHE_TTL);
   } catch (_) { }
 }
 

@@ -81,7 +81,47 @@ const HROnboardingManagementPage = () => {
                     }
                 }));
 
-            const allProfiles = [...pendingInvites, ...(profilesResult.profiles || profilesResult || [])];
+            const apiProfiles = (profilesResult.applications || profilesResult.profiles || (Array.isArray(profilesResult) ? profilesResult : []))
+                .map(p => {
+                    const sections = p.sections || {
+                        personalInfo: {
+                            status: p.formData?.personalInfo?.status || (p.currentStep > 1 ? 'completed' : 'pending'),
+                            fields: p.formData?.personalInfo?.fields || {}
+                        },
+                        employmentDetails: {
+                            status: p.employmentDetails?.status || 'pending',
+                            fields: p.employmentDetails?.fields || {}
+                        },
+                        contractDocuments: {
+                            status: p.documentsStatus || (Array.isArray(p.documents) && p.documents.length > 0 ? 'completed' : 'pending'),
+                            documents: Array.isArray(p.documents) ? p.documents : []
+                        },
+                        allowances: {
+                            status: p.formData?.allowances?.status || 'pending',
+                            allowances: p.formData?.allowances?.allowances || []
+                        }
+                    };
+
+                    let completionPercent = p.completionPercent;
+                    if (completionPercent === undefined) {
+                        let totalWeight = 0;
+                        let completedWeight = 0;
+                        totalWeight += 25; if (sections.personalInfo?.status === 'completed') completedWeight += 25;
+                        totalWeight += 25; if (sections.employmentDetails?.status === 'completed') completedWeight += 25;
+                        totalWeight += 25; if (sections.contractDocuments?.status === 'completed') completedWeight += 25;
+                        totalWeight += 25; if (sections.allowances?.status === 'completed') completedWeight += 25;
+                        completionPercent = Math.round((completedWeight / totalWeight) * 100);
+                    }
+
+                    return {
+                        ...p,
+                        userId: p.employeeId || p.userId,
+                        sections,
+                        completionPercent
+                    };
+                });
+
+            const allProfiles = [...pendingInvites, ...apiProfiles];
             setProfiles(allProfiles);
 
             // 3. Load user data for real profiles from the employee list (batch fetch)

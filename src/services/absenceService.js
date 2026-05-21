@@ -289,6 +289,29 @@ class AbsenceService {
     return this.subscribeToAbsences(currentUser, callback);
   }
 
+  // ── Subscribe to logged-in user's own absences ─────────────────────────────
+  // Used by MyAbsencePage: subscribeToUserAbsences(userId, (absences, err) => {})
+  subscribeToUserAbsences(userId, callback) {
+    if (!userId) return () => {};
+
+    const handler = () => {
+      this.getUserAbsences(userId)
+        .then((absences) => callback(absences, null))
+        .catch((err) => {
+          console.warn('[absenceService] subscribeToUserAbsences refresh failed:', err);
+          callback([], err);
+        });
+    };
+
+    // Listen for WebSocket events
+    wsClient.on('absence:updated', handler);
+
+    // Initial fetch
+    handler();
+
+    return () => wsClient.off('absence:updated', handler);
+  }
+
   // ── Permission helpers ─────────────────────────────────────────────────────
   canDeleteAbsence(absence, currentUser) {
     if (!currentUser?.userId) return false;

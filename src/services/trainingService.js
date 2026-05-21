@@ -12,6 +12,9 @@ import wsClient from '../lib/wsClient';
 // ── Helper: normalize date fields ─────────────────────────────────────────────
 function normalizeDates(obj) {
   if (!obj || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) {
+    return obj.map(normalizeDates);
+  }
   const out = { ...obj };
   ['createdAt','updatedAt','startDate','endDate','completedAt','dueDate'].forEach((k) => {
     if (out[k]?.toDate)   out[k] = out[k].toDate().toISOString();
@@ -31,6 +34,27 @@ function normalizeCourse(course) {
     category:          course.category || (course.isMandatory ? 'Mandatory' : 'Technical'),
     trainingType:      course.trainingType || course.category || (course.isMandatory ? 'Mandatory on Sign Up' : 'Technical'),
     status:            course.status || 'active',
+  };
+}
+
+// ── Helper: normalize assignment — maps backend `course` key → `training` key ──
+// Backend returns: { ...assignment, course: { title, ... }, employee: { ... } }
+// Frontend expects: { ...assignment, training: { name, ... } }
+function normalizeAssignment(a) {
+  if (!a || typeof a !== 'object') return a;
+  const normalized = normalizeDates(a);
+  // Build training object from course (backend) or training (already normalized)
+  const courseData = a.course || a.training || null;
+  const training = courseData ? normalizeCourse(courseData) : null;
+  return {
+    ...normalized,
+    // keep course for backward compat
+    course: training,
+    // add training alias for frontend components
+    training: training,
+    // flatten name/title at assignment level as fallback
+    name:  training?.name  || a.name  || '',
+    title: training?.title || a.title || '',
   };
 }
 
@@ -98,16 +122,34 @@ export async function deleteTrainingCourse(courseId) {
 }
 
 // ── Assign Course to Employee ─────────────────────────────────────────────────
-export async function assignCourseToEmployee(courseId, employeeId, assignedBy, options = {}) {
+export async function assignCourseToEmployee(courseId, employeeId, assignedBy, ...rest) {
+  let dueDate = null;
+  let mandatory = false;
+  let notes = null;
+
+  if (rest.length > 0) {
+    if (typeof rest[0] === 'object' && rest[0] !== null) {
+      const options = rest[0];
+      dueDate = options.dueDate || null;
+      mandatory = options.mandatory || false;
+      notes = options.notes || null;
+    } else {
+      dueDate = rest[2] || null;
+      const extraOptions = rest[3] || {};
+      mandatory = extraOptions.mandatory || false;
+      notes = extraOptions.notes || null;
+    }
+  }
+
   try {
     const { data } = await hrApiClient.post(`/hr/training/${courseId}/assign`, {
       employeeId,
       assignedBy:  assignedBy  || null,
-      dueDate:     options.dueDate     || null,
-      mandatory:   options.mandatory   || false,
-      notes:       options.notes       || null,
+      dueDate:     dueDate     || null,
+      mandatory:   mandatory   || false,
+      notes:       notes       || null,
     });
-    return normalizeDates(data);
+    return { success: true, data: normalizeDates(data) };
   } catch (err) {
     if (err.response?.status === 409) throw new Error('Employee is already assigned to this course');
     if (err.response?.status === 404) throw new Error('Course or employee not found');
@@ -141,7 +183,7 @@ export async function markAssignmentComplete(assignmentId, completedBy) {
 export async function getMyTrainingAssignments(userId) {
   try {
     const { data } = await hrApiClient.get('/hr/training/my');
-    return (data.assignments || data || []).map(normalizeDates);
+    return (data.assignments || data || []).map(normalizeAssignment);
   } catch (err) {
     if (err.response?.status === 403 || err.response?.status === 404) return [];
     throw new Error(err.response?.data?.error || 'Failed to fetch training assignments');
@@ -152,7 +194,7 @@ export async function getMyTrainingAssignments(userId) {
 export async function getEmployeeTraining(employeeId) {
   try {
     const { data } = await hrApiClient.get(`/hr/training/employee/${employeeId}`);
-    return (data.assignments || data || []).map(normalizeDates);
+    return (data.assignments || data || []).map(normalizeAssignment);
   } catch (err) {
     if (err.response?.status === 403) throw new Error('Permission denied');
     if (err.response?.status === 404) return [];
@@ -208,7 +250,7 @@ export async function getTrainingAssignments(companyId, filters, role, userId) {
     const { data } = await hrApiClient.get('/hr/training/assignments', {
         params: { ...filters, role, userId }
     });
-    return { success: true, data: (data.assignments || data || []).map(normalizeDates) };
+    return { success: true, data: (data.assignments || data || []).map(normalizeAssignment) };
   } catch (err) {
     return { success: false, error: err.response?.data?.error || err.message };
   }

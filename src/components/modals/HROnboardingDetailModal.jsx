@@ -331,7 +331,7 @@ const HROnboardingDetailModal = ({ isOpen, onClose, profile, userData }) => {
                 const allCompleted = Object.values(employmentData).every(v => Boolean(v));
 
                 await updateHROnboardingSection({
-                    profileId: localProfile.id,
+                    profileId: localProfile.userId || localProfile.employeeId,
                     section: 'employmentDetails',
                     data: {
                         fields,
@@ -653,7 +653,7 @@ const HROnboardingDetailModal = ({ isOpen, onClose, profile, userData }) => {
                 const allUploaded = requiredDocs.every(d => d.uploaded);
 
                 await updateHROnboardingSection({
-                    profileId: localProfile.id,
+                    profileId: localProfile.userId || localProfile.employeeId,
                     section: 'contractDocuments',
                     data: {
                         documents: updatedDocuments,
@@ -699,7 +699,7 @@ const HROnboardingDetailModal = ({ isOpen, onClose, profile, userData }) => {
                 const allUploaded = requiredDocs.every(d => d.uploaded);
 
                 await updateHROnboardingSection({
-                    profileId: localProfile.id,
+                    profileId: localProfile.userId || localProfile.employeeId,
                     section: 'contractDocuments',
                     data: {
                         documents: updatedDocuments,
@@ -852,7 +852,7 @@ const HROnboardingDetailModal = ({ isOpen, onClose, profile, userData }) => {
 
                 // Update HR onboarding profile
                 await updateHROnboardingSection({
-                    profileId: localProfile.id,
+                    profileId: localProfile.userId || localProfile.employeeId,
                     section: 'allowances',
                     data: {
                         allowances: allowancesData,
