@@ -140,7 +140,11 @@ const AppRouter = () => {
               <SessionDebugPage />
             </RoleGuard>
           } />
-          <Route path="/approvals" element={<ApprovalsPage />} />
+          <Route path="/approvals" element={
+            <PluginGuard pluginName="scheduling">
+              <ApprovalsPage />
+            </PluginGuard>
+          } />
           <Route path="/documents/:id" element={<EmployeeDocumentManagementPage />} />
           <Route path="/training" element={<TrainingManagementPage />} />
           <Route path="/training/:id" element={<EmployeeTrainingPage />} />
@@ -167,10 +171,26 @@ const AppRouter = () => {
               <SeatRequestPage />
             </RoleGuard>
           } />
-          <Route path="/timesheets" element={<TimesheetManagementPage userRole={user?.role} />} />
-          <Route path="/timesheets/:id" element={<EmployeeTimesheetsPage />} />
-          <Route path="/timesheet-archives" element={<TimesheetArchivePage />} />
-          <Route path="/time-entries" element={<TimeEntriesPage />} />
+          <Route path="/timesheets" element={
+            <PluginGuard pluginName="scheduling">
+              <TimesheetManagementPage userRole={user?.role} />
+            </PluginGuard>
+          } />
+          <Route path="/timesheets/:id" element={
+            <PluginGuard pluginName="scheduling">
+              <EmployeeTimesheetsPage />
+            </PluginGuard>
+          } />
+          <Route path="/timesheet-archives" element={
+            <PluginGuard pluginName="scheduling">
+              <TimesheetArchivePage />
+            </PluginGuard>
+          } />
+          <Route path="/time-entries" element={
+            <PluginGuard pluginName="scheduling">
+              <TimeEntriesPage />
+            </PluginGuard>
+          } />
           <Route path="/documents" element={<DocumentManagementPage />} />
           <Route path="/incidents" element={
             <RoleGuard allowedRoles={['siteManager', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor', 'contractManager', 'employee']}>

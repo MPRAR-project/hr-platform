@@ -86,12 +86,15 @@ export function useCompanyDashboard(companyId) {
         nextBilling,
         plugins:            billing.plugins       ?? {},
 
-        // Payment history
+        // Payment history — prefer hrPayment rows; fall back to company-level fields
         recentPayments,
-        lastPaymentStatus:  lastPayment ? 'Paid'                            : '—',
-        lastPaymentDate:    lastPayment ? formatDate(lastPayment.createdAt) : '—',
-        lastPaymentAmount:  lastPayment?.amount  ?? null,
-        paymentMethod:      lastPayment?.paymentMethod ?? '—',
+        lastPaymentStatus:  lastPayment ? 'Paid' : (billing.lastPaymentAt ? 'Paid' : '—'),
+        lastPaymentDate:    lastPayment ? formatDate(lastPayment.createdAt) : (billing.lastPaymentAt ? formatDate(billing.lastPaymentAt) : '—'),
+        lastPaymentAmount:  lastPayment?.amount ?? null,
+        paymentMethod:      lastPayment?.paymentMethod ?? billing.lastPaymentType ?? '—',
+
+        // Join date
+        joinDate: billing.joinDate ? formatDate(billing.joinDate) : '—',
 
         // Seat deficit
         seatDeficit: Math.max(0, activeSeatCount - seatQuota),

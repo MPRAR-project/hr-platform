@@ -40,16 +40,17 @@ export const deleteSchedule = async (scheduleId) => {
     return response.data;
 };
 
-export const subscribeToSchedules = (onUpdate, filters = {}) => {
-    // Polling fallback
-    const interval = setInterval(async () => {
+export const subscribeToSchedules = (companyId, onUpdate, filters = {}) => {
+    const fetchAndNotify = async () => {
         try {
-            const schedules = await getSchedules(filters);
+            const schedules = await getSchedules({ companyId, ...filters });
             onUpdate(schedules);
         } catch (e) {
             console.error('Polling schedules failed:', e);
         }
-    }, 30000);
+    };
 
+    fetchAndNotify(); // fetch immediately on subscribe
+    const interval = setInterval(fetchAndNotify, 30000);
     return () => clearInterval(interval);
 };

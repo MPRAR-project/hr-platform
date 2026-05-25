@@ -371,7 +371,7 @@ const Sidebar = () => {
       to: '/myabsences',
       label: 'My Absences',
       icon: Calendar,
-      roles: ['employee', 'siteManager', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor']
+      roles: ['employee', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor']
     },
 
     {
@@ -401,7 +401,7 @@ const Sidebar = () => {
       to: '/myprofile',
       label: 'Profile',
       icon: UserCircle,
-      roles: ['employee', 'siteManager', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor']
+      roles: ['employee', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor']
     },
     {
       to: '/my-company',

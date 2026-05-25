@@ -132,7 +132,7 @@ const ActivityOversightPage = () => {
             // 2. Fetch Schedules and Timesheets in parallel
             const t2 = performance.now();
             const [allSchedules, weeklyTimesheets] = await Promise.all([
-                getSchedules(user.companyId),
+                getSchedules({ companyId: user.companyId }),
                 getTimesheetsByWeek(user.companyId, formatISODate(weekStart))
             ]);
             console.log('[ActivityOversight] Phase 2 (schedules+timesheets) took', (performance.now() - t2).toFixed(0), 'ms');
