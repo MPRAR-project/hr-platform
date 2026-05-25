@@ -228,13 +228,32 @@ const BillingSubscriptionsPage = ({ isEmbedded }) => {
     return `£${Number(price).toFixed(2)}`;
   }, [summary]);
 
+  const isTrial = useMemo(() => summary?.subscriptionStatus === 'trialing', [summary]);
+  const isPastDue = useMemo(() => summary?.subscriptionStatus === 'past_due', [summary]);
+  const isCancelled = useMemo(() => summary?.subscriptionStatus === 'cancelled', [summary]);
+  const isActive = useMemo(() => summary?.subscriptionStatus === 'active', [summary]);
+
+  const trialEndsAt = useMemo(() => (summary?.trialEndsAt ? new Date(summary.trialEndsAt) : null), [summary]);
+  const trialDaysLeft = useMemo(() => {
+    if (!trialEndsAt) return 0;
+    return Math.max(0, Math.ceil((trialEndsAt - new Date()) / (1000 * 60 * 60 * 24)));
+  }, [trialEndsAt]);
+
+  const formattedTrialEnd = useMemo(() => {
+    if (!trialEndsAt) return '—';
+    return trialEndsAt.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  }, [trialEndsAt]);
+
+  const formattedJoinDate = useMemo(() => {
+    if (!summary?.joinDate) return '—';
+    return new Date(summary.joinDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  }, [summary]);
+
   const formattedMonthlyPrice = useMemo(() => {
     if (!summary) return '£0.00';
-    const formatter = new Intl.NumberFormat('en-GB', {
-      style: 'currency',
-      currency: summary.currency || 'GBP'
-    });
-    return formatter.format(summary.monthlyAmount || 0);
+    const amount = (summary.seatQuota || 0) * (summary.pricePerSeat || 5);
+    const formatter = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' });
+    return formatter.format(amount);
   }, [summary]);
 
   const formattedNextBilling = useMemo(() => {
@@ -551,7 +570,7 @@ const BillingSubscriptionsPage = ({ isEmbedded }) => {
     }
 
     // Check if we are in trial without a full subscription
-    const isTrialWithoutSubscription = summary?.isTrial && !summary?.stripeSubscriptionId;
+    const isTrialWithoutSubscription = isTrial && !summary?.stripeSubscriptionId;
 
     if (isTrialWithoutSubscription) {
       try {
@@ -634,7 +653,7 @@ const BillingSubscriptionsPage = ({ isEmbedded }) => {
     if (addonType !== 'scheduling') return;
 
     // If enabling and in trial without a subscription, redirect to payment
-    if (enable && summary?.isTrial && !summary?.stripeSubscriptionId) {
+    if (enable && isTrial && !summary?.stripeSubscriptionId) {
       toast.info('Please subscribe to a plan to enable Shift Scheduling & Roster.');
       handleManagePaymentMethod();
       return;
@@ -742,6 +761,52 @@ const BillingSubscriptionsPage = ({ isEmbedded }) => {
         </div>
       )}
 
+      {/* Trial Banner */}
+      {summary && isTrial && (
+        <div className={`rounded-xl border p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 ${trialDaysLeft === 0 ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'}`}>
+          <div>
+            <p className={`font-semibold ${trialDaysLeft === 0 ? 'text-red-800' : 'text-amber-800'}`}>
+              {trialDaysLeft === 0 ? 'Your free trial has expired' : `Free Trial — ${trialDaysLeft} day${trialDaysLeft !== 1 ? 's' : ''} remaining`}
+            </p>
+            <p className={`text-sm mt-0.5 ${trialDaysLeft === 0 ? 'text-red-700' : 'text-amber-700'}`}>
+              {trialDaysLeft === 0
+                ? 'Add a payment method to restore full access.'
+                : `Trial ends ${formattedTrialEnd}. No charge until your trial period ends.`}
+            </p>
+          </div>
+          <button
+            onClick={handleManagePaymentMethod}
+            className={`text-sm font-semibold px-4 py-2 rounded-lg border whitespace-nowrap ${trialDaysLeft === 0 ? 'bg-red-600 text-white border-red-600 hover:bg-red-700' : 'text-amber-800 border-amber-300 hover:bg-amber-100'}`}
+          >
+            {trialDaysLeft === 0 ? 'Add Payment Method' : 'Upgrade Now'}
+          </button>
+        </div>
+      )}
+
+      {/* Past Due Warning */}
+      {summary && isPastDue && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <p className="font-semibold text-red-800">Payment overdue</p>
+            <p className="text-sm text-red-700 mt-0.5">Your last payment failed. Update your payment method to avoid service interruption.</p>
+          </div>
+          <button
+            onClick={handleManagePaymentMethod}
+            className="text-sm font-semibold px-4 py-2 rounded-lg bg-red-600 text-white border border-red-600 hover:bg-red-700 whitespace-nowrap"
+          >
+            Update Payment
+          </button>
+        </div>
+      )}
+
+      {/* Cancelled Warning */}
+      {summary && isCancelled && (
+        <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
+          <p className="font-semibold text-gray-700">Subscription cancelled</p>
+          <p className="text-sm text-gray-600 mt-0.5">Your subscription has been cancelled. Contact support to reactivate.</p>
+        </div>
+      )}
+
       {/* Subscription Status Card */}
       {summary && <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {/* Current Plan */}
@@ -751,15 +816,16 @@ const BillingSubscriptionsPage = ({ isEmbedded }) => {
               <h3 className="text-gray-500 text-sm font-medium">Current Plan</h3>
               <p className="text-2xl font-bold text-gray-900 mt-1">Per User Plan</p>
             </div>
-            <div className={`p-2 rounded-lg ${summary?.isTrial ? 'bg-orange-50 text-orange-600' : 'bg-primary-50 text-primary-600'}`}>
+            <div className={`p-2 rounded-lg ${isTrial ? 'bg-orange-50 text-orange-600' : isPastDue ? 'bg-red-50 text-red-600' : 'bg-primary-50 text-primary-600'}`}>
               <Users size={20} />
             </div>
           </div>
           <div className="flex items-center space-x-2 mb-4">
-            <Badge variant={summary?.isExpired ? 'error' : (summary?.isTrial ? 'warning' : 'success')}>
-              {summary?.subscriptionStatus === 'active' ? 'Active Subscription' :
-                summary?.subscriptionStatus === 'trial' ? 'Free Trial' :
-                  summary?.subscriptionStatus === 'past_due' ? 'Past Due' : 'Inactive'}
+            <Badge variant={isPastDue || isCancelled || (isTrial && trialDaysLeft === 0) ? 'error' : isTrial ? 'warning' : 'success'}>
+              {isActive ? 'Active Subscription' :
+                isTrial ? (trialDaysLeft === 0 ? 'Trial Expired' : 'Free Trial') :
+                isPastDue ? 'Past Due' :
+                isCancelled ? 'Cancelled' : 'Inactive'}
             </Badge>
           </div>
           <div className="space-y-2">
@@ -781,7 +847,7 @@ const BillingSubscriptionsPage = ({ isEmbedded }) => {
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-gray-500">Seats Used</span>
-              <span className="font-medium">{summary?.currentSeatsInUse || 0} seats</span>
+              <span className="font-medium">{summary?.activeSeatCount || 0} seats</span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-gray-500">Price per seat</span>
@@ -820,23 +886,41 @@ const BillingSubscriptionsPage = ({ isEmbedded }) => {
             </div>
           </div>
           <div className="space-y-2 mt-4">
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-500">Next billing date</span>
-              <span className="font-medium">{formattedNextBilling}</span>
-            </div>
+            {isTrial && trialEndsAt && (
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-500">Trial ends</span>
+                <span className={`font-medium ${trialDaysLeft <= 3 ? 'text-red-600' : 'text-amber-600'}`}>{formattedTrialEnd}</span>
+              </div>
+            )}
+            {!isTrial && (
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-500">Next billing date</span>
+                <span className="font-medium">{formattedNextBilling}</span>
+              </div>
+            )}
             <div className="flex justify-between text-sm">
               <span className="text-gray-500">Payment method</span>
-              <span className="font-medium">Card ending ****</span>
+              <span className="font-medium capitalize">
+                {summary?.lastPaymentType === 'card' ? 'Card'
+                  : summary?.lastPaymentType === 'bank_transfer' ? 'Bank Transfer'
+                  : summary?.lastPaymentType
+                  ? summary.lastPaymentType
+                  : isTrial ? 'None (trial)' : '—'}
+              </span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-500">Member since</span>
+              <span className="font-medium">{formattedJoinDate}</span>
             </div>
           </div>
           <div className="mt-6">
             <Button
-              variant={summary?.isTrial && !summary?.stripeSubscriptionId ? "gradient" : "outline"}
+              variant={isTrial ? "gradient" : "outline"}
               className="w-full justify-center"
               onClick={handleManagePaymentMethod}
               disabled={isLoading || !USE_STRIPE}
             >
-              {summary?.isTrial && !summary?.stripeSubscriptionId ? 'Proceed to Payment' : 'Manage Payment Method'}
+              {isTrial ? 'Proceed to Payment' : 'Manage Payment Method'}
             </Button>
           </div>
         </div>
@@ -1012,7 +1096,7 @@ const BillingSubscriptionsPage = ({ isEmbedded }) => {
                       <div className="mt-2">
                         <p className="text-sm text-gray-500 mb-4">
                           Increase your seat quota to add more employees.
-                          {summary?.subscriptionStatus === 'trial'
+                          {isTrial
                             ? " Since you are on a trial, you won't be charged until the trial ends."
                             : " You will be charged a pro-rated amount for the remainder of this billing cycle immediately."}
                         </p>
@@ -1043,7 +1127,7 @@ const BillingSubscriptionsPage = ({ isEmbedded }) => {
                     disabled={isAddingSeats}
                     variant="gradient"
                   >
-                    {isAddingSeats ? 'Processing...' : (summary?.subscriptionStatus === 'trial' ? 'Add Seats' : 'Proceed to Payment')}
+                    {isAddingSeats ? 'Processing...' : (isTrial ? 'Add Seats' : 'Proceed to Payment')}
                   </Button>
                   <Button
                     onClick={() => setShowAddSeatsModal(false)}

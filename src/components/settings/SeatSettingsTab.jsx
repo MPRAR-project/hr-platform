@@ -66,7 +66,7 @@ const SeatSettingsTab = () => {
                 let trialStatus = false;
                 try {
                     const billingSummary = await getBillingSummary();
-                    trialStatus = billingSummary?.subscriptionStatus === 'trial' && !billingSummary?.isExpired;
+                    trialStatus = billingSummary?.subscriptionStatus === 'trialing';
                     setIsInTrial(trialStatus);
                 } catch (error) {
                     console.warn('Failed to check trial status:', error);

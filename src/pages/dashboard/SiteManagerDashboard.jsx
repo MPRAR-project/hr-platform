@@ -83,7 +83,7 @@ const SiteManagerDashboard = () => {
         const companyId = parseCompanyId(user?.companyId);
         if (companyId) {
           const billingSummary = await getBillingSummary();
-          setIsInTrial(billingSummary?.subscriptionStatus === 'trial' && !billingSummary?.isExpired);
+          setIsInTrial(billingSummary?.subscriptionStatus === 'trialing');
         }
       } catch (error) {
         console.warn('Failed to check trial status:', error);

@@ -691,7 +691,7 @@ const UserListPage = () => {
           const cid = parseCompanyId(user?.companyId);
           if (cid) {
             const billingSummary = await getBillingSummary();
-            setIsInTrial(billingSummary?.subscriptionStatus === 'trial' && !billingSummary?.isExpired);
+            setIsInTrial(billingSummary?.subscriptionStatus === 'trialing');
           }
         } catch (error) {
           console.warn('Failed to check trial status:', error);
