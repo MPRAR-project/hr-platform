@@ -60,7 +60,6 @@ const ClientsPage = lazy(() => import('./pages/clients/ClientsPage'));
 const SitesPage = lazy(() => import('./pages/admin/SitesPage'));
 const TimesheetArchivePage = lazy(() => import('./pages/timesheets/TimesheetArchivePage'));
 const DataCleanupPage = lazy(() => import('./pages/admin/DataCleanupPage'));
-const PluginManagerPage = lazy(() => import('./pages/admin/PluginManagerPage'));
 const ManualEntryMigrationPage = lazy(() => import('./pages/admin/ManualEntryMigrationPage'));
 const InvoiceSummaryPage = lazy(() => import('./pages/financials/InvoiceSummaryPage'));
 const InvoiceSettingsPage = lazy(() => import('./pages/financials/InvoiceSettingsPage'));
@@ -242,11 +241,6 @@ const AppRouter = () => {
           <Route path="/admin/data-cleanup" element={
             <RoleGuard allowedRoles={['superUser']}>
               <DataCleanupPage />
-            </RoleGuard>
-          } />
-          <Route path="/admin/plugin-manager" element={
-            <RoleGuard allowedRoles={['superUser']}>
-              <PluginManagerPage />
             </RoleGuard>
           } />
           <Route path="/admin/manual-entry-migration" element={

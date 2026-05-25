@@ -106,14 +106,17 @@ export async function getCompany(companyId) {
  */
 export async function getCompanyPlugins(companyId) {
   try {
-    const data = await getCompany(companyId);
-    if (!data) return {};
+    const response = await getCompany(companyId);
+    if (!response) return {};
+    // Response shape: { company: { plugins: {...}, ... }, ... }
+    const company = response.company || response;
+    const p = company?.plugins || {};
     return {
-      scheduling: data.pluginScheduling,
-      payslipAndInvoice: data.pluginPayslipAndInvoice,
-      hiring: data.pluginHiring,
-      assets: data.pluginAssets,
-      absence: data.pluginAbsence !== false
+      scheduling: p.scheduling,
+      payslipAndInvoice: p.payslipAndInvoice,
+      hiring: p.hiring,
+      assets: p.assets,
+      absence: p.absence !== false,
     };
   } catch (error) {
     console.error('[companyManagementService] Failed to fetch plugins:', error);

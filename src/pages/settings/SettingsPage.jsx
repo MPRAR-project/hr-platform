@@ -492,10 +492,11 @@ const SettingsPage = () => {
       formData.append('file', file);
 
       // Upload file via REST API
+      // Content-Type must be undefined here — setting it to 'multipart/form-data'
+      // without the boundary breaks multer. Leaving it undefined lets the browser
+      // auto-set 'multipart/form-data; boundary=...' correctly for FormData.
       const { data: uploadRes } = await hrApiClient.post('/hr/upload', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        }
+        headers: { 'Content-Type': undefined }
       });
 
       const downloadURL = uploadRes.url;
@@ -509,6 +510,7 @@ const SettingsPage = () => {
       await invalidateCompanyCache(companyId);
 
       setCompanyLogoURL(downloadURL);
+      window.dispatchEvent(new CustomEvent('company:logo:updated', { detail: { logoURL: downloadURL } }));
       toast.success('Company logo uploaded successfully!');
     } catch (error) {
       console.error('Error uploading logo:', error);
@@ -558,6 +560,7 @@ const SettingsPage = () => {
       await invalidateCompanyCache(companyId);
 
       setCompanyLogoURL(null);
+      window.dispatchEvent(new CustomEvent('company:logo:updated', { detail: { logoURL: null } }));
       toast.success('Company logo removed successfully!');
     } catch (error) {
       console.error('Error removing logo:', error);
@@ -735,6 +738,7 @@ const SettingsPage = () => {
                       <input
                         type="file"
                         accept="image/*"
+                        onClick={(e) => { e.target.value = null; }}
                         onChange={handleLogoFileSelect}
                         className="hidden"
                         disabled={isUploadingLogo}

@@ -5,6 +5,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { getCompanyPlugins } from '../../services/companyManagementService';
 import { useUI } from '../../hooks/useUI';
 import hrApiClient from '../../lib/hrApiClient';
+import wsClient from '../../lib/wsClient';
 import {
   LayoutDashboard,
   CreditCard,
@@ -109,39 +110,59 @@ const Sidebar = () => {
   const [companyName, setCompanyName] = useState(null);
 
   useEffect(() => {
-    const checkPluginAndLogo = async () => {
-      // Prioritize company context if available (even for super users)
+    const fetchData = async () => {
       if (user?.companyId) {
         try {
-          // Fetch from dashboard which contains company settings and plugins
           const { data: dashboardData } = await hrApiClient.get('/hr/dashboard');
-          
           setHasInvoicePlugin(Boolean(dashboardData.plugins?.payslipAndInvoice));
           setHasSchedulingPlugin(Boolean(dashboardData.plugins?.scheduling));
           setHasAbsencePlugin(dashboardData.plugins?.absence !== false);
-          
-          setCompanyLogo(dashboardData.logoURL || dashboardData.logoUrl || dashboardData.logo || null);
-          setCompanyName(dashboardData.name || dashboardData.companyName || null);
         } catch (err) {
           console.error("Error fetching dashboard data for sidebar:", err);
-          // Fallback defaults
           setHasAbsencePlugin(true);
+        }
+        try {
+          const { data: companyData } = await hrApiClient.get('/hr/company');
+          const c = companyData.company || companyData;
+          setCompanyLogo(c.logoURL || c.logoUrl || c.logo_url || c.logo || null);
+          setCompanyName(c.name || null);
+        } catch (err) {
+          console.error("Error fetching company logo for sidebar:", err);
         }
         return;
       }
-
-      // Fallback for super users without a specific company context
       if (user?.role === 'superUser') {
         setHasInvoicePlugin(true);
         setHasSchedulingPlugin(true);
-        return;
       }
-
-      // Default for others without company context
-      setHasInvoicePlugin(false);
-      setHasSchedulingPlugin(false);
     };
-    checkPluginAndLogo();
+    fetchData();
+
+    const handleLogoUpdate = (e) => {
+      setCompanyLogo(e.detail?.logoURL ?? null);
+    };
+    window.addEventListener('company:logo:updated', handleLogoUpdate);
+
+    const handleCompanyUpdated = (data) => {
+      const logo = data?.logoURL || data?.logoUrl || data?.logo_url || data?.logo;
+      if (logo !== undefined) setCompanyLogo(logo || null);
+      if (data?.name) setCompanyName(data.name);
+    };
+    wsClient.on('company:updated', handleCompanyUpdated);
+
+    const handlePluginsUpdated = (pluginData) => {
+      if (!pluginData) return;
+      setHasInvoicePlugin(Boolean(pluginData.payslipAndInvoice));
+      setHasSchedulingPlugin(Boolean(pluginData.scheduling));
+      setHasAbsencePlugin(pluginData.absence !== false);
+    };
+    wsClient.on('company:plugins:updated', handlePluginsUpdated);
+
+    return () => {
+      window.removeEventListener('company:logo:updated', handleLogoUpdate);
+      wsClient.off('company:updated', handleCompanyUpdated);
+      wsClient.off('company:plugins:updated', handlePluginsUpdated);
+    };
   }, [user]);
 
 
@@ -223,7 +244,8 @@ const Sidebar = () => {
       to: '/timesheets',
       label: 'Timesheet',
       icon: CalendarCheck,
-      roles: ['siteManager', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor', 'employee']
+      roles: ['siteManager', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor', 'employee'],
+      condition: hasSchedulingPlugin
     },
     // {
     //   to: '/timesheet-archives',
@@ -235,13 +257,15 @@ const Sidebar = () => {
       to: '/time-entries',
       label: 'Time Entries',
       icon: Clock,
-      roles: ['siteManager', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor', 'employee']
+      roles: ['siteManager', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor', 'employee'],
+      condition: hasSchedulingPlugin
     },
     {
       to: '/approvals',
       label: 'Approvals',
       icon: CalendarCheck,
-      roles: ['siteManager', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor']
+      roles: ['siteManager', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor'],
+      condition: hasSchedulingPlugin
     },
     {
       to: '/onboardings-management',
@@ -263,18 +287,17 @@ const Sidebar = () => {
     //   roles: ['employee', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor', 'siteManager', 'seniorManager'],
     //   condition: hasSchedulingPlugin
     // },
-    // Grouped Scheduling (for Site Manager and Senior Manager only)
     {
       label: 'Scheduling',
       icon: CalendarDays,
       to: '/schedule',
-      roles: ['siteManager', 'adminManager', 'employee'],
+      roles: ['siteManager', 'seniorManager'],
       condition: hasSchedulingPlugin,
       children: [
         {
           label: 'Schedule',
           to: '/schedule',
-          roles: ['siteManager', 'adminManager', 'employee'],
+          roles: ['siteManager', 'seniorManager'],
           condition: hasSchedulingPlugin,
         },
         {
@@ -291,6 +314,13 @@ const Sidebar = () => {
           roles: ['siteManager', 'seniorManager'],
           condition: hasSchedulingPlugin
         },
+        {
+          to: '/incidents',
+          label: 'Incidents',
+          icon: AlertTriangle,
+          roles: ['siteManager', 'seniorManager'],
+          condition: hasSchedulingPlugin
+        }
       ]
     },
     {
@@ -304,13 +334,6 @@ const Sidebar = () => {
       label: 'Documents',
       icon: FileText,
       roles: ['siteManager', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor', 'employee']
-    },
-    {
-      to: '/incidents',
-      label: 'Incidents',
-      icon: AlertTriangle,
-      roles: ['siteManager', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor', 'employee'],
-      condition: hasSchedulingPlugin
     },
     {
       to: '/hr-onboarding',
