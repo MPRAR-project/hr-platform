@@ -1,3 +1,4 @@
+// @refresh reset
 /**
  * Timesheet Context Provider
  * Provides real-time timesheet data using Firestore listeners
@@ -42,7 +43,7 @@ export const useTimesheetContext = () => {
 };
 
 export const TimesheetProvider = ({ children }) => {
-    const { user, companySettings, weekStartDay: authWeekStartDay } = useAuth();
+    const { user, companySettings, weekStartDay: authWeekStartDay, isLoading: authIsLoading } = useAuth();
     // Get sessions from ClockSessionContext (returns safe defaults if not available)
     const { sessionDocs: allSessionDocs } = useClockSessionContext();
     const [timesheetDocs, setTimesheetDocs] = useState([]);
@@ -59,7 +60,8 @@ export const TimesheetProvider = ({ children }) => {
 
     // Track last processed logs to prevent redundant updates
     const lastProcessedRef = useRef('');
-    const [currentSchedule, setCurrentSchedule] = useState(null);
+    const [currentSchedule, setCurrentSchedule] = useState({});
+
 
     // Sync company settings from AuthContext
     useEffect(() => {
@@ -179,7 +181,7 @@ export const TimesheetProvider = ({ children }) => {
         // CRITICAL: must include session status + endedAt so a clock-out (open→closed) always
         // produces a different hash even though the session count hasn't changed.
         const sessionsHash = sessionDocs?.map(s =>
-            `${s.id}_${s.status}_${s.endedAt?.seconds || 'noend'}_${s.updatedAt?.seconds || ''}`
+            `${s.id}_${s.status}_${s.endedAt || 'noend'}_${s.updatedAt || ''}`
         ).sort().join('|') || '';
         const currentHash = `${docsHash}__${sessionsHash}__sched_${JSON.stringify(currentSchedule)}`;
 
@@ -293,7 +295,7 @@ export const TimesheetProvider = ({ children }) => {
     const sessionsSignature = useMemo(() => {
         if (!allSessionDocs) return '';
         return allSessionDocs
-            .map(s => `${s.id}_${s.status}_${s.endedAt?.seconds || 'noend'}_${s.updatedAt?.seconds || ''}`)
+            .map(s => `${s.id}_${s.status}_${s.endedAt || 'noend'}_${s.updatedAt || ''}`)
             .sort()
             .join('|');
     }, [allSessionDocs]);
@@ -318,6 +320,12 @@ export const TimesheetProvider = ({ children }) => {
 
     // Subscribe to timesheet documents via REST + WebSocket
     useEffect(() => {
+        if (authIsLoading) {
+            // Keep the timesheet context in loading state while auth is bootstrapping.
+            setIsLoading(true);
+            return;
+        }
+
         if (!user?.uid) {
             setTimesheetDocs([]);
             setWeeklySummaries([]);
@@ -348,31 +356,31 @@ export const TimesheetProvider = ({ children }) => {
         return () => {
             if (unsubscribe) unsubscribe();
         };
-    }, [user?.uid, user?.companyId]);
+    }, [user?.uid, user?.companyId, authIsLoading]);
 
     const refresh = useCallback(() => {
-        // Clear schedule cache so we always re-fetch fresh schedule data on refresh.
-        // This ensures site manager schedule changes are immediately reflected.
+        // Clear caches so fresh data is fetched
         scheduleCacheRef.current = {};
         scheduleLastFetched.current = {};
 
-        // Clear timesheet data cache
         import('../services/timesheetCache').then(({ invalidateUserTimesheets }) => {
             if (user?.uid) invalidateUserTimesheets(user.uid);
         });
 
-        // Force refresh by re-subscribing
-        if (unsubscribeRef.current) {
-            unsubscribeRef.current();
-        }
+        if (!user?.uid) return;
+
         setIsLoading(true);
         isInitialLoadRef.current = true;
-        const unsubscribe = subscribeUserTimesheets(user?.uid, handleTimesheetUpdate);
-        unsubscribeRef.current = unsubscribe;
+        fetchWeeklySummaries(user.uid, 12)
+            .then(sheets => handleTimesheetUpdate(sheets))
+            .catch(err => console.error('[TimesheetProvider] refresh error:', err))
+            .finally(() => setIsLoading(false));
     }, [user?.uid, handleTimesheetUpdate]);
 
-    // ENHANCEMENT: isLoading is only truly false when timesheets, schedule, AND absences are processed
-    const isMetadataReady = !user?.uid || (currentSchedule !== null && absencesMap !== null);
+    // ENHANCEMENT: isLoading is only truly false when timesheets AND absences are processed.
+    // currentSchedule is NOT included — it's optional and may never arrive for REST-only companies.
+    const isMetadataReady = !user?.uid || absencesMap !== null;
+
     const finalLoading = isLoading || !isMetadataReady;
 
     const value = useMemo(() => ({

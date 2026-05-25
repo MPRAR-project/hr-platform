@@ -145,9 +145,15 @@ const TeamMemberRow = memo(({
           </div>
         ) : (
           <div className="flex justify-center">
-            <Button variant="outline-danger" iconFirst icon={Trash2} onClick={() => onRevokeInvite(member)}>
-              Revoke Invite
-            </Button>
+            {member.inviteId && onRevokeInvite ? (
+              <Button variant="outline-danger" iconFirst icon={Trash2} onClick={() => onRevokeInvite(member)}>
+                Revoke Invite
+              </Button>
+            ) : (
+              <Button variant="outline-danger" iconFirst icon={Trash2} onClick={() => onDeactivate && onDeactivate(member)}>
+                Delete
+              </Button>
+            )}
           </div>
         )}
       </td>

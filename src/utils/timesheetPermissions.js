@@ -1,14 +1,24 @@
-const TIMESHEET_EDITOR_ROLES = new Set([
-  'adminAdvisor',
-  'adminManager',
-  'hrAdvisor',
-  'hrManager',
-  'teamManager',
-  'siteManager',
-  'seniorManager'
+/**
+ * timesheetPermissions.js
+ *
+ * Central authority for timesheet access control.
+ *
+ * Rules:
+ *  - Only seniorManager and siteManager can APPROVE or REJECT
+ *  - Draft and Rejected → editable by owner and managers
+ *  - Submitted and Approved → locked for everyone (no edits)
+ */
+
+// Roles that can approve / reject timesheets
+export const APPROVER_ROLES = new Set(['seniorManager', 'siteManager', 'superUser']);
+
+// Roles that can view and manage other employees' timesheets
+const MANAGER_ROLES = new Set([
+  'adminAdvisor', 'adminManager', 'hrAdvisor', 'hrManager',
+  'teamManager', 'siteManager', 'seniorManager', 'superUser', 'contractManager',
 ]);
 
-export const TIMESHEET_EDITOR_ROLES_LIST = Array.from(TIMESHEET_EDITOR_ROLES);
+export const TIMESHEET_EDITOR_ROLES_LIST = Array.from(MANAGER_ROLES);
 
 export function normalizeUserId(idOrPath) {
   if (!idOrPath) return null;
@@ -20,68 +30,61 @@ export function normalizeUserId(idOrPath) {
   return value || null;
 }
 
+/**
+ * Can the given role approve or reject a timesheet?
+ */
+export function canApproveTimesheets(role) {
+  if (!role) return false;
+  return APPROVER_ROLES.has(role);
+}
+
 export function canEditTimesheets(role) {
   if (!role) return false;
-  // Normalize role to handle case variations and spacing
-  const normalizedRole = String(role).toLowerCase().replace(/[_\s-]/g, '');
-
-  // Check against normalized role names - ensure hrManager is included
-  const allowedRoles = [
-    'adminadvisor',
-    'adminmanager',
-    'hradvisor',
-    'hrmanager',
-    'teammanager',
-    'sitemanager',
-    'seniormanager',
-    'employee'
-  ];
-
-  return allowedRoles.includes(normalizedRole);
+  const normalizedRole = String(role).toLowerCase().replace(/[\s_-]+/g, '');
+  const allowedNormalized = Array.from(MANAGER_ROLES).map(r =>
+    r.toLowerCase().replace(/[\s_-]+/g, '')
+  );
+  return allowedNormalized.includes(normalizedRole);
 }
 
 export function canEditTargetTimesheet(viewerRole, viewerUserId, targetUserId) {
-  if (!canEditTimesheets(viewerRole)) return false;
+  if (!viewerRole) return false;
   const normalizedViewerId = normalizeUserId(viewerUserId);
   const normalizedTargetId = normalizeUserId(targetUserId);
   if (!normalizedViewerId || !normalizedTargetId) return false;
-  if (normalizedViewerId === normalizedTargetId) return true;
-  return true;
+  if (normalizedViewerId === normalizedTargetId) return false;
+  return canEditTimesheets(viewerRole);
 }
 
-
 /**
- * Determines if a user can edit a specific timesheet based on their role and the timesheet status.
- * 
- * @param {Object} timesheet - The timesheet object (must have status and userId)
- * @param {Object} user - The current user object (must have userId and role)
- * @returns {boolean} True if the user can edit this timesheet
+ * Determines if a user can EDIT a specific timesheet.
+ *
+ * Edit is only possible when status is 'draft' or 'rejected'.
+ * Once submitted or approved, no one can edit.
+ *
+ * @param {Object} timesheet - Must have { status, userId }
+ * @param {Object} user      - Must have { userId, id, role }
+ * @returns {boolean}
  */
 export function getTimesheetEditPermissions(timesheet, user) {
   if (!timesheet || !user) return false;
 
   const status = String(timesheet.status || 'draft').toLowerCase();
-  const normalizedUserId = normalizeUserId(user.userId || user.id);
-  const normalizedOwnerId = normalizeUserId(timesheet.userId);
 
-  const isOwner = normalizedUserId === normalizedOwnerId;
+  // Submitted and approved are locked for EVERYONE — no exceptions
+  if (['submitted', 'pending', 'approved'].includes(status)) return false;
 
-  if (isOwner) {
-    // Owners can edit their own timesheets ONLY if they are in 'draft' or 'rejected' status.
-    // Once sent for approval ('pending'), they must Wait for a decline/rejection to edit again.
-    return ['draft', 'rejected', ''].includes(status);
+  // Only 'draft' and 'rejected' are editable
+  if (!['draft', 'rejected', ''].includes(status)) return false;
+
+  const normalizedViewerId = normalizeUserId(user.userId || user.id || user.uid);
+  const normalizedOwnerId  = normalizeUserId(timesheet.userId || timesheet.employeeId);
+
+  // Owner can edit their own draft/rejected
+  if (normalizedViewerId && normalizedOwnerId && normalizedViewerId === normalizedOwnerId) {
+    return true;
   }
 
-  // Check if user has manager/admin permissions to edit this target user's timesheets
-  const hasManagerPermission = canEditTargetTimesheet(user.role, normalizedUserId, normalizedOwnerId);
-
-  if (hasManagerPermission) {
-    // Managers can edit 'draft' (to assist), 'pending' (to correct), 
-    // or 'approved-by-team' (site managers correcting team manager's input).
-    // They can also edit 'rejected' to help fix errors.
-    // Senior roles CAN edit 'approved' timesheets (post-approval corrections).
-    return ['draft', 'pending', 'approved-by-team', 'submitted', 'rejected', 'approved'].includes(status);
-  }
-
-  return false;
+  // Managers can also help edit draft/rejected timesheets
+  return canEditTimesheets(user.role || user.hrRole);
 }

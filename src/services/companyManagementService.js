@@ -42,7 +42,7 @@ export async function activateCompany(companyId) {
  */
 export async function getAllCompanies() {
   try {
-    const { data } = await hrApiClient.get('/hr/platform/companies'); // Need this endpoint
+    const { data } = await hrApiClient.get('/hr/companies');
     return (data || []).map(c => ({
       value: c.id,
       label: c.name || 'Unnamed Company'
@@ -58,8 +58,9 @@ export async function getAllCompanies() {
  */
 export async function updateCompanyPlugin(companyId, pluginKey, isEnabled) {
   try {
-    const { data } = await hrApiClient.put('/hr/company/plugins', {
-      [pluginKey]: isEnabled
+    const { data } = await hrApiClient.post('/hr/billing/plugins', {
+      type: pluginKey,
+      enabled: isEnabled,
     });
     return data;
   } catch (error) {
@@ -70,12 +71,17 @@ export async function updateCompanyPlugin(companyId, pluginKey, isEnabled) {
 }
 
 /**
- * Update all plugin settings
+ * Update all plugin settings (one POST per key — billing endpoint is atomic per plugin)
  */
 export async function updateCompanyPlugins(companyId, plugins) {
   try {
-    const { data } = await hrApiClient.put('/hr/company/plugins', plugins);
-    return data;
+    const results = await Promise.all(
+      Object.entries(plugins).map(([type, enabled]) =>
+        hrApiClient.post('/hr/billing/plugins', { type, enabled: Boolean(enabled) })
+          .then(r => r.data)
+      )
+    );
+    return results;
   } catch (error) {
     console.error('[companyManagementService] Failed to update plugins:', error);
     throw error;

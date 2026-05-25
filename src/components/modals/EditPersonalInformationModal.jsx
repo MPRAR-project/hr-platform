@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { toast } from 'react-toastify';
 import Button from '../ui/Button';
-import { getUserById, updateUserBySiteManager, syncUserToCentral } from '../../services/users';
+import { getUserById, updateUserBySiteManager } from '../../services/users';
 import { getUserOnboardingApplication, submitOnboardingStep } from '../../services/onboarding';
 
 const EditPersonalInformationModal = ({ isOpen, onClose, userId, companyId, currentData, onSave }) => {
@@ -387,17 +387,7 @@ const EditPersonalInformationModal = ({ isOpen, onClose, userId, companyId, curr
         // Don't throw - this is a secondary sync
       }
 
-      // Sync to Central Platform Postgres
-      try {
-        await syncUserToCentral(normalizedUserId, companyId, {
-          firstName: formData.firstName,
-          lastName: formData.lastName,
-          email: formData.email
-        });
-      } catch (centralSyncError) {
-        console.warn('Failed to sync to Central platform (non-critical):', centralSyncError);
-      }
-
+      // Central sync is handled by the HR backend on every PUT /hr/employees/:id.
       toast.success('Personal information updated successfully');
 
       // Reset changes flag after successful save

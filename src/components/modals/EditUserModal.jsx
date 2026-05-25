@@ -63,39 +63,20 @@ const EditUserModal = ({ isOpen, onClose, user, onSave }) => {
         }
     }, [user, isOpen]);
 
-    // Fetch manager options (re-using logic from AddUserModal)
+    // Load all company users for the "Reports to" dropdown
     useEffect(() => {
         const loadManagers = async () => {
             if (!authed?.companyId || !isOpen) return;
             try {
                 const companyId = authed.companyId.replace('companies/', '');
-                const roles = ['teamManager', 'adminManager', 'hrManager', 'seniorManager', 'siteManager', 'superUser', 'owner', 'site_manager'];
-                
                 const employees = await getUsersByCompany(companyId);
                 const opts = employees
-                    .filter(u => {
-                        const r = getCanonicalRole(u.primaryRole || u.role);
-                        return roles.includes(r) && u.id !== user?.id;
-                    })
-                    .map(u => ({ 
-                        id: u.id, 
-                        name: u.displayName || `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email, 
+                    .filter(u => u.id !== user?.id)
+                    .map(u => ({
+                        id: u.id,
+                        name: u.displayName || `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email,
                         role: getCanonicalRole(u.primaryRole || u.role)
                     }));
-                
-                // Ensure the current user is in the options if they have a manager role
-                const currentUserId = authed?.userId || authed?.uid;
-                if (currentUserId && !opts.find(o => o.id === currentUserId) && currentUserId !== user?.id) {
-                    const myRole = getCanonicalRole(authed?.primaryRole || authed?.role);
-                    if (roles.includes(myRole)) {
-                        opts.push({
-                            id: currentUserId,
-                            name: authed?.displayName || authed?.email || 'Me',
-                            role: myRole
-                        });
-                    }
-                }
-                
                 setManagerOptions(opts);
             } catch (e) {
                 console.error('[EditUserModal] Failed to load managers:', e);
@@ -105,28 +86,20 @@ const EditUserModal = ({ isOpen, onClose, user, onSave }) => {
     }, [authed?.companyId, isOpen, user?.id]);
 
     const getAllowedManagerRoles = (userRole) => {
-        const normalizedRole = getCanonicalRole(userRole);
-        const roleMapping = {
-            'employee': ['teamManager', 'siteManager'],
-            'hrAdvisor': ['hrManager', 'siteManager'],
-            'adminAdvisor': ['adminManager', 'siteManager'],
-            'contractManager': ['teamManager', 'siteManager']
-        };
-
-        return roleMapping[normalizedRole] || [];
+        switch (getCanonicalRole(userRole)) {
+            case 'employee':        return ['teamManager'];                       // Team Managers only
+            case 'adminAdvisor':    return ['adminManager'];                      // Admin Managers only
+            case 'hrAdvisor':       return ['hrManager'];                         // HR Managers only
+            case 'contractManager': return ['teamManager', 'siteManager'];
+            default:                return [];
+        }
     };
 
     const getFilteredManagers = (allManagers, userRole) => {
-        const allowedRoles = getAllowedManagerRoles(userRole);
-        const normalizedAllowed = allowedRoles.map(getCanonicalRole);
-
-        if (allowedRoles.length > 0) {
-            return allManagers.filter(manager => {
-                const mRole = getCanonicalRole(manager.role);
-                return normalizedAllowed.includes(mRole);
-            });
-        }
-        return [];
+        const allowed = getAllowedManagerRoles(userRole);
+        if (!allowed || allowed.length === 0) return [];
+        const normalized = allowed.map(getCanonicalRole);
+        return allManagers.filter(m => normalized.includes(getCanonicalRole(m.role)));
     };
 
     const handleChange = (field, value) => {

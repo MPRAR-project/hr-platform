@@ -58,7 +58,7 @@ const SeatRequestPage = () => {
     }
     try {
       if (!Array.isArray(cached)) setIsLoading(true);
-      const data = await fetchSeatRequests(companyId);
+      const data = await fetchSeatRequests();
       setRequests(data);
       setItem?.(cacheKey, data, 7 * 60 * 1000);
     } catch (error) {
@@ -81,27 +81,14 @@ const SeatRequestPage = () => {
   };
 
   const handleCreateRequest = async ({ additionalSeats, reason }) => {
-    if (!companyId) {
-      toast.error('Company information missing. Please contact support.');
-      return;
-    }
     try {
-      await createSeatRequest(
-        {
-          companyId,
-          siteId,
-          requestedById: user?.uid,
-          requestedByName: user?.displayName || user?.email || 'User',
-          requestedByEmail: user?.email
-        },
-        { additionalSeats, reason }
-      );
-      toast.success('Seat request submitted.');
+      await createSeatRequest({ seatCount: additionalSeats, reason });
+      toast.success('Seat request submitted. You will be notified when it is approved.');
       setShowRequestModal(false);
       emitSeatRequestEvent();
     } catch (error) {
       console.error('Failed to submit seat request:', error);
-      toast.error(error?.message || 'Failed to submit seat request');
+      toast.error(error?.response?.data?.error || error?.message || 'Failed to submit seat request');
     }
   };
 

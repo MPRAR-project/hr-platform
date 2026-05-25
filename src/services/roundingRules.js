@@ -1,23 +1,16 @@
-import apiClient from '../api/apiClient';
+import hrApiClient from '../lib/hrApiClient';
 import { getDefaultRoundingRules, normalizeRoundingRules } from '../utils/timeRounding';
 
-/**
- * Genuinely refactored Rounding Rules Service
- * Communicates with the Central Backend (Postgres) instead of Firebase Firestore.
- */
-
 export async function getCompanyRoundingRules(companyId) {
-    const cleanId = companyId.replace('companies/', '');
-    // In our new architecture, companies are in the public schema
-    const response = await apiClient.get(`/companies/${cleanId}`);
+    const response = await hrApiClient.get('/hr/company');
     const data = response.data;
-    return normalizeRoundingRules(data?.roundingRules);
+    return normalizeRoundingRules(data?.company?.roundingRules);
 }
 
 export async function getSiteOverrideRoundingRules(companyId, siteId) {
     if (!siteId) return null;
     const cleanSiteId = siteId.replace('sites/', '');
-    const response = await apiClient.get(`/hr/sites/${cleanSiteId}`);
+    const response = await hrApiClient.get(`/hr/sites/${cleanSiteId}`);
     const data = response.data;
     return data?.roundingRules ? normalizeRoundingRules(data.roundingRules) : null;
 }

@@ -1,11 +1,14 @@
 import React, { useEffect, useState } from 'react';
-import { X, Plus, ArrowRight, ChevronDown, Loader2, AlertTriangle } from 'lucide-react';
+import { X, Plus, ArrowRight, ChevronDown, Loader2, AlertTriangle, ShoppingCart } from 'lucide-react';
 import Button from '../ui/Button';
 import { toast } from 'react-toastify';
 import { addUsersBySiteManager, getUsersByCompany } from '../../services/users';
 import { getWorkLocations } from '../../services/workLocations';
 import { getTrainingCourses } from '../../services/trainingService';
 import { useAuth } from '../../hooks/useAuth';
+
+// Roles that can buy seats directly — others must request
+const SEAT_PURCHASERS = ['superUser', 'siteManager', 'seniorManager'];
 
 // Email validation function
 const validateEmail = (email) => {
@@ -109,7 +112,7 @@ const getCanonicalRole = (value) => {
   }
 };
 
-const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
+const AddUserModal = ({ isOpen, onClose, onSubmit, onSeatLimitReached }) => {
     const { user: authed } = useAuth();
     const [users, setUsers] = useState([
         {
@@ -166,31 +169,21 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
         return true;
     });
 
-    // Updated: Get allowed manager roles based on user role and hierarchy
     const getAllowedManagerRoles = (userRole) => {
-        const normalizedRole = getCanonicalRole(userRole);
-        const roleMapping = {
-            'employee': ['teamManager', 'siteManager'],
-            'hrAdvisor': ['hrManager', 'siteManager'],
-            'adminAdvisor': ['adminManager', 'siteManager'],
-            'contractManager': ['teamManager', 'siteManager']
-        };
-
-        return roleMapping[normalizedRole] || [];
+        switch (getCanonicalRole(userRole)) {
+            case 'employee':        return ['teamManager'];                       // Team Managers only
+            case 'adminAdvisor':    return ['adminManager'];                      // Admin Managers only
+            case 'hrAdvisor':       return ['hrManager'];                         // HR Managers only
+            case 'contractManager': return ['teamManager', 'siteManager'];
+            default:                return [];
+        }
     };
 
-    // Filter managers based on user role
     const getFilteredManagers = (allManagers, userRole) => {
-        const allowedRoles = getAllowedManagerRoles(userRole);
-        const normalizedAllowed = allowedRoles.map(getCanonicalRole);
-
-        if (allowedRoles.length > 0) {
-            return allManagers.filter(manager => {
-                const mRole = getCanonicalRole(manager.role);
-                return normalizedAllowed.includes(mRole);
-            });
-        }
-        return [];
+        const allowed = getAllowedManagerRoles(userRole);
+        if (!allowed || allowed.length === 0) return [];
+        const normalized = allowed.map(getCanonicalRole);
+        return allManagers.filter(m => normalized.includes(getCanonicalRole(m.role)));
     };
 
     const handleAddMore = () => {
@@ -254,7 +247,8 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
         setUsers([
             {
                 id: 1,
-                fullName: '',
+                firstName: '',
+                lastName: '',
                 email: '',
                 role: 'employee',
                 reportsTo: '',
@@ -321,37 +315,21 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
         checkMandatoryTrainings();
     }, [authed?.companyId]);
 
-    // Load manager options
+    // Load all company users for the "Reports to" dropdown
     useEffect(() => {
         const loadManagers = async () => {
             try {
                 if (!authed?.companyId) return;
                 const companyId = authed.companyId.replace('companies/', '');
-                const roles = ['teamManager', 'adminManager', 'hrManager', 'seniorManager', 'siteManager', 'superUser', 'owner', 'site_manager'];
-                
+
                 const employees = await getUsersByCompany(companyId);
                 const opts = employees
-                    .filter(u => roles.includes(getCanonicalRole(u.primaryRole || u.role)))
                     .map(u => ({
                         id: u.id,
                         name: u.displayName || `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email,
                         role: getCanonicalRole(u.primaryRole || u.role),
                         siteId: u.siteId
                     }));
-
-                // Ensure the current user is in the options if they have a manager role
-                const currentUserId = authed?.userId || authed?.uid;
-                if (currentUserId && !opts.find(o => o.id === currentUserId)) {
-                    const myRole = getCanonicalRole(authed?.primaryRole || authed?.role);
-                    if (roles.includes(myRole)) {
-                        opts.push({
-                            id: currentUserId,
-                            name: authed?.displayName || authed?.email || 'Me',
-                            role: myRole,
-                            siteId: authed?.siteId
-                        });
-                    }
-                }
 
                 setManagerOptions(opts);
             } catch (e) {
@@ -438,6 +416,20 @@ const AddUserModal = ({ isOpen, onClose, onSubmit }) => {
             resetForm();
             onClose();
         } catch (e) {
+            // 402 = seat limit exceeded — route by role
+            if (e?.response?.status === 402 || e?.message?.includes('Seat limit')) {
+                const myRole = authed?.hrRole || authed?.role || '';
+                if (SEAT_PURCHASERS.includes(myRole)) {
+                    // Site/Senior Manager: prompt to buy seats directly
+                    toast.warning('Seat limit reached. Please purchase additional seats to continue.');
+                    if (onSeatLimitReached) onSeatLimitReached('purchase');
+                } else {
+                    // Other managers: redirect to seat request flow
+                    toast.info('Seat limit reached. Please submit a seat request for approval.');
+                    if (onSeatLimitReached) onSeatLimitReached('request');
+                }
+                return;
+            }
             const message = e?.message || 'Failed to submit users';
             toast.error(message);
         } finally {

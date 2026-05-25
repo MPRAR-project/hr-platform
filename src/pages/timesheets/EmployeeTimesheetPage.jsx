@@ -14,8 +14,16 @@ import { Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow } f
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
 import Loader from '../../components/ui/Loader';
-import { canEditTargetTimesheet, getTimesheetEditPermissions, normalizeUserId } from '../../utils/timesheetPermissions';
+import { useAuth } from '../../hooks/useAuth';
+import { useEmployeeTimesheets } from '../../hooks/useEmployeeTimesheets';
+import { usePerformanceMonitor, measureAsync } from '../../hooks/usePerformanceMonitor';
+import { formatTimeDisplay } from '../../utils/numberFormatter';
+import { canApproveTimesheets, canEditTargetTimesheet, getTimesheetEditPermissions, normalizeUserId } from '../../utils/timesheetPermissions';
+import { getRoleName } from '../../utils/getRoleName';
 import { getUserById } from '../../services/users';
+import { approveTimesheet, declineTimesheet } from '../../services/timesheets';
+
+
 
 const EmployeeTimesheetsPage = () => {
   const navigate = useNavigate();
@@ -26,6 +34,11 @@ const EmployeeTimesheetsPage = () => {
   const canEditEmployeeTimesheets = useMemo(
     () => canEditTargetTimesheet(user?.role, user?.uid, normalizedEmployeeId),
     [user?.role, user?.uid, normalizedEmployeeId]
+  );
+  // Whether the current user can approve or reject this timesheet
+  const isApprover = useMemo(
+    () => canApproveTimesheets(user?.role || user?.hrRole || user?.primaryRole),
+    [user?.role, user?.hrRole, user?.primaryRole]
   );
 
 
@@ -255,26 +268,25 @@ const EmployeeTimesheetsPage = () => {
 
   const handleApproveConfirm = async () => {
     if (!selectedTimesheet?.id) return;
+    if (!isApprover) {
+      toast.error('Only Senior Managers and Site Managers can approve timesheets.');
+      setShowApproveModal(false);
+      return;
+    }
 
     const startTime = Date.now();
-
     try {
       await measureAsync('approveTimesheet', async () => {
         const approverName = user.firstName && user.lastName
           ? `${user.firstName} ${user.lastName}`
           : user.displayName || user.name || 'Manager';
-
         await approveTimesheet(selectedTimesheet.id, user.userId || user.uid, approverName);
       });
-
-      toast.success('Timesheet approved');
-
-      // Real-time listeners will automatically update UI - no manual refresh needed
-
+      toast.success(`✅ Timesheet approved successfully.`);
       trackOperation('approveTimesheet', startTime);
     } catch (e) {
       console.error('Approve failed:', e);
-      toast.error(e?.message || 'Failed to approve timesheet');
+      toast.error(e?.message || 'Failed to approve timesheet — please try again.');
     } finally {
       setShowApproveModal(false);
       setSelectedTimesheet(null);
@@ -283,22 +295,22 @@ const EmployeeTimesheetsPage = () => {
 
   const handleDeclineConfirm = async () => {
     if (!selectedTimesheet?.id) return;
+    if (!isApprover) {
+      toast.error('Only Senior Managers and Site Managers can reject timesheets.');
+      setShowDeclineModal(false);
+      return;
+    }
 
     const startTime = Date.now();
-
     try {
       await measureAsync('declineTimesheet', async () => {
-        await declineTimesheet(selectedTimesheet.id, 'Manager rejected', user.userId || user.uid);
+        await declineTimesheet(selectedTimesheet.id, 'Returned by manager', user.userId || user.uid);
       });
-
-      toast.success('Timesheet declined');
-
-      // Real-time listeners will automatically update UI - no manual refresh needed
-
+      toast.success('Timesheet returned to employee for revision.');
       trackOperation('declineTimesheet', startTime);
     } catch (e) {
       console.error('Decline failed:', e);
-      toast.error(e?.message || 'Failed to decline timesheet');
+      toast.error(e?.message || 'Failed to return timesheet — please try again.');
     } finally {
       setShowDeclineModal(false);
       setSelectedTimesheet(null);

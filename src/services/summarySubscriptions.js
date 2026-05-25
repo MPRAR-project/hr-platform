@@ -27,6 +27,11 @@ export async function subscribeWeeklySummaries(userId, callback) {
             const weeklySummaries = timesheets.map(ts => {
                 const weekStart = ts.weekStart ? new Date(ts.weekStart).toISOString().slice(0, 10) : '—';
                 const weekEnd = ts.weekEnd ? new Date(ts.weekEnd).toISOString().slice(0, 10) : '—';
+
+                // Use backend-stored hour fields (converted to seconds for the UI layer)
+                const totalHours    = Number(ts.totalHours    || 0);
+                const regularHours  = Number(ts.regularHours  || 0);
+                const overtimeHours = Number(ts.overtimeHours || 0);
                 
                 return {
                     id: ts.id,
@@ -38,12 +43,13 @@ export async function subscribeWeeklySummaries(userId, callback) {
                     weekKey: `${weekStart}_${weekEnd}`,
                     status: ts.status,
                     totals: {
-                        grossSec: (ts.totalHours || 0) * 3600,
-                        effectiveSec: (ts.totalHours || 0) * 3600,
-                        overtimeSec: 0 // Backend could provide this if needed
+                        grossSec:     totalHours    * 3600,
+                        effectiveSec: totalHours    * 3600,
+                        overtimeSec:  overtimeHours * 3600,
+                        regularSec:   regularHours  * 3600,
                     },
                     submitted: ts.submittedAt ? new Date(ts.submittedAt).toLocaleString() : '—',
-                    approvedByName: ts.approvedBy || null, // Could expand to names with include
+                    approvedByName: ts.approvedBy || null,
                     docIds: [ts.id]
                 };
             });
@@ -54,6 +60,7 @@ export async function subscribeWeeklySummaries(userId, callback) {
             callback([]);
         }
     };
+
 
     // Initial fetch
     fetchSummaries();

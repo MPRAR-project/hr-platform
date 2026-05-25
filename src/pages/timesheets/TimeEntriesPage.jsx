@@ -165,6 +165,8 @@ const TimeEntriesPage = () => {
     const [manualEntryErrors, setManualEntryErrors] = useState({});
     const [isAddingManualEntry, setIsAddingManualEntry] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    // Track if we're closing an existing open session (so we clock-out instead of creating a manual entry)
+    const [closingSessionId, setClosingSessionId] = useState(null);
 
     // Edit entry state
     const [editingEntry, setEditingEntry] = useState(null);
@@ -901,6 +903,53 @@ const TimeEntriesPage = () => {
         const now = new Date();
         const currentTimeStr = now.toTimeString().slice(0, 5); // HH:MM format
 
+        // ── CLOSE EXISTING SESSION PATH ──────────────────────────────────────────
+        // When closing an open session, only validate + execute clock-out; skip all
+        // manual-entry validation (date range, overlap, retroactive-clock-in checks).
+        if (closingSessionId) {
+            if (!manualEntryForm.clockOut?.trim()) {
+                setManualEntryErrors({ clockOut: 'Clock out time is required' });
+                return;
+            }
+            const isTodayClose = selectedDate === formatISODate(new Date());
+            if (isTodayClose && manualEntryForm.clockOut > currentTimeStr) {
+                setManualEntryErrors({ clockOut: 'Cannot select future time for today' });
+                return;
+            }
+            if (manualEntryForm.clockIn && manualEntryForm.clockOut <= manualEntryForm.clockIn) {
+                setManualEntryErrors({ clockOut: 'Clock out time must be after clock in time' });
+                return;
+            }
+
+            setIsAddingManualEntry(true);
+            setManualEntryErrors({});
+            try {
+                const { stopClock } = await import('../../services/timeClock');
+                const [hours, minutes] = manualEntryForm.clockOut.split(':').map(Number);
+                const endedAtDate = new Date(selectedDate);
+                endedAtDate.setHours(hours, minutes, 0, 0);
+
+                await stopClock({
+                    userId: selectedUserId,
+                    sessionId: closingSessionId,
+                    endedAt: endedAtDate,
+                    notes: manualEntryForm.notes || null,
+                });
+
+                toast.success('Clocked out successfully');
+                setShowManualEntryModal(false);
+                setManualEntryForm({ clockIn: '', clockOut: '', notes: '' });
+                setClosingSessionId(null);
+                setRefreshTrigger(prev => prev + 1);
+            } catch (err) {
+                toast.error(err.message || 'Clock out failed. Please try again.');
+            } finally {
+                setIsAddingManualEntry(false);
+            }
+            return;
+        }
+        // ── END CLOSE EXISTING SESSION PATH ─────────────────────────────────────
+
         // Validate date is selected and within current week
         if (!selectedDate) {
             errors.date = 'Date is required';
@@ -1622,9 +1671,30 @@ const TimeEntriesPage = () => {
                                                 onAddEntry={(dateStr, uId) => {
                                                     setSelectedDate(dateStr);
                                                     setSelectedUserId(uId);
-                                                    setShowManualEntryModal(true);
-                                                    setManualEntryForm({ clockIn: '', clockOut: '' });
                                                     setManualEntryErrors({});
+
+                                                    // If there's an open session for this user+date, pre-fill clock-in
+                                                    // and switch to "close existing session" mode
+                                                    const dayEntry = timeEntriesGrid?.[uId]?.[dateStr];
+                                                    const openSession = (dayEntry?.sessions || []).find(s => s.status === 'open');
+
+                                                    if (openSession) {
+                                                        const startedAt = openSession.startedAt
+                                                            ? (typeof openSession.startedAt === 'string'
+                                                                ? new Date(openSession.startedAt)
+                                                                : openSession.startedAt)
+                                                            : null;
+                                                        const clockInStr = startedAt
+                                                            ? `${String(startedAt.getHours()).padStart(2, '0')}:${String(startedAt.getMinutes()).padStart(2, '0')}`
+                                                            : '';
+                                                        setClosingSessionId(openSession.id || openSession.sessionId);
+                                                        setManualEntryForm({ clockIn: clockInStr, clockOut: '', notes: '' });
+                                                    } else {
+                                                        setClosingSessionId(null);
+                                                        setManualEntryForm({ clockIn: '', clockOut: '', notes: '' });
+                                                    }
+
+                                                    setShowManualEntryModal(true);
                                                 }}
                                                 formatTime={formatTime}
                                                 getUserDisplayName={getUserDisplayName}
@@ -1640,16 +1710,21 @@ const TimeEntriesPage = () => {
 
             <ManualTimeEntryModal
                 isOpen={showManualEntryModal}
-                onClose={() => setShowManualEntryModal(false)}
+                onClose={() => {
+                    setShowManualEntryModal(false);
+                    setClosingSessionId(null);
+                }}
                 userName={selectedUserId ? getUserDisplayName(selectedUserId) : ''}
                 clockInTime={manualEntryForm.clockIn}
                 clockOutTime={manualEntryForm.clockOut}
                 notes={manualEntryForm.notes || ''}
                 entryDate={selectedDate}
                 errors={manualEntryErrors}
+                clockInReadOnly={!!closingSessionId}
+                isClosingSession={!!closingSessionId}
                 onClockInChange={(value) => {
+                    if (closingSessionId) return; // locked
                     setManualEntryForm({ ...manualEntryForm, clockIn: value });
-                    // Clear overlap too (previous conflict toast/message should not persist)
                     setManualEntryErrors({ ...manualEntryErrors, clockIn: undefined, overlap: undefined });
                 }}
                 onClockOutChange={(value) => {
@@ -1657,6 +1732,7 @@ const TimeEntriesPage = () => {
                     setManualEntryErrors({ ...manualEntryErrors, clockOut: undefined, overlap: undefined });
                 }}
                 onEntryDateChange={(value) => {
+                    if (closingSessionId) return; // date is locked when closing a session
                     setSelectedDate(value);
                     setManualEntryErrors({ ...manualEntryErrors, date: undefined, overlap: undefined });
                 }}

@@ -15,13 +15,15 @@ export const ManualTimeEntryModal = ({
     entryDate,
     onClockInChange,
     onClockOutChange,
-    onEntryDateChange, // New prop for date changes
-    onNotesChange, // New prop for description
-    notes = '', // New prop for description value
+    onEntryDateChange,
+    onNotesChange,
+    notes = '',
     onSubmit,
     isLoading,
     errors = {},
-    weekDates = [] // New prop to restrict date selection to current week
+    weekDates = [],
+    clockInReadOnly = false, // true when pre-filled from an existing open session
+    isClosingSession = false, // true when closing an existing open session
 }) => {
     if (!isOpen) return null;
 
@@ -73,7 +75,9 @@ export const ManualTimeEntryModal = ({
                             </span>
                         </div>
                         <div>
-                            <p className="text-sm text-gray-500">Clock in and out</p>
+                            <p className="text-sm text-gray-500">
+                                {isClosingSession ? 'Clock out — active session' : 'Clock in and out'}
+                            </p>
                             <p className="text-xs text-gray-400 mt-0.5">
                                 {userName || 'User'}
                             </p>
@@ -113,19 +117,25 @@ export const ManualTimeEntryModal = ({
 
                     {/* Clock In Time */}
                     <div>
-                        <label className="text-sm text-gray-600 mb-2 block font-medium">
-                            In
+                        <label className="text-sm text-gray-600 mb-2 block font-medium flex justify-between items-center">
+                            <span>In</span>
+                            {clockInReadOnly && (
+                                <span className="text-[10px] text-amber-600 font-normal uppercase tracking-wider">Active session</span>
+                            )}
                         </label>
                         <input
                             type="time"
                             value={clockInTime}
-                            onChange={(e) => onClockInChange(e.target.value)}
+                            onChange={(e) => !clockInReadOnly && onClockInChange(e.target.value)}
                             max={getMaxTime()}
                             className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none transition ${errors.clockIn
                                 ? 'border-red-300 bg-red-50 focus:border-red-400'
-                                : 'border-gray-200 focus:border-orange-500 focus:ring-1 focus:ring-orange-500'
+                                : clockInReadOnly
+                                    ? 'border-amber-200 bg-amber-50 text-amber-800 cursor-not-allowed'
+                                    : 'border-gray-200 focus:border-orange-500 focus:ring-1 focus:ring-orange-500'
                                 }`}
-                            disabled={isLoading}
+                            disabled={isLoading || clockInReadOnly}
+                            readOnly={clockInReadOnly}
                         />
                         {errors.clockIn && (
                             <p className="text-xs text-red-600 mt-1 font-medium">{errors.clockIn}</p>

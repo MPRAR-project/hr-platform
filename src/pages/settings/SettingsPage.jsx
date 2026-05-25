@@ -228,7 +228,7 @@ const SettingsPage = () => {
         workingDays: timesheetSettings.workingDays,
         roundingRules,
         lunchBreakMinutes,
-        weekStartDay,
+        // weekStartDay is set once at registration — intentionally excluded
         autoLunch: {
           enabled: Boolean(autoLunchSettings.enabled),
           thresholdHours: Number.isFinite(Number(autoLunchSettings.thresholdHours))

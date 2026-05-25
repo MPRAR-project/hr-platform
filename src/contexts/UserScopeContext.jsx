@@ -1,3 +1,4 @@
+// @refresh reset
 import React, { createContext, useState, useContext } from 'react';
 
 // Define a unique ID for the "Demo Scope"

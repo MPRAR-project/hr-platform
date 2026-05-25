@@ -88,7 +88,8 @@ export async function getUserWeekContext(userId, options = {}) {
     const ctx = {
       companyIdPath: data.companyId || '',
       siteIdPath:    data.siteId    || '',
-      weekStartDay:  data.weekStartDay || DEFAULT_WEEK_START_DAY,
+      // Normalize to lowercase — backend now returns it lowercase, but guard for safety
+      weekStartDay:  (data.weekStartDay || DEFAULT_WEEK_START_DAY).toLowerCase(),
     };
     _userWeekCtxCache.set(userId, ctx);
     return ctx;
@@ -97,6 +98,7 @@ export async function getUserWeekContext(userId, options = {}) {
     _userWeekCtxCache.set(userId, fallback);
     return fallback;
   }
+
 }
 
 export function invalidateUserWeekContext(userId) {
@@ -130,42 +132,106 @@ export function invalidateTimesheetCache(userId, weekStr, datesToInvalidate = []
   }
 }
 
-// ── Normalize timesheet from REST ─────────────────────────────────────────────
+// ── Normalize timesheet from REST ─────────────────────────────────────────────────────────
+// ── Normalise a date-like value to YYYY-MM-DD string (safe for all inputs) ────
+function toDateStr(val) {
+  if (!val) return null;
+  // Already date-only string
+  if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
+  // ISO string with time part — strip it
+  if (typeof val === 'string') {
+    const d = new Date(val);
+    if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  }
+  if (val instanceof Date && !isNaN(val.getTime())) return val.toISOString().slice(0, 10);
+  return String(val).slice(0, 10); // last-resort truncation
+}
+
 function normalizeTimesheet(ts) {
   if (!ts) return null;
   const emp = ts.employee || {};
+
+  // Convert backend hours (Decimal/number) → seconds for the totals object
+  const totalHours    = Number(ts.totalHours    || 0);
+  const regularHours  = Number(ts.regularHours  || 0);
+  const overtimeHours = Number(ts.overtimeHours || 0);
+
+  // ── period MUST be YYYY-MM-DD so processWeekData dates.includes(ts.period) works ──
+  const periodStr = toDateStr(ts.period || ts.weekStart);
+  const startStr  = toDateStr(ts.start  || ts.weekStart);
+  const endStr    = toDateStr(ts.end    || ts.weekEnd);
+
+  // ── Approval metadata — try nested relation or flat field ──────────────────
+  const approverEmp = ts.approver || ts.approvedByEmployee || null;
+  const approvedByName =
+    ts.approvedByName ||
+    (approverEmp ? `${approverEmp.firstName || ''} ${approverEmp.lastName || ''}`.trim() : null) ||
+    null;
+
+  // Normalise approvedAt to a plain JS Date (or keep ISO string) ─────────────
+  const approvedAt = ts.approvedAt
+    ? (ts.approvedAt instanceof Date ? ts.approvedAt : new Date(ts.approvedAt))
+    : null;
+
   return {
     ...ts,
-    id:       ts.id       || ts.timesheetId,
-    userId:   ts.userId   || ts.employeeId || emp.id,
-    companyId: ts.companyId,
-    period:   ts.period   || ts.weekStart,
-    start:    ts.start    || ts.weekStart,
-    end:      ts.end      || ts.weekEnd,
-    status:   ts.status   || 'draft',
+    id:            ts.id       || ts.timesheetId,
+    userId:        ts.userId   || ts.employeeId || emp.id,
+    companyId:     ts.companyId,
+    // ✅ Always YYYY-MM-DD — critical for processWeekData matching
+    period:        periodStr,
+    start:         startStr,
+    end:           endStr,
+    weekStart:     startStr,
+    weekEnd:       endStr,
+    status:        ts.status   || 'draft',
+    approvedByName,
+    approvedAt,
     employee: {
       ...emp,
       displayName: emp.displayName || `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || 'Employee',
       primaryRole: emp.primaryRole || emp.hrRole || 'employee',
     },
     entries:  (ts.entries || ts.timeEntries || []).map(normalizeEntry),
-    totals:   ts.totals   || { grossSec: 0, effectiveSec: 0, overtimeSec: 0 },
+    totals:   {
+      grossSec:     totalHours    * 3600,
+      effectiveSec: totalHours    * 3600,
+      overtimeSec:  overtimeHours * 3600,
+      regularSec:   regularHours  * 3600,
+    },
+    // Expose a `raw` block so ViewTimesheetModal can read weekKey, start, end, status
+    raw: ts.raw || {
+      weekKey:     periodStr && endStr ? `${periodStr}_${endStr}` : null,
+      start:       startStr,
+      end:         endStr,
+      status:      ts.status || 'draft',
+      totals: {
+        grossSec:     totalHours    * 3600,
+        effectiveSec: totalHours    * 3600,
+        overtimeSec:  overtimeHours * 3600,
+      },
+    },
   };
 }
 
 function normalizeEntry(e) {
   if (!e) return e;
+  // Derive date from clockIn if not explicitly set
+  const date = e.date || (e.clockIn ? e.clockIn.split('T')[0] : null);
+  // Compute gross seconds from totalMinutes (stored in backend)
+  const grossSec = e.grossSec || e.durationGrossSec || (e.totalMinutes ? e.totalMinutes * 60 : 0);
   return {
     ...e,
     id:           e.id          || e.entryId,
     sessionId:    e.sessionId   || e.id,
-    date:         e.date        || (e.clockIn ? e.clockIn.split('T')[0] : null),
-    grossSec:     e.grossSec    || e.durationGrossSec     || 0,
-    effectiveSec: e.effectiveSec || e.durationEffectiveSec || 0,
+    date,
+    grossSec,
+    effectiveSec: e.effectiveSec || e.durationEffectiveSec || grossSec,
     overtimeSec:  e.overtimeSec  || 0,
-    source:       e.source       || 'clock',
+    source:       e.source       || e.entryType || 'clock',
   };
 }
+
 
 // ── Get timesheets by week (manager view) ─────────────────────────────────────
 export async function getTimesheetsByWeek(companyId, weekStartStr) {
@@ -382,16 +448,25 @@ export async function addManualTimeEntry(
 // ── Submit week for approval ───────────────────────────────────────────────────
 export async function submitWeek(userId, companyId, weekStartStr) {
   try {
-    const { data } = await hrApiClient.post('/hr/timesheets/submit', {
-      weekStart: weekStartStr,
+    // Step 1: ensure the timesheet exists and get its ID
+    const ensureRes = await hrApiClient.post('/hr/timesheets/ensure', {
+      employeeId: userId,
+      weekStart:  weekStartStr,
     });
+    const timesheetId = ensureRes.data?.id;
+    if (!timesheetId) throw new Error('Could not find or create timesheet');
+
+    // Step 2: submit it
+    const { data } = await hrApiClient.post(`/hr/timesheets/${timesheetId}/submit`);
     invalidateTimesheetCache(userId, weekStartStr, [], { cascade: true });
     return { success: true, ...data };
   } catch (err) {
     if (err.response?.status === 404) throw new Error('Timesheet not found for this week');
-    throw new Error(err.response?.data?.error || 'Failed to submit timesheet');
+    if (err.response?.status === 400) throw new Error(err.response?.data?.error || 'Cannot submit timesheet in its current state');
+    throw new Error(err.response?.data?.error || err.message || 'Failed to submit timesheet');
   }
 }
+
 
 // ── Approve timesheet ─────────────────────────────────────────────────────────
 export async function approveTimesheet(timesheetId, approverId, approverName) {
@@ -426,9 +501,15 @@ export async function declineTimesheet(timesheetId, reason, declinerId) {
 }
 
 // ── Fetch week details (used by EditTimesheetModal, TimesheetArchivePage) ──────
-export async function fetchWeekDetails(userId, companyId, weekStartStr) {
-  const timesheets = await getUserTimesheetsByWeek(userId, companyId, weekStartStr);
-  const ts         = timesheets.find((t) => t.period === weekStartStr || t.start === weekStartStr);
+// Supports both:  fetchWeekDetails(userId, weekStartStr)
+//           and:  fetchWeekDetails(userId, companyId, weekStartStr)   ← legacy 3-arg form
+export async function fetchWeekDetails(userId, companyIdOrWeekStart, weekStartStrOrUndef) {
+  // Detect call style by checking if 3rd arg is provided
+  const weekStartStr = weekStartStrOrUndef !== undefined ? weekStartStrOrUndef : companyIdOrWeekStart;
+
+  const timesheets = await getUserTimesheetsByWeek(userId, '', weekStartStr);
+  const ts         = timesheets.find((t) => t.period === weekStartStr || t.start === weekStartStr)
+    || timesheets[0]; // fall back to first result if exact match missed
   if (!ts) return null;
 
   return {
@@ -436,6 +517,7 @@ export async function fetchWeekDetails(userId, companyId, weekStartStr) {
     weekDays: getOrderedWeekDates(weekStartStr, ts.weekStartDay || DEFAULT_WEEK_START_DAY),
   };
 }
+
 
 // ── Save week edits (UnifiedTimesheetEditor, TimesheetUpdateManager) ──────────
 export async function saveWeekEdits(userId, dayEdits, createDateTimeFromStrings) {
@@ -637,12 +719,15 @@ export async function fetchTimesheetsForUsers(userIds, options = {}) {
 }
 
 /**
- * Fetch pending approvals for a manager
+ * Fetch pending approvals for a manager.
+ * Backend stores submitted timesheets with status = 'submitted'.
+ * JWT scope already limits results to the manager's company.
  */
 export async function fetchPendingApprovalsForManager(managerId, options = {}) {
   try {
     const { data } = await hrApiClient.get('/hr/timesheets', {
-      params: { status: 'pending', managerId },
+      // 'submitted' is the backend status for timesheets awaiting approval
+      params: { status: 'submitted', limit: 100 },
     });
     return (data.timesheets || data || []).map(normalizeTimesheet);
   } catch (err) {
@@ -650,6 +735,7 @@ export async function fetchPendingApprovalsForManager(managerId, options = {}) {
     throw new Error(err.response?.data?.error || 'Failed to fetch pending approvals');
   }
 }
+
 
 /**
  * Prefetch adjacent weeks (background warm-up, non-fatal)

@@ -1,5 +1,6 @@
 import { Calendar, CheckCircle, Clock, Search, User, XCircle } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
 import Header from '../../components/layout/Header';
 import ApprovalConfirmationModal from '../../components/modals/ApprovalConfirmationModal';
 import EditTimesheetModal from '../../components/modals/EditTimesheetModal';
@@ -13,7 +14,7 @@ import { allowanceService } from '../../services/allowanceService';
 import { absenceService } from '../../services/absenceService';
 import { approveTimesheet, declineTimesheet, subscribeToCompanyTimesheets } from '../../services/timesheets';
 import { approverEmployeeRoleMatch } from '../../services/teams';
-import { getTimesheetEditPermissions } from '../../utils/timesheetPermissions';
+import { canApproveTimesheets, getTimesheetEditPermissions } from '../../utils/timesheetPermissions';
 
 const ApprovalsPage = () => {
   const [activeTab, setActiveTab] = useState('Timesheets');
@@ -29,6 +30,9 @@ const ApprovalsPage = () => {
   const [selectedItem, setSelectedItem] = useState(null);
   const { user } = useAuth();
 
+  // Whether the current user is allowed to approve/reject timesheets
+  const isApprover = canApproveTimesheets(user?.role || user?.hrRole || user?.primaryRole);
+
   // ── Timesheets Subscription (REST + WebSocket) ─────────────────────────────
   useEffect(() => {
     if (!user) return;
@@ -39,26 +43,31 @@ const ApprovalsPage = () => {
       const approverRole = user.role || user.primaryRole;
       
       const rows = (data || [])
-        .filter(t => t.status === 'pending' || t.status === 'submitted') // Backend uses 'submitted' for HR flow
+        .filter(t => t.status === 'submitted') // Backend stores as 'submitted' awaiting manager approval
         .map(t => {
           const emp = t.employee || {};
-          const displayName = emp.displayName || `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || t.userId;
-          const primaryRole = emp.primaryRole || 'employee';
+          const displayName = emp.displayName || `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || t.userId || 'Employee';
+          const primaryRole = emp.primaryRole || emp.hrRole || 'employee';
 
           if (!approverEmployeeRoleMatch(approverRole, primaryRole)) return null;
 
-          const totalHours = t.totalHours || 0;
+          // Use normalized totals (seconds → hours)
+          const totals       = t.totals || {};
+          const totalHours   = Number(t.totalHours || 0);
+          const regularHrs   = totals.regularSec  ? +(totals.regularSec  / 3600).toFixed(1) : totalHours;
+          const overtimeHrs  = totals.overtimeSec ? +(totals.overtimeSec / 3600).toFixed(1) : 0;
+
           return {
             id: t.id,
             name: displayName,
             role: primaryRole,
-            period: t.period || t.weekStart,
-            dates: t.period || t.weekStart,
-            duration: `${t.timeEntries?.length || 0} days`,
+            period: t.period || t.start || t.weekStart,
+            dates: t.period || t.start || t.weekStart,
+            duration: `${(t.entries || t.timeEntries || []).length} days`,
             leaveType: '-',
             reason: t.adminNotes || '-',
-            regular: `${totalHours}h`,
-            overtime: '0h',
+            regular: `${regularHrs}h`,
+            overtime: `${overtimeHrs}h`,
             total: `${totalHours}h`,
             status: 'Pending',
             submittedOn: t.submittedAt ? new Date(t.submittedAt).toISOString().slice(0, 10) : '',
@@ -69,6 +78,7 @@ const ApprovalsPage = () => {
 
       setTimesheets(rows);
     });
+
 
     return () => unsub();
   }, [user]);
@@ -188,17 +198,23 @@ const ApprovalsPage = () => {
       const itemId = id || selectedItem.id;
 
       if (activeTab === 'Timesheets') {
+        if (!isApprover) {
+          toast.error('Only Senior Managers and Site Managers can approve timesheets.');
+          return;
+        }
         const approverName = user.displayName || user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Manager';
         await approveTimesheet(itemId, user?.uid || '', notes, approverName);
+        toast.success(`✅ Timesheet for ${selectedItem.name} has been approved.`);
       } else {
         await absenceService.approveAbsence(itemId, user);
+        toast.success(`✅ Leave request for ${selectedItem.name} has been approved.`);
       }
 
       setShowApproveModal(false);
       setSelectedItem(null);
     } catch (e) {
       console.error(e);
-      alert(e.message || 'Failed to approve');
+      toast.error(e.message || 'Failed to approve — please try again.');
     }
   };
 
@@ -208,16 +224,22 @@ const ApprovalsPage = () => {
       const itemId = id || selectedItem.id;
 
       if (activeTab === 'Timesheets') {
+        if (!isApprover) {
+          toast.error('Only Senior Managers and Site Managers can reject timesheets.');
+          return;
+        }
         await declineTimesheet(itemId, user?.uid || '', notes);
+        toast.success(`Timesheet returned to ${selectedItem.name} for revision.`);
       } else {
         await absenceService.declineAbsence(itemId, notes, user);
+        toast.success(`Leave request for ${selectedItem.name} has been declined.`);
       }
 
       setShowDeclineModal(false);
       setSelectedItem(null);
     } catch (e) {
       console.error(e);
-      alert(e.message || 'Failed to decline');
+      toast.error(e.message || 'Failed to decline — please try again.');
     }
   };
 
@@ -270,8 +292,8 @@ const ApprovalsPage = () => {
         <p className="text-xs text-text-secondary mt-1">Submitted on {timesheet.submittedOn}</p>
       </div>
 
-      {/* Actions */}
-      {timesheet.status === 'Pending' && (
+      {/* Actions — only shown for users who can approve */}
+      {timesheet.status === 'Pending' && isApprover && (
         <div className="flex gap-3 pt-2">
           <Button
             variant="outline-danger"
@@ -289,6 +311,11 @@ const ApprovalsPage = () => {
           >
             Approve
           </Button>
+        </div>
+      )}
+      {timesheet.status === 'Pending' && !isApprover && (
+        <div className="px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg">
+          <p className="text-xs text-amber-700">⚠️ Only Senior Managers and Site Managers can approve or reject timesheets.</p>
         </div>
       )}
     </div>

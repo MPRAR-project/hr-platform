@@ -8,7 +8,8 @@ import {
     calculateSeatRequestPayment,
     emitSeatRequestEvent,
     fetchSeatRequests,
-    updateSeatRequestStatus
+    updateSeatRequestStatus,
+    approveSeatRequest,
 } from '../../services/seatRequestService';
 import { getBillingSummary, recordSeatTopUp } from '../../services/billing';
 
@@ -30,7 +31,7 @@ const SeatSettingsTab = () => {
         if (!['siteManager', 'seniorManager'].includes(user?.role) || !companyId) return;
         try {
             setIsSeatRequestsLoading(true);
-            const data = await fetchSeatRequests(companyId, { limit: 10 });
+            const data = await fetchSeatRequests({ limit: 10 });
             setSeatRequests(data);
         } catch (error) {
             console.error('Failed to load seat requests:', error);

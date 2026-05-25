@@ -1,4 +1,4 @@
-import { AlertTriangle, Calendar, CreditCard, RefreshCw, UserPlus, Users } from 'lucide-react';
+import { AlertTriangle, Calendar, CheckCircle, Clock, CreditCard, FileText, RefreshCw, UserCheck, UserPlus, Users } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
@@ -328,10 +328,15 @@ const SiteManagerDashboard = () => {
   const lastPaymentLabel = dashboardData.lastPaymentDate || '—';
   const paymentMethodLabel = dashboardData.paymentMethod || '—';
 
+  // Role groups for conditional widget rendering
+  const isBillingRole = ['siteManager', 'seniorManager'].includes(user?.role);
+  const isSubtreeRole = ['hrManager', 'teamManager'].includes(user?.role);
+  const isAdminRole = ['adminManager', 'hrAdvisor', 'adminAdvisor'].includes(user?.role);
+
   return (
     <div className="h-screen flex flex-col overflow-hidden">
       <Header
-        title="Company Dashboard"
+        title={`${getRoleName(user?.role)} Dashboard`}
         subtitle="Grow your digital workplace and manage your team seamlessly"
         action={
           <Button
@@ -378,55 +383,128 @@ const SiteManagerDashboard = () => {
             </div>
           )} */}
 
-          {/* Statistics Cards */}
-          <div className="flex flex-wrap gap-xl">
-            <StatCard
-              title="Total Users"
-              value={String(dashboardData.totalUsers)}
-              subtitle={pendingInvites > 0 ? `${pendingInvites} pending invite${pendingInvites > 1 ? 's' : ''}` : 'Active team members'}
-              icon={<Users className="h-6 w-6 text-text-accent-green" />}
-              iconBgColor="bg-green-50"
-            />
-            <StatCard
-              title="Total Seats"
-              value={String(dashboardData.totalSeats)}
-              subtitle={`£${pricePerSeat.toFixed ? pricePerSeat.toFixed(2) : pricePerSeat} per user per month`}
-              icon={<Users className="h-6 w-6 text-pink-600" />}
-              iconBgColor="bg-pink-50"
-            />
-            <StatCard
-              title="Monthly Bill"
-              value={monthlyBillValue}
-              subtitle={`Next billing: ${dashboardData.nextBilling}`}
-              icon={<CreditCard className="h-6 w-6 text-orange-500" />}
-              iconBgColor="bg-orange-50"
-            />
-            <StatCard
-              title="Last Payment"
-              value={dashboardData.lastPaymentStatus}
-              subtitle={dashboardData.lastPaymentDate}
-              icon={<Calendar className="h-6 w-6 text-blue-600" />}
-              iconBgColor="bg-blue-50"
-            />
-          </div>
-
-          <div className="bg-white border border-border-secondary rounded-base p-6 shadow-sm grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {[
-              { label: 'Join Date', value: joinDate },
-              { label: 'Next Billing', value: nextBillingLabel },
-              { label: 'Last Payment Date', value: lastPaymentLabel },
-              { label: 'Payment Method', value: paymentMethodLabel }
-            ].map((item) => (
-              <div key={item.label} className="flex flex-col gap-1">
-                <span className="text-xs uppercase text-text-secondary">{item.label}</span>
-                <span className="text-md font-semibold text-text-primary break-words">{item.value || '—'}</span>
+          {/* ── Site Manager / Senior Manager: Full billing + people dashboard ── */}
+          {isBillingRole && (
+            <>
+              <div className="flex flex-wrap gap-xl">
+                <StatCard
+                  title="Total Users"
+                  value={String(dashboardData.totalUsers)}
+                  subtitle={pendingInvites > 0 ? `${pendingInvites} pending invite${pendingInvites > 1 ? 's' : ''}` : 'Active team members'}
+                  icon={<Users className="h-6 w-6 text-text-accent-green" />}
+                  iconBgColor="bg-green-50"
+                />
+                <StatCard
+                  title="Total Seats"
+                  value={String(dashboardData.totalSeats)}
+                  subtitle={`£${pricePerSeat.toFixed ? pricePerSeat.toFixed(2) : pricePerSeat} per user per month`}
+                  icon={<UserCheck className="h-6 w-6 text-pink-600" />}
+                  iconBgColor="bg-pink-50"
+                />
+                <StatCard
+                  title="Monthly Bill"
+                  value={monthlyBillValue}
+                  subtitle={`Next billing: ${dashboardData.nextBilling}`}
+                  icon={<CreditCard className="h-6 w-6 text-orange-500" />}
+                  iconBgColor="bg-orange-50"
+                />
+                <StatCard
+                  title="Last Payment"
+                  value={dashboardData.lastPaymentStatus}
+                  subtitle={dashboardData.lastPaymentDate}
+                  icon={<Calendar className="h-6 w-6 text-blue-600" />}
+                  iconBgColor="bg-blue-50"
+                />
               </div>
-            ))}
-          </div>
 
-          {/* Active Users Section - Shows employees currently clocked in */}
+              <div className="bg-white border border-border-secondary rounded-base p-6 shadow-sm grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {[
+                  { label: 'Join Date', value: joinDate },
+                  { label: 'Next Billing', value: nextBillingLabel },
+                  { label: 'Last Payment Date', value: lastPaymentLabel },
+                  { label: 'Payment Method', value: paymentMethodLabel }
+                ].map((item) => (
+                  <div key={item.label} className="flex flex-col gap-1">
+                    <span className="text-xs uppercase text-text-secondary">{item.label}</span>
+                    <span className="text-md font-semibold text-text-primary break-words">{item.value || '—'}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* ── HR Manager / Team Manager: Subtree-scoped people + approval stats ── */}
+          {isSubtreeRole && (
+            <div className="flex flex-wrap gap-xl">
+              <StatCard
+                title="My Team"
+                value={String(dashboardData.totalUsers ?? 0)}
+                subtitle={pendingInvites > 0 ? `${pendingInvites} pending invite${pendingInvites > 1 ? 's' : ''}` : 'In your reporting chain'}
+                icon={<Users className="h-6 w-6 text-text-accent-green" />}
+                iconBgColor="bg-green-50"
+              />
+              <StatCard
+                title="Seats Used"
+                value={`${seatUsageCount} / ${dashboardData.totalSeats ?? '—'}`}
+                subtitle="Company seat allocation"
+                icon={<UserCheck className="h-6 w-6 text-purple-600" />}
+                iconBgColor="bg-purple-50"
+              />
+              <StatCard
+                title="Pending Absences"
+                value={String(dashboardData.pendingAbsences ?? dashboardData.pendingApprovals ?? 0)}
+                subtitle="Awaiting your approval"
+                icon={<Clock className="h-6 w-6 text-orange-500" />}
+                iconBgColor="bg-orange-50"
+              />
+              <StatCard
+                title="Pending Timesheets"
+                value={String(dashboardData.pendingTimesheets ?? 0)}
+                subtitle="Awaiting your approval"
+                icon={<FileText className="h-6 w-6 text-blue-600" />}
+                iconBgColor="bg-blue-50"
+              />
+            </div>
+          )}
+
+          {/* ── Admin Manager / HR Advisor / Admin Advisor: Company-wide people stats ── */}
+          {isAdminRole && (
+            <div className="flex flex-wrap gap-xl">
+              <StatCard
+                title="Total Employees"
+                value={String(dashboardData.totalUsers ?? 0)}
+                subtitle={pendingInvites > 0 ? `${pendingInvites} pending invite${pendingInvites > 1 ? 's' : ''}` : 'Active company members'}
+                icon={<Users className="h-6 w-6 text-text-accent-green" />}
+                iconBgColor="bg-green-50"
+              />
+              <StatCard
+                title="Seats Used"
+                value={`${seatUsageCount} / ${dashboardData.totalSeats ?? '—'}`}
+                subtitle="Company seat allocation"
+                icon={<UserCheck className="h-6 w-6 text-pink-600" />}
+                iconBgColor="bg-pink-50"
+              />
+              <StatCard
+                title="Pending Approvals"
+                value={String(dashboardData.pendingAbsences ?? dashboardData.pendingApprovals ?? 0)}
+                subtitle="Absences awaiting action"
+                icon={<CheckCircle className="h-6 w-6 text-orange-500" />}
+                iconBgColor="bg-orange-50"
+              />
+              <StatCard
+                title="Pending Timesheets"
+                value={String(dashboardData.pendingTimesheets ?? 0)}
+                subtitle="Awaiting your approval"
+                icon={<FileText className="h-6 w-6 text-blue-600" />}
+                iconBgColor="bg-blue-50"
+              />
+            </div>
+          )}
+
+          {/* Active Users — shown to all roles */}
           <ActiveUsersCard />
 
+          {/* Seat deficit warning */}
           {seatDeficit > 0 && (
             <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 bg-red-50 border border-red-200 rounded-lg p-4">
               <div className="flex items-start gap-3">
@@ -438,13 +516,17 @@ const SiteManagerDashboard = () => {
                     You are using {seatDeficit} more seat{seatDeficit > 1 ? 's' : ''} than your plan.
                   </p>
                   <p className="text-sm text-red-600">
-                    Request additional seats to stay compliant and avoid service interruptions.
+                    {isBillingRole
+                      ? 'Purchase additional seats to stay compliant and avoid service interruptions.'
+                      : 'Contact your Site Manager to purchase additional seats.'}
                   </p>
                 </div>
               </div>
-              <Button variant="outline-danger" onClick={() => navigate('/seat-management')}>
-                Manage Seats
-              </Button>
+              {isBillingRole && (
+                <Button variant="outline-danger" onClick={() => navigate('/seat-management')}>
+                  Manage Seats
+                </Button>
+              )}
             </div>
           )}
 

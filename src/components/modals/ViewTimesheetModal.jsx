@@ -103,6 +103,135 @@ const formatHM = (sec) => {
   return `${h}h ${String(m).padStart(2, '0')}m`;
 };
 
+// ─── Helper: Calculate duration between two times ────────────────────────────
+const calculateDuration = (clockInStr, clockOutStr) => {
+  if (!clockInStr || !clockOutStr || clockOutStr === '-' || clockInStr === '-') return null;
+  try {
+    const parseTime = (timeStr) => {
+      const [h, m] = timeStr.split(':').map(Number);
+      return h * 60 + m;
+    };
+    const inMin = parseTime(clockInStr);
+    const outMin = parseTime(clockOutStr);
+    if (outMin <= inMin) return null; // Invalid pair
+    const durationMin = outMin - inMin;
+    const durationHours = Math.floor(durationMin / 60);
+    const durationMins = durationMin % 60;
+    return `${durationHours}h ${String(durationMins).padStart(2, '0')}m`;
+  } catch {
+    return null;
+  }
+};
+
+// ─── Component: Single Clock Pair Badge ──────────────────────────────────────
+const ClockPairBadge = ({ pair, index, totalPairs, rules }) => {
+  let clockIn = pair.clockIn || '-';
+  let clockOut = pair.clockOut || '-';
+
+  // Apply rounding rules if needed
+  if (pair.roundedStart) {
+    const d = new Date(pair.roundedStart);
+    if (!isNaN(d.getTime())) clockIn = d.toTimeString().slice(0, 5);
+  } else if (pair.rawStart) {
+    const d = new Date(pair.rawStart);
+    if (!isNaN(d.getTime())) {
+      const rounded = applyRoundingToDate(d, rules?.clockIn);
+      clockIn = rounded.toTimeString().slice(0, 5);
+    }
+  }
+
+  if (pair.roundedEnd) {
+    const d = new Date(pair.roundedEnd);
+    if (!isNaN(d.getTime())) clockOut = d.toTimeString().slice(0, 5);
+  } else if (pair.rawEnd) {
+    const d = new Date(pair.rawEnd);
+    if (!isNaN(d.getTime())) {
+      const rounded = applyRoundingToDate(d, rules?.clockOut);
+      clockOut = rounded.toTimeString().slice(0, 5);
+    }
+  }
+
+  const duration = calculateDuration(clockIn, clockOut);
+  const isAutoClockOut = pair.notes?.toLowerCase().includes('auto clock out') || 
+                         pair.notes?.toLowerCase().includes('system clock out');
+
+  return (
+    <div className="flex items-center gap-2 px-2.5 py-1.5 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg hover:border-blue-300 transition-all group">
+      {/* Pair Badge Number */}
+      {totalPairs > 1 && (
+        <div className="flex items-center justify-center w-5 h-5 rounded-full bg-blue-600 text-white text-xs font-bold flex-shrink-0">
+          {index}
+        </div>
+      )}
+
+      {/* Clock In Time */}
+      <div className="flex flex-col gap-0.5">
+        <span className="text-xs text-blue-600 font-semibold">IN</span>
+        <span className="text-sm font-bold text-gray-900">{formatClockAMPM(clockIn)}</span>
+      </div>
+
+      {/* Arrow Divider */}
+      <div className="flex items-center justify-center text-gray-400">
+        <span className="text-lg">→</span>
+      </div>
+
+      {/* Clock Out Time */}
+      <div className="flex flex-col gap-0.5">
+        <span className="text-xs text-indigo-600 font-semibold">OUT</span>
+        <span className="text-sm font-bold text-gray-900">{formatClockAMPM(clockOut)}</span>
+      </div>
+
+      {/* Duration */}
+      {duration && (
+        <>
+          <div className="w-px h-6 bg-gradient-to-b from-transparent via-blue-200 to-transparent"></div>
+          <div className="flex flex-col gap-0.5 ml-1">
+            <span className="text-xs text-gray-500 font-medium">Duration</span>
+            <span className="text-sm font-bold text-gray-700">{duration}</span>
+          </div>
+        </>
+      )}
+
+      {/* Auto Clock Out Badge */}
+      {isAutoClockOut && (
+        <div className="ml-auto flex items-center gap-1 px-2 py-0.5 bg-orange-100 rounded-full border border-orange-300">
+          <span className="w-1.5 h-1.5 rounded-full bg-orange-500"></span>
+          <span className="text-xs font-medium text-orange-700">Auto</span>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── Component: Clock Pairs Display Container ────────────────────────────────
+const ClockPairsDisplay = ({ pairs, rules, direction = 'in' }) => {
+  const validPairs = pairs.filter(p => {
+    if (direction === 'in') {
+      return (p.clockIn && p.clockIn !== '-') || p.roundedStart || p.rawStart;
+    } else {
+      return (p.clockOut && p.clockOut !== '-') || p.roundedEnd || p.rawEnd;
+    }
+  });
+
+  if (validPairs.length === 0) {
+    return <span className="text-sm text-gray-400">-</span>;
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      {validPairs.map((pair, idx) => (
+        <ClockPairBadge
+          key={idx}
+          pair={pair}
+          index={validPairs.length > 1 ? idx + 1 : null}
+          totalPairs={validPairs.length}
+          rules={rules}
+        />
+      ))}
+    </div>
+  );
+};
+
 
 const ViewTimesheetModal = ({
   isOpen,
@@ -305,12 +434,107 @@ const ViewTimesheetModal = ({
     return timesheet.id || timesheet.raw?.weekKey || timesheet.weekKey || null;
   }, [timesheet]);
 
+  // Build a minimal weekData structure from the timesheet's own data when the context
+  // hasn't populated weeksByKey yet (e.g. first open, slow context load).
+  const buildFallbackWeekData = useCallback(() => {
+    if (!timesheet) return null;
+    const startStr = timesheet.start || timesheet.weekStart || timesheet.period;
+    const endStr   = timesheet.end   || timesheet.weekEnd;
+    if (!startStr) return null;
+
+    const startDate = new Date(startStr.includes('T') ? startStr : startStr + 'T00:00:00Z');
+    if (isNaN(startDate.getTime())) return null;
+
+    // Build 7 day date list
+    const dates = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(startDate);
+      d.setDate(startDate.getDate() + i);
+      dates.push(d.toISOString().slice(0, 10));
+    }
+
+    // Map entries by date
+    const entriesByDate = {};
+    for (const e of (timesheet.entries || [])) {
+      const eDate = e.date || (e.clockIn ? String(e.clockIn).slice(0, 10) : null);
+      if (!eDate) continue;
+      if (!entriesByDate[eDate]) entriesByDate[eDate] = [];
+      entriesByDate[eDate].push(e);
+    }
+
+    const days = dates.map(dateStr => {
+      const dayEntries = entriesByDate[dateStr] || [];
+      const dayName = new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long' });
+      let effectiveSec = 0, overtimeSec = 0, grossSec = 0;
+      let clockInTime = null, clockOutTime = null;
+      const clockInOutPairs = [];
+
+      for (const e of dayEntries) {
+        effectiveSec += e.effectiveSec || 0;
+        overtimeSec  += e.overtimeSec  || 0;
+        grossSec     += e.grossSec     || 0;
+        if (e.clockIn)  {
+          const d = new Date(e.clockIn);
+          if (!isNaN(d)) {
+            if (!clockInTime || d < clockInTime) clockInTime = d;
+            const ciStr = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+            let coStr = '-';
+            if (e.clockOut) {
+              const dOut = new Date(e.clockOut);
+              if (!isNaN(dOut)) {
+                if (!clockOutTime || dOut > clockOutTime) clockOutTime = dOut;
+                coStr = dOut.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+              }
+            }
+            clockInOutPairs.push({
+              id: e.id, clockIn: ciStr, clockOut: coStr,
+              clockInTime: d, clockOutTime: clockOutTime,
+              sessionId: e.sessionId || e.id,
+              isManual: e.isManual || false,
+              breakSec: 0, breakMin: 0,
+            });
+          }
+        }
+      }
+
+      const breakSec = Math.max(0, grossSec - effectiveSec);
+      return {
+        date: dateStr, day: dayName,
+        clockIn: clockInTime ? clockInTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }) : '-',
+        clockOut: clockOutTime ? clockOutTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }) : '-',
+        clockInTime, clockOutTime,
+        clockInOutPairs,
+        effectiveSec, totalSec: effectiveSec,
+        overtimeSec, grossSec, breakSec,
+        scheduledSec: 0,
+        notes: null, status: timesheet.status || 'draft',
+        isManual: false, isDescriptionOnly: false,
+        entries: dayEntries,
+        hasAbsence: false,
+      };
+    });
+
+    const endDate = endStr
+      ? new Date(endStr.includes('T') ? endStr : endStr + 'T00:00:00Z')
+      : (() => { const d = new Date(startDate); d.setDate(startDate.getDate() + 6); return d; })();
+
+    return {
+      weekStart: startDate,
+      weekEnd:   endDate,
+      days,
+      status:    timesheet.status || 'draft',
+      totals:    timesheet.totals || { effectiveSec: 0, overtimeSec: 0 },
+    };
+  }, [timesheet]);
+
   const weekData = useMemo(() => {
     if (isOwnTimesheet) {
-      if (!weekKey) return null;
+      if (!weekKey) return buildFallbackWeekData();
       // Use data already processed by the Context
       const freshData = weeksByKey?.[weekKey];
-      if (!freshData) return null;
+
+      // ── Fallback: build from timesheet entries if context hasn't populated yet ──
+      if (!freshData) return buildFallbackWeekData();
 
       // Enrich with absence information
       // [FIX] Prioritize prop absencesMap (pre-loaded by context) over internal state to prevent flip
@@ -339,10 +563,11 @@ const ViewTimesheetModal = ({
 
       return freshData;
     } else {
-      // Use fetched employee data
-      return employeeWeekData;
+      // Use fetched employee data, fallback to timesheet entries
+      return employeeWeekData || buildFallbackWeekData();
     }
-  }, [isOwnTimesheet, weekKey, employeeWeekData, weeksByKey, ownTimesheetAbsences]);
+  }, [isOwnTimesheet, weekKey, employeeWeekData, weeksByKey, ownTimesheetAbsences, buildFallbackWeekData]);
+
 
   // Fetch absences for own timesheet when modal opens
   useEffect(() => {
@@ -1972,78 +2197,9 @@ const ViewTimesheetModal = ({
                       let clockOutDisplay = <span className="text-sm text-gray-700">-</span>;
 
                       if (timePairs.length > 0) {
-                        clockInDisplay = (
-                          <div className="flex flex-col gap-1">
-                            {timePairs.map((p, i) => {
-                              // Extract time from database fields in priority order, preserving original format
-                              let displayTime = p.clockIn || '-';
-
-                              // [ROUNDING FIX] Priority: roundedStart > rawStart > rawClockIn > clockIn for VIEW dialog
-                              const rules = roundingRules || companySettings?.roundingRules || getDefaultRoundingRules();
-                              if (p.roundedStart) {
-                                const roundedDate = p.roundedStart instanceof Date ? p.roundedStart : new Date(p.roundedStart);
-                                if (!isNaN(roundedDate.getTime())) {
-                                  displayTime = roundedDate.toTimeString().slice(0, 5); // Extract HH:MM part
-                                }
-                              }
-                              else if (p.rawStart) {
-                                const rawDate = p.rawStart instanceof Date ? p.rawStart : new Date(p.rawStart);
-                                if (!isNaN(rawDate.getTime())) {
-                                  const rounded = applyRoundingToDate(rawDate, rules.clockIn);
-                                  displayTime = rounded.toTimeString().slice(0, 5); // Extract HH:MM part
-                                }
-                              }
-                              else if (p.rawClockIn && p.rawClockIn !== '-') {
-                                displayTime = applyRoundingToTimeString(p.rawClockIn, rules.clockIn);
-                              }
-                              else if (p.clockIn && p.clockIn !== '-') {
-                                displayTime = p.clockIn;
-                              }
-
-                              return (
-                                <span key={i} className="text-sm text-gray-700 whitespace-nowrap block">
-                                  {formatClockAMPM(displayTime)}
-                                </span>
-                              );
-                            })}
-                          </div>
-                        );
-                        clockOutDisplay = (
-                          <div className="flex flex-col gap-1">
-                            {timePairs.map((p, i) => {
-                              // Extract time from database fields in priority order, preserving original format
-                              let displayTime = p.clockOut || '-';
-
-                              // [ROUNDING FIX] Priority: roundedEnd > rawEnd > rawClockOut > clockOut for VIEW dialog
-                              const rules = roundingRules || companySettings?.roundingRules || getDefaultRoundingRules();
-                              if (p.roundedEnd) {
-                                const roundedDate = p.roundedEnd instanceof Date ? p.roundedEnd : new Date(p.roundedEnd);
-                                if (!isNaN(roundedDate.getTime())) {
-                                  displayTime = roundedDate.toTimeString().slice(0, 5); // Extract HH:MM part
-                                }
-                              }
-                              else if (p.rawEnd) {
-                                const rawDate = p.rawEnd instanceof Date ? p.rawEnd : new Date(p.rawEnd);
-                                if (!isNaN(rawDate.getTime())) {
-                                  const rounded = applyRoundingToDate(rawDate, rules.clockOut);
-                                  displayTime = rounded.toTimeString().slice(0, 5); // Extract HH:MM part
-                                }
-                              }
-                              else if (p.rawClockOut && p.rawClockOut !== '-') {
-                                displayTime = applyRoundingToTimeString(p.rawClockOut, rules.clockOut);
-                              }
-                              else if (p.clockOut && p.clockOut !== '-') {
-                                displayTime = p.clockOut;
-                              }
-
-                              return (
-                                <span key={i} className="text-sm text-gray-700 whitespace-nowrap block">
-                                  {formatClockAMPM(displayTime)}
-                                </span>
-                              );
-                            })}
-                          </div>
-                        );
+                        const rules = roundingRules || companySettings?.roundingRules || getDefaultRoundingRules();
+                        clockInDisplay = <ClockPairsDisplay pairs={timePairs} rules={rules} direction="in" />;
+                        clockOutDisplay = <ClockPairsDisplay pairs={timePairs} rules={rules} direction="out" />;
                       } else if (day.isDescriptionOnly) {
                         // This is a description-only day, keep dashes
                         clockInDisplay = <span className="text-sm text-gray-400">-</span>;
@@ -2193,12 +2349,12 @@ const ViewTimesheetModal = ({
 
                       return (
                         <TableRow key={idx} className={
-                          day.hasAbsence && pairs.length > 0 ? 'bg-orange-50/30' : // Worked on leave day
-                            day.isManual ? 'bg-blue-50/30' : ''
+                          day.hasAbsence && pairs.length > 0 ? 'bg-orange-50/30 hover:bg-orange-100/30' : // Worked on leave day
+                            day.isManual ? 'bg-blue-50/30 hover:bg-blue-100/30' : 'hover:bg-gray-50/50'
                         }>
-                          <TableCell>
+                          <TableCell className="align-top">
                             <div className="flex flex-col gap-1">
-                              <span className="text-sm text-gray-700">{formatDateISO(day.date)}</span>
+                              <span className="text-sm text-gray-700 font-semibold">{formatDateISO(day.date)}</span>
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 {day.isManual && (
                                   <Badge variant="info" className="text-[10px] px-1.5 py-0.5 leading-tight">
@@ -2232,28 +2388,28 @@ const ViewTimesheetModal = ({
                               )}
                             </div>
                           </TableCell>
-                          <TableCell>
-                            <span className="text-sm text-gray-700">{day.day}</span>
+                          <TableCell className="align-top">
+                            <span className="text-sm text-gray-700 font-semibold">{day.day}</span>
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="align-top min-w-max">
                             {clockInDisplay}
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="align-top min-w-max">
                             {clockOutDisplay}
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="align-top">
                             {descriptionDisplay}
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="align-top text-center">
                             <span className="text-sm font-medium text-red-600">{day.breakHours}</span>
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="align-top text-center">
                             <span className="text-sm font-medium text-blue-600">{day.normalHours || '0h 00m'}</span>
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="align-top text-center">
                             <span className="text-sm font-medium text-orange-600">{day.overtime}</span>
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="align-top text-center">
                             <span className="text-sm font-bold text-gray-900">{day.totalHours}</span>
                           </TableCell>
                         </TableRow>

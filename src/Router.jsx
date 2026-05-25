@@ -108,7 +108,7 @@ const AppRouter = () => {
             </RoleGuard>
           } />
           <Route path="/userDetails" element={
-            <RoleGuard allowedRoles={['siteManager', 'seniorManager', 'adminManager', 'hrManager', 'hrAdvisor', 'adminAdvisor', 'contractManager']}>
+            <RoleGuard allowedRoles={['siteManager', 'seniorManager', 'teamManager', 'adminManager', 'hrManager', 'hrAdvisor', 'adminAdvisor', 'contractManager']}>
               <UserDetailsPage />
             </RoleGuard>
           } />

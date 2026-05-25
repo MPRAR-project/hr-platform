@@ -19,24 +19,28 @@ export function useActiveSessions() {
 
     const fetchActiveSessions = useCallback(async () => {
         if (!cleanCompanyId) return;
-        
+
         try {
             const response = await hrApiClient.get('/hr/time-entries/active-sessions');
             setActiveUsers(response.data.map(session => {
-                const startedAt = new Date(session.startedAt);
+                const clockIn = new Date(session.clockIn);
                 const now = new Date();
-                const elapsedMs = now - startedAt;
+                const elapsedMs = now - clockIn;
                 const elapsedMinutes = Math.floor(elapsedMs / 60000);
                 const hours = Math.floor(elapsedMinutes / 60);
                 const minutes = elapsedMinutes % 60;
 
+                const firstName = session.employee?.firstName || '';
+                const lastName = session.employee?.lastName || '';
+                const userName = `${firstName} ${lastName}`.trim() || 'Unknown User';
+
                 return {
                     sessionId: session.id,
-                    userId: session.userId,
-                    userName: session.userName || 'Unknown User',
-                    primaryRole: session.primaryRole || 'Employee',
-                    clockInTime: startedAt,
-                    clockInTimeFormatted: startedAt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+                    userId: session.employee?.id,
+                    userName,
+                    primaryRole: session.employee?.hrRole || 'Employee',
+                    clockInTime: clockIn,
+                    clockInTimeFormatted: clockIn.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
                     elapsedTime: `${hours}h ${minutes}m`,
                     status: session.status
                 };
@@ -46,9 +50,9 @@ export function useActiveSessions() {
         } catch (err) {
             console.error('Error fetching active sessions:', err);
             setError(err.message);
-            if (isLoading) setIsLoading(false);
+            setIsLoading(false);
         }
-    }, [cleanCompanyId, isLoading]);
+    }, [cleanCompanyId]);
 
     useEffect(() => {
         if (!cleanCompanyId) {

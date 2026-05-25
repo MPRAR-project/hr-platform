@@ -5,6 +5,7 @@ import Header from '../../components/layout/Header';
 import Button from '../../components/ui/Button';
 import UserGroup from '../../components/shared/UserGroup';
 import AddUserModal from '../../components/modals/AddUserModal';
+import SeatRequestModal from '../../components/modals/SeatRequestModal';
 import PaymentConfirmationModal from '../../components/modals/PaymentConfirmationModal';
 import EditUserModal from '../../components/modals/EditUserModal';
 import DeleteConfirmationModal from '../../components/modals/DeleteConfirmationModal';
@@ -32,6 +33,10 @@ import { BannerErrorDisplay } from '../../components/ui/ErrorDisplay';
 import DashboardLoadingState from '../../components/ui/DashboardLoadingState';
 import { ConfigurationErrorState, NetworkErrorState, EmptyTeamState, NoSearchResultsState } from '../../components/ui/DataUnavailableState';
 import { getBillingSummary, recordSeatTopUp } from '../../services/billing';
+import { createSeatRequest, emitSeatRequestEvent } from '../../services/seatRequestService';
+
+const SEAT_PURCHASERS = ['superUser', 'siteManager', 'seniorManager'];
+const ROLES_CAN_MANAGE_USERS = ['superUser', 'siteManager', 'seniorManager', 'adminManager', 'adminAdvisor', 'hrManager', 'hrAdvisor'];
 import { trackUserAction, dashboardLogger } from '../../utils/logger';
 import { invalidateCompanyCache } from '../../services/cacheInvalidationService';
 import { useCache } from '../../contexts/CacheContext';
@@ -122,6 +127,7 @@ const UserListPage = () => {
 
   // --- Team Management State (from SiteManagerDashboard) ---
   const [showSeatPaymentModal, setShowSeatPaymentModal] = useState(false);
+  const [showSeatRequestModal, setShowSeatRequestModal] = useState(false);
   const [isInTrial, setIsInTrial] = useState(false);
   const [unarchivingUserId, setUnarchivingUserId] = useState(null);
   const [isCheckingSeats, setIsCheckingSeats] = useState(false);
@@ -163,7 +169,7 @@ const UserListPage = () => {
         role: roleToJobTitle(u.primaryRole || u.role || u.hrRole), // Map camelCase to Title Case
         status: displayStatus, // 'Active', 'Archived', etc.
         profileImage: u.profileImage,
-        isInvited: u.sourceType === 'invite',
+        isInvited: (u.status || '').toLowerCase() === 'invited' || u.sourceType === 'invite',
         inviteId: u.inviteId,
       };
     });
@@ -647,6 +653,24 @@ const UserListPage = () => {
     let seatUsage = dashboardData?.seatUsageCount ?? dashboardData?.totalUsers ?? 0;
     let totalSeats = dashboardData?.totalSeats || 0;
 
+    // If dashboardData is not yet loaded (e.g. on Users tab where it's not fetched),
+    // fetch fresh billing data so we don't incorrectly block with a payment popup
+    if (totalSeats === 0) {
+      try {
+        const billing = await getBillingSummary();
+        seatUsage = billing?.activeSeatCount ?? billing?.currentEmployeeCount ?? 0;
+        totalSeats = billing?.seatQuota ?? billing?.seatCount ?? 0;
+      } catch (e) {
+        console.warn('[UserListPage] Failed to fetch billing summary on add user click:', e);
+      }
+    }
+
+    // If still no seat data, allow adding (don't block with payment modal on unknown state)
+    if (totalSeats === 0) {
+      handleAddUsersTM();
+      return;
+    }
+
     // Smart refresh: If limit reached, try refreshing claims first to see if they bought seats
     if (seatUsage >= totalSeats && refreshClaims) {
       try {
@@ -660,18 +684,25 @@ const UserListPage = () => {
     }
 
     if (seatUsage >= totalSeats) {
-      // Still exceeded, check for trial or show payment modal
-      try {
-        const companyId = parseCompanyId(user?.companyId);
-        if (companyId) {
-          const billingSummary = await getBillingSummary();
-          setIsInTrial(billingSummary?.subscriptionStatus === 'trial' && !billingSummary?.isExpired);
+      const myRole = user?.role || user?.hrRole || '';
+      if (SEAT_PURCHASERS.includes(myRole)) {
+        // Site Manager / Senior Manager / Super User — can buy seats directly
+        try {
+          const cid = parseCompanyId(user?.companyId);
+          if (cid) {
+            const billingSummary = await getBillingSummary();
+            setIsInTrial(billingSummary?.subscriptionStatus === 'trial' && !billingSummary?.isExpired);
+          }
+        } catch (error) {
+          console.warn('Failed to check trial status:', error);
+          setIsInTrial(false);
         }
-      } catch (error) {
-        console.warn('Failed to check trial status:', error);
-        setIsInTrial(false);
+        setShowSeatPaymentModal(true);
+      } else {
+        // Admin Manager / HR Manager / Admin Advisor / HR Advisor / Team Manager
+        // — must request seats from a purchaser
+        setShowSeatRequestModal(true);
       }
-      setShowSeatPaymentModal(true);
     } else {
       handleAddUsersTM();
     }
@@ -942,6 +973,24 @@ const UserListPage = () => {
     }
   };
 
+  // ── Seat request submit ──────────────────────────────────────────────────────
+  const handleSeatRequestSubmit = async ({ additionalSeats, reason }) => {
+    await createSeatRequest({ seatCount: additionalSeats, reason });
+    toast.success('Seat request submitted. You will be notified when it is approved.');
+    emitSeatRequestEvent();
+    setShowSeatRequestModal(false);
+  };
+
+  // ── Called by AddUserModal when backend returns 402 ──────────────────────────
+  const handleSeatLimitReached = (action) => {
+    setShowAddUserModal(false);
+    if (action === 'purchase') {
+      setShowSeatPaymentModal(true);
+    } else {
+      setShowSeatRequestModal(true);
+    }
+  };
+
   const handleDeleteForeverTM = async (id) => {
     if (!window.confirm('Are you sure you want to permanently delete this user? This action cannot be undone.')) return;
     try {
@@ -999,11 +1048,10 @@ const UserListPage = () => {
       <>
         <OptimizedTeamTable
           teamMembers={filteredTeamMembers}
-          onEdit={handleEditTM}
+          onEdit={ROLES_CAN_MANAGE_USERS.includes(user?.role) ? handleEditTM : undefined}
           onDeactivate={handleRemoveTM}
-          onActivate={handleActivateTM}
-          onDeleteForever={handleDeleteForeverTM}
           onRevokeInvite={handleRevokeInviteTM}
+          onViewDetails={ROLES_CAN_VIEW_USER_DETAILS.includes(user?.role) ? handleViewDetails : undefined}
           activatingUserId={unarchivingUserId}
           currentUserRole={user?.role}
         />
@@ -1081,14 +1129,6 @@ const UserListPage = () => {
                 <h2 className="text-2xl font-bold text-text-primary">Users</h2>
               </div>
               <div className="flex gap-2 items-center">
-                <Button
-                  variant="gradient"
-                  icon={UserPlus}
-                  iconFirst={true}
-                  onClick={handleAddUser}
-                >
-                  Add User
-                </Button>
                 <div className="relative w-48">
                   <select
                     value={selectedSiteId}
@@ -1180,11 +1220,11 @@ const UserListPage = () => {
                       }}
                     />
                   ) : (
-                    <EmptyTeamState 
-                      onAddUsers={handleAddUser}
+                    <EmptyTeamState
+                      onAddUsers={viewMode === 'active' ? handleAddUser : undefined}
                       title={viewMode === 'active' ? "No Active Employees" : "No Archived Employees"}
-                      message={viewMode === 'active' 
-                        ? "There are currently no active employees in your organization." 
+                      message={viewMode === 'active'
+                        ? "There are currently no active employees in your organization."
                         : "No archived employee records were found."}
                     />
                   )}
@@ -1194,9 +1234,8 @@ const UserListPage = () => {
                   <div className="bg-white rounded-lg shadow border border-border-secondary overflow-hidden">
                     <OptimizedTeamTable
                       teamMembers={flatUserList}
-                      onDeactivate={handleDeactivate}
+                      onDeactivate={viewMode === 'active' ? handleDeactivate : undefined}
                       onActivate={handleUnarchiveUser}
-                      onDeleteForever={handleDeleteForeverTM}
                       onRevokeInvite={handleInviteDeleteRequest}
                       onViewDetails={ROLES_CAN_VIEW_USER_DETAILS.includes(user?.role) ? handleViewDetails : undefined}
                       activatingUserId={unarchivingUserId}
@@ -1230,14 +1269,16 @@ const UserListPage = () => {
                 title="Team Management"
                 subtitle="Manage your team, roles, and subscriptions seamlessly."
                 action={
-                  <Button
-                    variant="gradient"
-                    icon={UserPlus}
-                    iconFirst={true}
-                    onClick={handleAddUsersClickTM}
-                  >
-                    Add Users
-                  </Button>
+                  ROLES_CAN_MANAGE_USERS.includes(user?.role) ? (
+                    <Button
+                      variant="gradient"
+                      icon={UserPlus}
+                      iconFirst={true}
+                      onClick={handleAddUsersClickTM}
+                    >
+                      Add Users
+                    </Button>
+                  ) : null
                 }
               >
                 {renderTeamContentTM()}
@@ -1259,6 +1300,15 @@ const UserListPage = () => {
         isOpen={showAddUserModal}
         onClose={() => setShowAddUserModal(false)}
         onSubmit={handleUserSubmitTM}
+        onSeatLimitReached={handleSeatLimitReached}
+      />
+
+      {/* Seat Request Modal — for non-purchasers when seats are full */}
+      <SeatRequestModal
+        isOpen={showSeatRequestModal}
+        onClose={() => setShowSeatRequestModal(false)}
+        onSubmit={handleSeatRequestSubmit}
+        companyName={user?.companyName || ''}
       />
 
       {/* Payment Confirmation */}

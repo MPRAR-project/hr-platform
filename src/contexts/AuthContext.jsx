@@ -1,3 +1,4 @@
+// @refresh reset
 /**
  * AuthContext.jsx — HR Frontend (Phase 3 — JWT/REST, Zero Firebase)
  *
@@ -164,9 +165,10 @@ export const AuthProvider = ({ children }) => {
       isOnboardingCompleted: employee.isOnboarded || false,
       isOnboardingMandatory: false,
       isTrainingMandatory:   false,
-      seatCount:     10,
-      centralUserId: employee.centralUserId,
-      _source:       'hr-rest-api',
+      seatCount:        employee.seatQuota ?? null,
+      profilePictureUrl: employee.profilePictureUrl || employee.profileImage || null,
+      centralUserId:    employee.centralUserId,
+      _source:          'hr-rest-api',
     };
   }
 
@@ -295,32 +297,26 @@ export const AuthProvider = ({ children }) => {
 
   // Auto-refresh weekStartDay when companyId/siteId changes
   useEffect(() => {
+    // Don't attempt to resolve week start while auth bootstrap is in progress.
+    if (isLoading) return;
+
     if (authedUser?.companyId || authedUser?.siteId) {
       refreshWeekStartDay(authedUser.companyId, authedUser.siteId);
     } else {
       setWeekStartDay(DEFAULT_WEEK_START_DAY);
     }
-  }, [authedUser?.companyId, authedUser?.siteId, refreshWeekStartDay]);
-
-  // ── checkOnboardingRequirement ────────────────────────────────────────────
-  const checkOnboardingRequirement = useCallback(async () => {
-    if (!user) return { requiresOnboarding: false, redirectPath: '/' };
-    try {
-      const requiresOnboarding = shouldRequireOnboarding(user, null);
-      const redirectPath       = getOnboardingRedirectPath(user, null);
-      return {
-        requiresOnboarding,
-        redirectPath,
-        isRoleExempt: isRoleExemptFromOnboarding(user.role),
-      };
-    } catch {
-      return { requiresOnboarding: false, redirectPath: '/' };
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [authedUser?.companyId, authedUser?.siteId, refreshWeekStartDay, isLoading]);
 
   // ── Derived user object ─────────────────────────────────────────────────────
   const user = useMemo(() => {
     if (!authedUser) return null;
+
+    // Build initials SVG fallback — no external network request, unique per user
+    const initials = [authedUser.firstName?.[0], authedUser.lastName?.[0]]
+      .filter(Boolean).join('').toUpperCase() || authedUser.email?.[0]?.toUpperCase() || '?';
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40"><circle cx="20" cy="20" r="20" fill="#7C3AED"/><text x="20" y="26" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="600" fill="white">${initials}</text></svg>`;
+    const initialsAvatar = `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+
     return {
       role,
       userId:        authedUser.userId,
@@ -334,10 +330,27 @@ export const AuthProvider = ({ children }) => {
       isOnboardingMandatory: authedUser.isOnboardingMandatory ?? false,
       isTrainingMandatory:   authedUser.isTrainingMandatory   ?? false,
       shift:         authedUser.shift || 'day',
-      avatarUrl:     'https://i.pravatar.cc/40',
+      avatarUrl:     authedUser.profilePictureUrl || initialsAvatar,
       weekStartDay,
     };
   }, [role, authedUser, weekStartDay]);
+
+  // ── checkOnboardingRequirement ────────────────────────────────────────────
+  // Defined after `user` useMemo so the closure always captures the current value.
+  const checkOnboardingRequirement = useCallback(async () => {
+    if (!user) return { requiresOnboarding: false, redirectPath: '/' };
+    try {
+      const requiresOnboarding = shouldRequireOnboarding(user, null);
+      const redirectPath       = getOnboardingRedirectPath(user, null);
+      return {
+        requiresOnboarding,
+        redirectPath,
+        isRoleExempt: isRoleExemptFromOnboarding(user.role),
+      };
+    } catch {
+      return { requiresOnboarding: false, redirectPath: '/' };
+    }
+  }, [user]);
 
   // ── Context value — identical shape to original ───────────────────────────
   const value = useMemo(() => ({

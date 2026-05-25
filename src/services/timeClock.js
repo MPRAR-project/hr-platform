@@ -105,21 +105,21 @@ export async function stopClock({
   if (!entryId) {
     try {
       const { data } = await hrApiClient.get('/hr/time-entries/my-session');
-      entryId = data?.id;
+      // Backend returns { session: {...} | null }
+      entryId = data?.session?.id;
     } catch {
       throw new Error('No active clock session found. Please clock in first.');
     }
   }
-  if (!entryId) {
-    throw new Error('No active clock session found. Please clock in first.');
-  }
+  // entryId may still be null — backend finds open session by JWT identity so it's OK
 
   const location   = await captureLocation();
   const deviceInfo = getDeviceInfo();
 
   const payload = {
     endedAt:      endedAt ? (endedAt instanceof Date ? endedAt.toISOString() : endedAt) : null,
-    breakSec:     breakSec || 0,
+    // Backend expects breakMinutes (integer), not breakSec
+    breakMinutes: Math.round((breakSec || 0) / 60),
     notes:        notes    || null,
     pupilCount:   pupilCount !== null ? pupilCount : null,
     clockOutLocation:   location,
@@ -132,12 +132,16 @@ export async function stopClock({
       entryId,
     });
 
+    const effectiveBreakSec    = (data.breakMinutes || 0) * 60;
+    const effectiveDurationSec = (data.totalMinutes || 0) * 60;
+    const grossDurationSec     = effectiveDurationSec + effectiveBreakSec;
+
     return {
       sessionId:            entryId,
       overtimeSec:          data.overtimeSec          || 0,
-      breakSec:             data.breakSec             || breakSec,
-      durationGrossSec:     data.durationGrossSec     || 0,
-      durationEffectiveSec: data.durationEffectiveSec || 0,
+      breakSec:             effectiveBreakSec          || breakSec,
+      durationGrossSec:     data.durationGrossSec     || grossDurationSec,
+      durationEffectiveSec: data.durationEffectiveSec || effectiveDurationSec,
       autoLunchApplied:     data.autoLunchApplied     || false,
       autoLunchBreakSec:    data.autoLunchBreakSec    || 0,
       roundedEnd:           data.clockOut             || null,
@@ -155,19 +159,19 @@ export async function stopClock({
 export async function getMyActiveSession(userId) {
   try {
     const { data } = await hrApiClient.get('/hr/time-entries/my-session');
-    if (!data) return null;
-    // Normalize shape to match what UI components expect
+    // Backend returns { session: {...} | null }
+    const session = data?.session;
+    if (!session) return null;
     return {
-      sessionId:   data.id,
-      id:          data.id,
-      userId:      data.employeeId,
-      companyId:   data.companyId,
-      siteId:      data.siteId,
-      startedAt:   data.clockIn,
-      status:      data.clockOut ? 'closed' : 'open',
-      breakSec:    data.breakMinutes ? data.breakMinutes * 60 : 0,
-      notes:       data.notes,
-      location:    data.location,
+      sessionId:   session.id,
+      id:          session.id,
+      userId:      session.employeeId,
+      companyId:   session.companyId,
+      siteId:      session.siteId,
+      startedAt:   session.clockIn,
+      status:      session.clockOut ? 'closed' : 'open',
+      breakSec:    session.breakMinutes ? session.breakMinutes * 60 : 0,
+      notes:       session.notes,
     };
   } catch (err) {
     if (err.response?.status === 404) return null;
@@ -201,22 +205,20 @@ export async function getActiveSessionsForCompany(companyId) {
 // ── Start Break ───────────────────────────────────────────────────────────────
 // Kept as client-side state for now (break timing is local UX, not server-persisted)
 // Server receives final breakSec on clock-out.
-let breakStartTime = null;
-
 export async function startBreak({ userId, sessionId = null }) {
-  if (breakStartTime) throw new Error('Already on break.');
-  breakStartTime = Date.now();
   return {
     sessionId:      sessionId,
-    breakStartTime: new Date(breakStartTime),
+    breakStartTime: new Date().toISOString(),
   };
 }
 
-export async function endBreak({ userId, sessionId = null }) {
+export async function endBreak({ userId, sessionId = null, breakStartTime }) {
   if (!breakStartTime) throw new Error('Not currently on break.');
-  const now             = Date.now();
-  const breakDurationSec = Math.floor((now - breakStartTime) / 1000);
-  breakStartTime        = null;
+  const start = new Date(breakStartTime).getTime();
+  if (Number.isNaN(start)) throw new Error('Invalid break start time.');
+
+  const now = Date.now();
+  const breakDurationSec = Math.max(0, Math.floor((now - start) / 1000));
   return {
     sessionId:      sessionId,
     breakDurationSec,
@@ -229,8 +231,9 @@ export async function getSessionsForDateRange({ userId, companyId, startDate, en
   try {
     const { data } = await hrApiClient.get('/hr/time-entries', {
       params: {
-        startDate: startDate instanceof Date ? startDate.toISOString().split('T')[0] : startDate,
-        endDate:   endDate   instanceof Date ? endDate.toISOString().split('T')[0]   : endDate,
+        // Backend expects `from` and `to`; also send aliases for compatibility
+        from:      startDate instanceof Date ? startDate.toISOString().split('T')[0] : startDate,
+        to:        endDate   instanceof Date ? endDate.toISOString().split('T')[0]   : endDate,
       },
     });
     return (data.entries || data || []).map(normalizeEntry);
@@ -253,6 +256,10 @@ export async function getSessionById(sessionId) {
 
 // ── Normalize entry shape ─────────────────────────────────────────────────────
 function normalizeEntry(e) {
+  const breakSec            = (e.breakMinutes || 0) * 60;
+  const durationEffectiveSec = (e.totalMinutes || 0) * 60;
+  const durationGrossSec    = durationEffectiveSec + breakSec;
+
   return {
     id:          e.id,
     sessionId:   e.id,
@@ -262,10 +269,12 @@ function normalizeEntry(e) {
     startedAt:   e.clockIn,
     endedAt:     e.clockOut,
     status:      e.clockOut ? 'closed' : 'open',
-    durationGrossSec:     e.durationGrossSec     || 0,
-    durationEffectiveSec: e.durationEffectiveSec || 0,
-    overtimeSec:          e.overtimeSec          || 0,
-    breakSec:    e.breakMinutes ? e.breakMinutes * 60 : 0,
+    durationGrossSec,
+    durationEffectiveSec,
+    overtimeSec: e.overtimeSec || 0,
+    breakSec,
+    totalMinutes: e.totalMinutes || 0,
+    breakMinutes: e.breakMinutes || 0,
     notes:       e.notes,
     location:    e.location,
   };

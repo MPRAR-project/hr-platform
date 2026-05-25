@@ -3,7 +3,8 @@
  * Handles fetching and mapping approved absences for timesheet display
  */
 
-import hrApiClient from '../lib/hrApiClient';
+import hrApiClient, { tokenStore } from '../lib/hrApiClient';
+import { refreshAccessToken } from './auth';
 import { LEAVE_TYPES } from '../constants/leaveTypes';
 
 /**
@@ -23,6 +24,14 @@ export function getLeaveTypeLabel(leaveTypeValue) {
  */
 export async function fetchApprovedAbsencesForWeek(userId, weekStartDate, weekEndDate) {
     try {
+        // Ensure access token exists; attempt refresh if missing to avoid 401s
+        if (!tokenStore.getAccess()) {
+            await refreshAccessToken();
+        }
+
+        // If still no token, bail out with empty map
+        if (!tokenStore.getAccess()) return new Map();
+
         const { data } = await hrApiClient.get('/hr/absences', {
             params: {
                 employeeId: userId,

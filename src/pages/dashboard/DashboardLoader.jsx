@@ -11,11 +11,11 @@ const dashboards = {
   superUser: <SuperUserDashboard />,
   siteManager: <SiteManagerDashboard />,
   seniorManager: <SiteManagerDashboard />,
-  teamManager: <SiteManagerDashboard />,
-  hrManager: <SiteManagerDashboard />,
-  adminManager: <SiteManagerDashboard />,
-  hrAdvisor: <SiteManagerDashboard />,
-  adminAdvisor: <SiteManagerDashboard />,
+  teamManager: <EmployeeDashboard />,
+  hrManager: <EmployeeDashboard />,
+  adminManager: <EmployeeDashboard />,
+  hrAdvisor: <EmployeeDashboard />,
+  adminAdvisor: <EmployeeDashboard />,
   contractManager: <EmployeeDashboard />,
   employee: <EmployeeDashboard />
 };

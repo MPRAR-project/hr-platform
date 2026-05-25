@@ -15,36 +15,6 @@
 import hrApiClient from '../lib/hrApiClient';
 import { validateEmploymentData, transformEmploymentDataForStorage } from '../utils/employmentUtils';
 
-// ── Central Platform sync helper (best-effort, fire-and-forget) ─────────────
-function getCentralContext() {
-  return {
-    apiUrl: import.meta.env.VITE_CENTRAL_API_URL || 'http://localhost:5000',
-    token:  localStorage.getItem('mprar_central_token'),
-  };
-}
-
-async function centralFetch(path, method = 'GET', body = null) {
-  const { apiUrl, token } = getCentralContext();
-  if (!token || !apiUrl) return null;
-  try {
-    const res = await fetch(`${apiUrl}${path}`, {
-      method,
-      headers: {
-        'Content-Type':  'application/json',
-        'Authorization': `Bearer ${token}`,
-      },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      console.warn(`[HR→Central sync] ${method} ${path} failed:`, err.error || res.status);
-    }
-    return res;
-  } catch (err) {
-    console.warn(`[HR→Central sync] Network error ${method} ${path}:`, err.message);
-    return null;
-  }
-}
 
 // ── Canonical role names (camelCase) ────────────────────────────────────────
 const ROLE_CANONICAL_MAP = {
@@ -91,13 +61,13 @@ export async function addUsersBySiteManager(companyId, siteId, usersPayload) {
       companyId,
       siteId,
       users: usersPayload.map((u) => {
-        const full  = (u.fullName || '').trim();
-        const parts = full.split(' ');
+        const firstName = (u.firstName || '').trim();
+        const lastName  = (u.lastName  || '').trim();
         return {
           email:                 (u.email || '').toLowerCase(),
-          firstName:             parts[0] || '',
-          lastName:              parts.slice(1).join(' ').trim(),
-          displayName:           full,
+          firstName,
+          lastName,
+          displayName:           `${firstName} ${lastName}`.trim() || u.email || '',
           hrRole:                u.role || u.hrRole || 'employee',
           reportsTo:             u.reportsTo || null,
           siteId:                u.siteId || null,
@@ -108,25 +78,9 @@ export async function addUsersBySiteManager(companyId, siteId, usersPayload) {
 
     const created = (data.created || []).map(normalizeUser);
 
-    // Best-effort Central Platform sync
-    const cleanCompanyId = companyId.replace('companies/', '');
-    await Promise.allSettled(
-      created
-        .filter((u) => !u._isExistingUser)
-        .map((u) =>
-          centralFetch(`/companies/${cleanCompanyId}/users`, 'POST', {
-            email:       u.email,
-            firstName:   u.firstName,
-            lastName:    u.lastName,
-            hrRole:      u.primaryRole || 'employee',
-            reportsTo:   u.reportsTo  || null,
-            centralRole: null,
-            status:      'invited',
-          })
-        )
-    );
-
     // Auto sick-leave allowances
+    // Note: Central platform sync for new users is handled by the HR backend
+    // via HMAC-authenticated backend-to-backend calls; no frontend sync needed.
     try {
       const { automaticAllowanceService } = await import('./automaticAllowanceService');
       for (const user of created) {
@@ -176,51 +130,8 @@ export async function updateUserBySiteManager(userId, updates, contextCompanyId 
     throw new Error(err.response?.data?.error || 'Failed to update user');
   }
 
-  // Best-effort Central sync (reliable path is now HR backend → Central via syncProfileToCentral)
-  const companyId = contextCompanyId || updates.companyId;
-  await syncUserToCentral(userId, companyId, {
-    primaryRole: hrPayload.hrRole,
-    reportsTo:   hrPayload.reportsTo === '' ? null : (hrPayload.reportsTo || undefined),
-    firstName:   hrPayload.firstName,
-    lastName:    hrPayload.lastName,
-    status:      hrPayload.status,
-  });
-
+  // Central sync is handled by the HR backend (syncProfileToCentral) on every PUT /hr/employees/:id.
   return { ok: true };
-}
-
-// ── Sync user to Central Platform ─────────────────────────────────────────────
-export async function syncUserToCentral(userId, companyId, payload) {
-  try {
-    const cleanCompanyId = (companyId || '').toString().replace('companies/', '');
-    if (!cleanCompanyId) return;
-
-    if (payload.primaryRole || payload.reportsTo !== undefined) {
-      await centralFetch(`/companies/${cleanCompanyId}/users/${userId}/roles`, 'PUT', {
-        hrRole:    payload.primaryRole || undefined,
-        reportsTo: payload.reportsTo   || undefined,
-      });
-    }
-
-    if (payload.firstName || payload.lastName || payload.status || payload.email) {
-      const rawStatus = typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : undefined;
-      const normalizedStatus = 
-          rawStatus === 'archived' ? 'inactive'
-        : rawStatus === 'active'   ? 'active'
-        : rawStatus === 'invited'  ? 'invited'
-        : rawStatus === 'inactive' ? 'inactive'
-        : undefined;
-
-      await centralFetch(`/companies/${cleanCompanyId}/users/${userId}`, 'PUT', {
-        firstName: payload.firstName || undefined,
-        lastName:  payload.lastName  || undefined,
-        status:    normalizedStatus,
-        email:     payload.email     || undefined,
-      });
-    }
-  } catch (syncErr) {
-    console.warn('[HR→Central sync] Failed (non-fatal):', syncErr.message);
-  }
 }
 
 // ── Set user status ───────────────────────────────────────────────────────────
@@ -234,13 +145,7 @@ export async function setUserStatus(userId, status) {
     throw new Error(err.response?.data?.error || 'Failed to update user status');
   }
 
-  // Get user's company for Central sync
-  try {
-    const user = await getUserById(userId);
-    const companyId = user?.primaryCompanyId || user?.companyId;
-    if (companyId) await syncUserToCentral(userId, companyId, { status });
-  } catch { /* non-fatal */ }
-
+  // Central sync is handled by the HR backend on every status update.
   return { ok: true };
 }
 
@@ -396,9 +301,7 @@ export async function archiveUser(userId, companyId = null) {
   } catch (err) {
     throw new Error(err.response?.data?.error || `Failed to archive user: ${err.message}`);
   }
-  // HR backend already syncs status to Central via the internal route.
-  // Do NOT call syncUserToCentral here — it triggers a Central→HR back-sync
-  // that corrupts the HR DB status ('inactive' overwrites 'archived').
+  // Central sync is handled by the HR backend on every status update.
   return { ok: true };
 }
 

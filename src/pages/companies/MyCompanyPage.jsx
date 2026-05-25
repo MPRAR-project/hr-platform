@@ -183,8 +183,8 @@ const MyCompanyPage = () => {
   const initials     = name.trim().split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
   const isActive     = status === 'active';
 
-  // Normalise addons — backend returns `plugins` field
-  const rawAddons = company?.plugins ?? company?.addons;
+  // Backend always returns `plugins` (Prisma field); normalise to the array shape the UI expects
+  const rawAddons = company?.plugins;
   let addons = [];
   if (Array.isArray(rawAddons)) {
     addons = rawAddons;

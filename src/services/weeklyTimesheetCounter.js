@@ -18,7 +18,7 @@ export class WeeklyTimesheetCounter {
 
       const timesheets = data.timesheets || [];
       const filtered = timesheets.filter(t => statuses.includes(t.status));
-      return filtered.length; // Each record is a week in the new architecture
+      return filtered.length;
     } catch (error) {
       console.error('[WeeklyTimesheetCounter] Error counting weekly submissions:', error);
       return 0;
@@ -27,7 +27,8 @@ export class WeeklyTimesheetCounter {
 
   static async getWeeklyStats(companyId, weekStartDate) {
     try {
-      const { data } = await hrApiClient.get('/hr/timesheets/summary', {
+      // Correct endpoint: /hr/timesheets/week-summary (not /summary)
+      const { data } = await hrApiClient.get('/hr/timesheets/week-summary', {
         params: { weekStart: weekStartDate }
       });
       return data;
@@ -39,7 +40,7 @@ export class WeeklyTimesheetCounter {
   static async getTimesheetsForCompany(companyId) {
     try {
       const { data } = await hrApiClient.get('/hr/timesheets', {
-        params: { limit: 1000 }
+        params: { limit: 500 }
       });
       
       const userMap = new Map();
@@ -55,9 +56,10 @@ export class WeeklyTimesheetCounter {
 
   static async getTimesheetsForCompanyByWeek(companyId, weekStartStr) {
     try {
-      const { data } = await hrApiClient.get('/hr/timesheets', {
-        params: { weekStart: weekStartStr, limit: 1000 }
-      });
+      const params = { limit: 500 };
+      if (weekStartStr) params.weekStart = weekStartStr;
+
+      const { data } = await hrApiClient.get('/hr/timesheets', { params });
       
       const userMap = new Map();
       (data.timesheets || []).forEach(ts => {
@@ -79,10 +81,49 @@ export class WeeklyTimesheetCounter {
     }
   }
 
+  /**
+   * Batch fetch timesheets for multiple users.
+   * If weekStartStr provided, filters to that week.
+   * Returns a Map<userId, timesheet[]>
+   */
   static async getTimesheetsForUsersBatch(userIds, weekStartStr = null) {
-      // Simplified: fetch all for the week
-      return this.getTimesheetsForCompanyByWeek(null, weekStartStr);
+    if (!Array.isArray(userIds) || userIds.length === 0) return new Map();
+
+    // For small batches (≤20) fetch individually in parallel for accuracy
+    if (userIds.length <= 20) {
+      const map = new Map();
+      await Promise.allSettled(
+        userIds.map(async (uid) => {
+          try {
+            const params = { employeeId: uid, limit: 52 };
+            if (weekStartStr) params.weekStart = weekStartStr;
+            const { data } = await hrApiClient.get('/hr/timesheets', { params });
+            map.set(uid, data.timesheets || []);
+          } catch {
+            map.set(uid, []);
+          }
+        })
+      );
+      return map;
+    }
+
+    // For larger batches: one company-wide call, then partition
+    return this.getTimesheetsForCompanyByWeek(null, weekStartStr);
+  }
+
+  static calculateWeeklyCounts(timesheets = [], weekStartDay = 'monday') {
+    const counts = { total: 0, approved: 0, pending: 0, rejected: 0, draft: 0 };
+    for (const ts of timesheets) {
+      counts.total++;
+      const status = (ts.status || 'draft').toLowerCase();
+      if (status === 'approved')                                        counts.approved++;
+      else if (status === 'submitted' || status === 'pending')          counts.pending++;
+      else if (status === 'rejected')                                   counts.rejected++;
+      else                                                              counts.draft++;
+    }
+    return counts;
   }
 }
 
-export default WeeklyTimesheetCounter;
+export default WeeklyTimesheetCounter;
+

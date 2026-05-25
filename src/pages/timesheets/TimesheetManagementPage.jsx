@@ -144,9 +144,10 @@ const TimesheetManagementPage = ({ userRole = 'employee' }) => {
     // Second pass: filter out superUser employees and unidentified users
     employeesList.forEach(emp => {
       const cachedUserData = effectiveUserCache[emp.id];
-      const userRole = cachedUserData?.role;
-      const userPrimaryRole = cachedUserData?.primaryRole;
-      const userName = cachedUserData?.name;
+      const userRole = cachedUserData?.role || emp.hrRole || emp.primaryRole;
+      const userPrimaryRole = cachedUserData?.primaryRole || emp.primaryRole;
+      // Use name from the enriched employee (set before calling this function) or from cache
+      const userName = cachedUserData?.name || emp.name || emp.displayName || '';
 
       // HR advisors cannot see Site Owner / Site Manager employees
       if (
@@ -157,11 +158,12 @@ const TimesheetManagementPage = ({ userRole = 'employee' }) => {
         return;
       }
 
-      // Filter out unidentified users as requested
-      if (!userName || userName === 'Unknown User') return;
+      // Only skip truly nameless/unidentified entries
+      if (!userName) return;
 
       filteredEmployees.push(emp);
     });
+
 
     return filteredEmployees;
   };

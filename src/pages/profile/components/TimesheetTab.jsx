@@ -13,7 +13,9 @@ import Loader from "../../../components/ui/Loader";
 import { fetchApprovedAbsencesForWeek } from "../../../services/timesheetAbsenceIntegration";
 import { getUserWeekContext, getCompanyWorkSchedule, submitCurrentWeek, submitWeek } from "../../../services/timesheets";
 import { shouldShowSubmitButton } from "../../../utils/timesheetUtils";
+import { canSubmitTimesheet, getSubmitBlockedReason } from "../../../utils/timesheetSubmitGate";
 import { getWeekRangeForDate, normalizeWeekStartDay, formatWeeklyRange } from "../../../utils/weekStartUtils";
+
 
 export const TimesheetTab = () => {
     const [viewModalOpen, setViewModalOpen] = useState(false)
@@ -162,6 +164,14 @@ export const TimesheetTab = () => {
         const weekKey = timesheet.raw.weekKey;
         const submissionStartTime = Date.now();
 
+        // ── Frontend-side week-end gate ──────────────────────────────────────
+        const weekEndDate = timesheet.weekEndDate || timesheet.raw?.end || timesheet.raw?.weekEnd;
+        if (!canSubmitTimesheet(weekEndDate)) {
+            const reason = getSubmitBlockedReason(weekEndDate);
+            toast.warning(reason || 'Submit is not available until the week ends.');
+            return;
+        }
+
         try {
             setIsSubmitting(true);
 
@@ -170,18 +180,11 @@ export const TimesheetTab = () => {
 
             const weekStart = timesheet.raw.start;
 
-            // Do not await the network call. This makes the UI feel instant.
-            // We'll toast success/error when the background call completes.
             Promise.resolve()
                 .then(() => submitWeek(user?.uid, weekStart))
-                .then((result) => {
-                    const submissionDuration = Date.now() - submissionStartTime;
-
-                    const successMsg = submissionDuration < 1500
-                        ? `Timesheet for week ${timesheet.week} submitted successfully (${submissionDuration}ms)`
-                        : `Timesheet for week ${timesheet.week} submitted successfully`;
-
-                    toast.success(successMsg);
+                .then(() => {
+                    const duration = Date.now() - submissionStartTime;
+                    toast.success(`✅ Timesheet for ${timesheet.week} submitted for approval!`);
                 })
                 .catch((e) => {
                     // Revert optimistic update on failure
@@ -192,57 +195,48 @@ export const TimesheetTab = () => {
                     });
 
                     let errorMessage = 'Submission failed';
-                    if (e?.message?.includes('timeout')) {
-                        errorMessage = 'Submission timed out - please check your connection and try again';
+                    if (e?.message?.includes('WEEK_NOT_ENDED') || e?.message?.includes('week ends')) {
+                        errorMessage = e.message;
+                    } else if (e?.message?.includes('timeout')) {
+                        errorMessage = 'Submission timed out — please check your connection and try again';
                     } else if (e?.message?.includes('permission')) {
                         errorMessage = 'You do not have permission to submit this timesheet';
                     } else if (e?.message) {
                         errorMessage = `Submission failed: ${e.message}`;
                     }
-
                     toast.error(errorMessage);
                 });
 
-            // Background cache invalidation (doesn't block UI)
+            // Background cache invalidation
             setTimeout(() => {
-                try {
-                    // Import dynamically to avoid circular dependencies
-                    import('../../../services/timesheetCache').then(({ invalidateTimesheetCache }) => {
-                        invalidateTimesheetCache(user?.uid, weekStart);
-                    }).catch(e => {
-                    });
-                } catch (e) {
-                }
+                import('../../../services/timesheetCache').then(({ invalidateTimesheetCache }) => {
+                    invalidateTimesheetCache(user?.uid, weekStart);
+                }).catch(() => {});
             }, 100);
 
         } catch (e) {
-            const submissionDuration = Date.now() - submissionStartTime;
-            console.error('[TimesheetTab] ❌ ULTRA OPTIMIZED Submit week failed:', e);
-
-            // Revert optimistic update on failure
             setOptimisticStatusMap(prev => {
                 const next = { ...prev };
                 delete next[weekKey];
                 return next;
             });
 
-            // Show specific error message based on error type
             let errorMessage = 'Submission failed';
-            if (e.message?.includes('timeout')) {
-                errorMessage = 'Submission timed out - please check your connection and try again';
+            if (e.message?.includes('WEEK_NOT_ENDED') || e.message?.includes('week ends')) {
+                errorMessage = e.message;
+            } else if (e.message?.includes('timeout')) {
+                errorMessage = 'Submission timed out — please check your connection and try again';
             } else if (e.message?.includes('permission')) {
                 errorMessage = 'You do not have permission to submit this timesheet';
             } else if (e.message) {
                 errorMessage = `Submission failed: ${e.message}`;
             }
-
             toast.error(errorMessage);
         } finally {
-            // Stop the loading state immediately so the UI never feels stuck.
-            // The actual submit continues in the background.
             setIsSubmitting(false);
         }
     }
+
     const handleCloseEditTimesheetModal = () => {
         setSelectedTimesheet(null);
         setEditModalOpen(false)
@@ -391,17 +385,10 @@ export const TimesheetTab = () => {
                                                     </>
                                                 )} */}
 
-                                                {/* DEBUG: Check weekData mismatch */}
                                                 {(() => {
                                                     const weekData = weeksByKey?.[timesheet.id];
-                                                    console.log("CHECK DATA", {
-                                                        id: timesheet.id,
-                                                        weekData
-                                                    });
-
                                                     const today = new Date();
                                                     const weekEnd = new Date(timesheet.weekEndDate);
-
                                                     const canSubmit = shouldShowSubmitButton(
                                                         timesheet,
                                                         companySettings,
@@ -409,18 +396,9 @@ export const TimesheetTab = () => {
                                                         {
                                                             weekData,
                                                             checkTodayCompletion: true,
-                                                            isCurrentlyActive: today <= weekEnd // ✅ FIX: Check if week is still active
+                                                            isCurrentlyActive: today <= weekEnd
                                                         }
                                                     );
-
-                                                    console.log("FINAL DEBUG", {
-                                                        today: today,
-                                                        weekEnd: timesheet.weekEndDate,
-                                                        isCurrentlyActive: today <= new Date(timesheet.weekEndDate),
-                                                        weekData,
-                                                        canSubmit
-                                                    });
-
                                                     return canSubmit;
                                                 })() && (
                                                         <>

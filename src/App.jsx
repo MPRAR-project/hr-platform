@@ -8,11 +8,47 @@ import { ClockSessionProvider } from './contexts/ClockSessionContext';
 import { CacheProvider } from './contexts/CacheContext';
 import AppRouter from './Router';
 import ScrollToTop from './components/layout/ScrollToTop';
-import { ToastContainer } from 'react-toastify';
+import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import ErrorBoundary from './components/ui/ErrorBoundary';
+import wsClient from './lib/wsClient';
 // Performance monitoring
 import performanceMonitor from './utils/performanceMonitor';
+
+// ── Global WS notification handler ────────────────────────────────────────────
+// Listens for backend-pushed 'notification' events (e.g. timesheet approved/rejected)
+// and shows them as toasts platform-wide without requiring page-specific code.
+function WsNotificationBridge() {
+  useEffect(() => {
+    const handleNotification = (data) => {
+      if (!data) return;
+      const { type, title, message } = data;
+
+      const toastConfig = {
+        position: 'top-right',
+        autoClose: 6000,
+        hideProgressBar: false,
+        pauseOnHover: true,
+        draggable: true,
+      };
+
+      const text = message || title || 'You have a new notification';
+
+      if (type === 'timesheet_approved') {
+        toast.success(text, toastConfig);
+      } else if (type === 'timesheet_rejected') {
+        toast.error(text, toastConfig);
+      } else {
+        toast.info(text, toastConfig);
+      }
+    };
+
+    wsClient.on('notification', handleNotification);
+    return () => wsClient.off('notification', handleNotification);
+  }, []);
+
+  return null;
+}
 
 const App = () => {
     useEffect(() => {
@@ -31,20 +67,22 @@ const App = () => {
                             <TimesheetProvider>
                                 <ErrorBoundary>
                                   <AppRouter />
+                                  <WsNotificationBridge />
                                 </ErrorBoundary>
                                 <ScrollToTop showAfter={500} position="right" />
                                 <ToastContainer
                                     position="top-right"
-                                    autoClose={5000}
+                                    autoClose={4000}
                                     hideProgressBar={false}
-                                    newestOnTop={false}
+                                    newestOnTop={true}
                                     closeOnClick
                                     rtl={false}
                                     pauseOnFocusLoss
                                     draggable
                                     pauseOnHover
-                                    theme="light"
+                                    theme="colored"
                                     style={{ zIndex: 9999 }}
+                                    limit={5}
                                 />
                             </TimesheetProvider>
                         </ClockSessionProvider>

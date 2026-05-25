@@ -25,6 +25,7 @@ import hrApiClient from '../../lib/hrApiClient';
 import { formatISODate } from '../../utils/weekStartUtils';
 import { getUserTimesheetsByWeek } from '../../services/timesheets';
 import { useLocationValidation } from '../../hooks/useLocationValidation';
+import { getCompanyPlugins } from '../../services/companyManagementService';
 
 // Optimized time display component
 const TimeDisplay = React.memo(({ time, isActive }) => {
@@ -248,14 +249,14 @@ const EmployeeDashboard = () => {
             if (!user?.uid || !user?.companyId) return;
 
             try {
-                const { getUserWeekContext, getWeekRangeForDate, formatISODate } = await import('../../services/timesheets');
+                const { getUserWeekContext, getWeekRange, formatISODate } = await import('../../services/timesheets');
 
                 // Get context to know current week start day
                 const { weekStartDay } = await getUserWeekContext(user.uid);
 
                 // Check Current Week
                 const now = new Date();
-                const weekRange = getWeekRangeForDate(now, weekStartDay || 'Monday');
+                const weekRange = getWeekRange(now, (weekStartDay || 'monday'));
                 const weekStartStr = formatISODate(weekRange.start);
 
                 // Trigger Self-Healing Fetch
@@ -362,7 +363,7 @@ const EmployeeDashboard = () => {
     // Now uses real-time context data
     // Also syncs when sessionDocs change (e.g., after timesheet edit updates Firestore)
     useEffect(() => {
-        const restoreSessionState = () => {
+        const restoreSessionState = async () => {
             try {
                 // IMPORTANT: Wait for context to finish loading before restoring state
                 // This prevents race condition where we set 'out' before sessions are loaded
@@ -374,30 +375,24 @@ const EmployeeDashboard = () => {
 
                 if (!user?.uid) return;
 
-                // Get open session from context
-                const openSession = getOpenSession();
+                // Get open session from context first
+                let openSession = getOpenSession();
+
+                // If the real-time session context does not yet include an open session,
+                // fall back to the backend active session endpoint.
+                if (!openSession) {
+                    openSession = await getMyActiveSession(user.uid);
+                }
 
                 if (openSession) {
-                    const startedAt = openSession.roundedStartedAt?.toDate ? openSession.roundedStartedAt.toDate() : (openSession.startedAt?.toDate ? openSession.startedAt.toDate() : new Date());
-                    const rawStartedAt = openSession.startedAt?.toDate ? openSession.startedAt.toDate() : new Date();
+                    const rawStartedAt = openSession.startedAt ? new Date(openSession.startedAt) : new Date();
 
-                    // Sync clock-in times from Firestore session data
-                    // This ensures updates from timesheet edits are reflected immediately
-                    setClockInTime(startedAt); // Display time (rounded)
-                    setRawClockInTime(rawStartedAt); // Raw time for calculations
+                    setClockInTime(rawStartedAt);
+                    setRawClockInTime(rawStartedAt);
                     setClockOutTime(null);
                     setRawClockOutTime(null);
-
-                    // CRITICAL: Sync break time from Firestore session data
                     setTotalBreakTime(openSession.breakSec || 0);
-
-                    // Check if currently on break
-                    if (openSession.breakStartTime) {
-                        setClockStatus('break');
-                        setBreakStartTime(openSession.breakStartTime.toDate ? openSession.breakStartTime.toDate() : new Date(openSession.breakStartTime));
-                    } else {
-                        setClockStatus('in');
-                    }
+                    setClockStatus('in');
                     return; // If there's an open session, don't check for completed sessions
                 }
 
@@ -408,8 +403,8 @@ const EmployeeDashboard = () => {
                 const sortedTodaySessions = todaySessions
                     .filter(s => s.status === 'closed')
                     .sort((a, b) => {
-                        const aTime = a.startedAt?.toDate ? a.startedAt.toDate() : new Date(0);
-                        const bTime = b.startedAt?.toDate ? b.startedAt.toDate() : new Date(0);
+                        const aTime = a.startedAt ? new Date(a.startedAt) : new Date(0);
+                        const bTime = b.startedAt ? new Date(b.startedAt) : new Date(0);
                         return bTime - aTime;
                     });
 
@@ -417,10 +412,10 @@ const EmployeeDashboard = () => {
                 // But set status to 'out' so user can clock in again (multiple sessions per day allowed)
                 if (sortedTodaySessions.length > 0) {
                     const lastSession = sortedTodaySessions[0];
-                    const clockInTime = lastSession.roundedStartedAt?.toDate ? lastSession.roundedStartedAt.toDate() : (lastSession.startedAt?.toDate ? lastSession.startedAt.toDate() : null);
-                    const rawClockInTime = lastSession.startedAt?.toDate ? lastSession.startedAt.toDate() : null;
-                    const clockOutTime = lastSession.roundedEndedAt?.toDate ? lastSession.roundedEndedAt.toDate() : (lastSession.endedAt?.toDate ? lastSession.endedAt.toDate() : null);
-                    const rawClockOutTime = lastSession.endedAt?.toDate ? lastSession.endedAt.toDate() : null;
+                    const clockInTime = lastSession.startedAt ? new Date(lastSession.startedAt) : null;
+                    const rawClockInTime = clockInTime;
+                    const clockOutTime = lastSession.endedAt ? new Date(lastSession.endedAt) : null;
+                    const rawClockOutTime = clockOutTime;
                     setClockInTime(clockInTime); // Display time (rounded)
                     setRawClockInTime(rawClockInTime); // Raw time for calculations
                     setClockOutTime(clockOutTime); // Display time (rounded)
@@ -441,6 +436,109 @@ const EmployeeDashboard = () => {
         };
         restoreSessionState();
     }, [user?.uid, isLoadingSessions, getOpenSession, getTodaySessions, isClockOperationInProgress, sessionDocs]); // Added sessionDocs to sync when Firestore data changes
+
+    // Error handling functions
+    const showErrorMessage = useCallback((message, duration = 5000) => {
+        setErrorMessage(message);
+        setTimeout(() => setErrorMessage(null), duration);
+    }, []);
+
+    const getErrorMessage = useCallback((error, operationType) => {
+        const baseMessages = {
+            clockIn: 'Failed to clock in',
+            clockOut: 'Failed to clock out',
+            startBreak: 'Failed to start break',
+            endBreak: 'Failed to end break'
+        };
+
+        const baseMessage = baseMessages[operationType] || 'Operation failed';
+
+        if (error.message?.includes('Clock already running') || error.message?.includes('Already clocked in')) {
+            return 'You are already clocked in. Please clock out first.';
+        }
+        if (error.message?.includes('No open clock session') || error.message?.includes('No active clock session')) {
+            return 'No active clock session found. Please clock in first.';
+        }
+        // Removed: Multiple sessions per day are now allowed, so this error should not occur
+        // if (error.message?.includes('already completed your work session') || error.message?.includes('Only one clock in/out session is allowed per day')) {
+        //     return 'Work session completed for today. You can clock in again tomorrow.';
+        // }
+        if (error.message?.includes('cannot clock in again until tomorrow')) {
+            return 'Already clocked out for today. You cannot clock in again until tomorrow.';
+        }
+        if (error.message?.includes('network') || error.code === 'unavailable') {
+            return `${baseMessage} due to network issues. Please check your connection and try again.`;
+        }
+
+        return error.message || `${baseMessage}. Please try again.`;
+    }, []);
+
+    const retryOperation = useCallback(async (operationFn, maxRetries = 3) => {
+        let lastError;
+
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            try {
+                setRetryCount(attempt);
+                if (attempt > 0) {
+                    // Exponential backoff: 1s, 2s, 4s
+                    await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt - 1) * 1000));
+                }
+
+                await operationFn();
+                setRetryCount(0);
+                return; // Success
+            } catch (error) {
+                lastError = error;
+                if (attempt < maxRetries) {
+                    // continue retrying
+                }
+            }
+        }
+
+        // All retries failed
+        setRetryCount(0);
+        throw lastError;
+    }, []);
+
+    const reconcileState = useCallback(async () => {
+        try {
+            if (!user?.id) return;
+
+            const session = await getMyActiveSession(user.id);
+
+            if (session && session.status === 'open') {
+                const startedAt = session.startedAt instanceof Date ? session.startedAt : new Date(session.startedAt);
+                
+                // Server says we're clocked in, update local state
+                if (clockStatus === 'out') {
+                    setClockInTime(startedAt);
+                    setRawClockInTime(startedAt);
+                    setClockOutTime(null);
+                    setRawClockOutTime(null);
+                    setClockStatus('in');
+                    showErrorMessage('Clock status synchronized with server.', 3000);
+                }
+            } else {
+                // Server says we're clocked out, update local state
+                if (clockStatus !== 'out') {
+                    setClockStatus('out');
+                    setClockInTime(null);
+                    setRawClockInTime(null);
+                    setClockOutTime(null);
+                    setRawClockOutTime(null);
+                    setBreakStartTime(null);
+                    showErrorMessage('Clock status synchronized with server.', 3000);
+                }
+            }
+        } catch (error) {
+            console.error('Failed to reconcile state:', error);
+        }
+    }, [user?.id, clockStatus, showErrorMessage]);
+
+    useEffect(() => {
+        if (!user?.uid) return;
+        reconcileState();
+    }, [user?.uid, reconcileState]);
 
     // Initial load of weekly hours (recent entries come from context)
     useEffect(() => {
@@ -1095,29 +1193,23 @@ const EmployeeDashboard = () => {
         if (e && e.stopPropagation) e.stopPropagation();
 
         await executeOperation('startBreak', async () => {
-            // Make UI instant, persist in background (same strategy as clock in/out).
             startOperation('startBreak');
 
             const currentTime = new Date();
+            const openSession = getOpenSession?.();
+            const sessionId = openSession?.sessionId || null;
+
+            const breakResult = await startBreak({ userId: user.uid, sessionId });
+            const breakStartedAt = breakResult.breakStartTime ? new Date(breakResult.breakStartTime) : currentTime;
+
             setOptimisticClockState({
                 clockStatus: 'break',
-                breakStartTime: currentTime
+                breakStartTime: breakStartedAt
             });
-            setBreakStartTime(currentTime);
+            setBreakStartTime(breakStartedAt);
             setClockStatus('break');
 
-            startBreak({ userId: user.uid })
-                .catch((error) => {
-                    // Roll back optimistic state on failure
-                    revertOptimisticState();
-                    setBreakStartTime(null);
-                    setClockStatus('in');
-                    console.error('Failed to start break:', error);
-                    showErrorMessage(error.message || 'Failed to start break. Please try again.', 3000);
-                })
-                .finally(() => {
-                    endOperation();
-                });
+            endOperation();
         });
     };
 
@@ -1126,7 +1218,6 @@ const EmployeeDashboard = () => {
         if (e && e.stopPropagation) e.stopPropagation();
 
         await executeOperation('endBreak', async () => {
-            // Make UI instant, persist in background (same strategy as clock in/out).
             startOperation('endBreak');
 
             const previousBreakStartTime = breakStartTime;
@@ -1146,25 +1237,26 @@ const EmployeeDashboard = () => {
             setBreakStartTime(null);
             setClockStatus('in');
 
-            endBreak({ userId: user.uid })
-                .then((result) => {
-                    // Use authoritative total from backend when available.
-                    if (Number.isFinite(result?.totalBreakSec)) {
-                        setTotalBreakTime(result.totalBreakSec);
-                    }
-                })
-                .catch((error) => {
-                    // Roll back optimistic state on failure
-                    revertOptimisticState();
-                    setTotalBreakTime(previousTotalBreakTime);
-                    setBreakStartTime(previousBreakStartTime || null);
-                    setClockStatus('break');
-                    console.error('Failed to end break:', error);
-                    showErrorMessage(error.message || 'Failed to end break. Please try again.', 3000);
-                })
-                .finally(() => {
-                    endOperation();
+            try {
+                const result = await endBreak({
+                    userId: user.uid,
+                    sessionId: getOpenSession?.()?.sessionId || null,
+                    breakStartTime: previousBreakStartTime ? previousBreakStartTime.toISOString() : null,
                 });
+
+                if (Number.isFinite(result?.totalBreakSec)) {
+                    setTotalBreakTime(result.totalBreakSec);
+                }
+            } catch (error) {
+                revertOptimisticState();
+                setTotalBreakTime(previousTotalBreakTime);
+                setBreakStartTime(previousBreakStartTime || null);
+                setClockStatus('break');
+                console.error('Failed to end break:', error);
+                showErrorMessage(error.message || 'Failed to end break. Please try again.', 3000);
+            } finally {
+                endOperation();
+            }
         });
     };
 
@@ -1246,110 +1338,13 @@ const EmployeeDashboard = () => {
     }, [isClockOperationInProgress, optimisticState?.clockStatus, clockStatus]);
 
     // Error handling functions
-    const showErrorMessage = useCallback((message, duration = 5000) => {
-        setErrorMessage(message);
-        setTimeout(() => setErrorMessage(null), duration);
-    }, []);
-
-    const getErrorMessage = useCallback((error, operationType) => {
-        const baseMessages = {
-            clockIn: 'Failed to clock in',
-            clockOut: 'Failed to clock out',
-            startBreak: 'Failed to start break',
-            endBreak: 'Failed to end break'
-        };
-
-        const baseMessage = baseMessages[operationType] || 'Operation failed';
-
-        if (error.message?.includes('Clock already running') || error.message?.includes('Already clocked in')) {
-            return 'You are already clocked in. Please clock out first.';
-        }
-        if (error.message?.includes('No open clock session') || error.message?.includes('No active clock session')) {
-            return 'No active clock session found. Please clock in first.';
-        }
-        // Removed: Multiple sessions per day are now allowed, so this error should not occur
-        // if (error.message?.includes('already completed your work session') || error.message?.includes('Only one clock in/out session is allowed per day')) {
-        //     return 'Work session completed for today. You can clock in again tomorrow.';
-        // }
-        if (error.message?.includes('cannot clock in again until tomorrow')) {
-            return 'Already clocked out for today. You cannot clock in again until tomorrow.';
-        }
-        if (error.message?.includes('network') || error.code === 'unavailable') {
-            return `${baseMessage} due to network issues. Please check your connection and try again.`;
-        }
-
-        return error.message || `${baseMessage}. Please try again.`;
-    }, []);
-
-    const retryOperation = useCallback(async (operationFn, maxRetries = 3) => {
-        let lastError;
-
-        for (let attempt = 0; attempt <= maxRetries; attempt++) {
-            try {
-                setRetryCount(attempt);
-                if (attempt > 0) {
-                    // Exponential backoff: 1s, 2s, 4s
-                    await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt - 1) * 1000));
-                }
-
-                await operationFn();
-                setRetryCount(0);
-                return; // Success
-            } catch (error) {
-                lastError = error;
-                if (attempt < maxRetries) {
-                }
-            }
-        }
-
-        // All retries failed
-        setRetryCount(0);
-        throw lastError;
-    }, []);
-
-    // State reconciliation function
-    const reconcileState = useCallback(async () => {
-        try {
-            if (!user?.id) return;
-
-            const session = await getMyActiveSession(user.id);
-
-            if (session && session.status === 'open') {
-                const startedAt = session.startedAt instanceof Date ? session.startedAt : new Date(session.startedAt);
-                
-                // Server says we're clocked in, update local state
-                if (clockStatus === 'out') {
-                    setClockInTime(startedAt); 
-                    setRawClockInTime(startedAt);
-                    setClockOutTime(null);
-                    setRawClockOutTime(null);
-                    setClockStatus('in');
-                    showErrorMessage('Clock status synchronized with server.', 3000);
-                }
-            } else {
-                // Server says we're clocked out, update local state
-                if (clockStatus !== 'out') {
-                    setClockStatus('out');
-                    setClockInTime(null);
-                    setRawClockInTime(null);
-                    setClockOutTime(null);
-                    setRawClockOutTime(null);
-                    setBreakStartTime(null);
-                    showErrorMessage('Clock status synchronized with server.', 3000);
-                }
-            }
-        } catch (error) {
-            console.error('Failed to reconcile state:', error);
-        }
-    }, [user?.id, clockStatus, showErrorMessage]);
-
     const handleRefreshClockData = useCallback(async () => {
         if (isRefreshing) return;
 
         setIsRefreshing(true);
 
         try {
-            if (!user?.id) return;
+            if (!user?.uid) return;
 
             const session = await getMyActiveSession(user.id);
 
@@ -1395,7 +1390,7 @@ const EmployeeDashboard = () => {
         } finally {
             setIsRefreshing(false);
         }
-    }, [isRefreshing, user?.id, clockStatus, loadWeeklyHours]);
+    }, [isRefreshing, user?.uid, clockStatus, loadWeeklyHours]);
 
 
     // Debouncing and conflict prevention

@@ -1,3 +1,4 @@
+// @refresh reset
 /**
  * Clock Session Context Provider
  * Provides real-time clock session data using Firestore listeners
@@ -104,19 +105,22 @@ export const ClockSessionProvider = ({ children }) => {
 
         fetchData();
 
-        // WebSocket listener for real-time updates
+        // WebSocket listener for real-time clock updates
+        // Backend broadcasts 'clock:in' and 'clock:out' — match those event names
         const handleWsUpdate = (data) => {
-            if (data.employeeId === user.uid || data.userId === user.uid) {
+            if (data.employeeId === user.uid || data.employeeId === user.userId || data.userId === user.uid) {
                 fetchData();
             }
         };
 
-        wsClient.on('time-entry:updated', handleWsUpdate);
-        wsClient.on('time-entry:created', handleWsUpdate);
+        wsClient.on('clock:in', handleWsUpdate);
+        wsClient.on('clock:out', handleWsUpdate);
+        wsClient.on('timesheet:updated', handleWsUpdate);
 
         return () => {
-            wsClient.off('time-entry:updated', handleWsUpdate);
-            wsClient.off('time-entry:created', handleWsUpdate);
+            wsClient.off('clock:in', handleWsUpdate);
+            wsClient.off('clock:out', handleWsUpdate);
+            wsClient.off('timesheet:updated', handleWsUpdate);
         };
     }, [user?.uid]);
 

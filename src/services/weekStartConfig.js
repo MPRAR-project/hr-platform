@@ -1,5 +1,6 @@
-import hrApiClient from '../lib/hrApiClient';
+import hrApiClient, { tokenStore } from '../lib/hrApiClient';
 import { normalizeWeekStartDay, DEFAULT_WEEK_START_DAY } from '../utils/weekStartUtils';
+import { refreshAccessToken } from './auth';
 
 const companyCache = new Map();
 
@@ -23,9 +24,19 @@ export async function getCompanyWeekStartDay(companyPathOrId) {
     }
 
     try {
+        // Ensure we have an access token — attempt a refresh if missing
+        if (!tokenStore.getAccess()) {
+            await refreshAccessToken();
+        }
+
+        // If still no token, avoid calling the API and return default
+        if (!tokenStore.getAccess()) {
+            return DEFAULT_WEEK_START_DAY;
+        }
+
         // Fetch company profile from REST API
         const { data } = await hrApiClient.get('/hr/company');
-        
+
         const weekStart = normalizeWeekStartDay(data.weekStartDay || DEFAULT_WEEK_START_DAY);
         companyCache.set(companyId, weekStart);
         return weekStart;
