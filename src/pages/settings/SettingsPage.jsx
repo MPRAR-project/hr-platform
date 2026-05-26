@@ -1,4 +1,4 @@
-import { ArrowRight, ChevronDown, Edit2, Loader2, MapPin, Navigation, Plus, Trash2, X, Building, Image, Upload, Calendar } from 'lucide-react';
+import { ArrowRight, ChevronDown, ChevronLeft, ChevronRight, Edit2, Loader2, MapPin, Navigation, Plus, Search, Trash2, Users, Wifi, X, Upload } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'react-toastify';
 import Header from '../../components/layout/Header';
@@ -26,39 +26,40 @@ import BillingSubscriptionsPage from '../payments/BillingSubscriptionPage';
 const SettingsPage = () => {
   const [companyInfo, setCompanyInfo] = useState({
     companyName: '',
-    payrollEmail: ''
+    payrollEmail: '',
+    industry: '',
+    website: '',
+    phone: '',
+    address: '',
+    contactEmail: '',
   });
+  const [isLoading, setIsLoading] = useState(true);
   const { user, refreshWeekStartDay } = useAuth();
   const [activeTab, setActiveTab] = useState('general');
   const [isSaving, setIsSaving] = useState(false);
   const [isSavingLocation, setIsSavingLocation] = useState(false);
   const [loadError, setLoadError] = useState(null);
+  const [fieldErrors, setFieldErrors] = useState({});
   const [saveError, setSaveError] = useState(null);
   const [saveSuccess, setSaveSuccess] = useState(null);
 
   // Company Logo State
   const [companyLogoURL, setCompanyLogoURL] = useState(null);
-  const [selectedLogoFile, setSelectedLogoFile] = useState(null);
-  const [logoPreview, setLogoPreview] = useState(null);
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
 
 
 
-  // For site managers and senior managers, default to general settings now that they both have access
-  useEffect(() => {
-    if (['siteManager', 'seniorManager'].includes(user?.role) && activeTab === 'general') {
-      setActiveTab('general');
-    }
-  }, [user?.role, activeTab]);
 
   useEffect(() => {
     const loadCompany = async () => {
       try {
         setLoadError(null);
+        setIsLoading(true);
 
         const companyPath = user?.companyId || '';
         const companyId = companyPath.includes('/') ? companyPath.split('/')[1] : companyPath;
         if (!companyId) {
+          setIsLoading(false);
           return;
         }
 
@@ -69,7 +70,12 @@ const SettingsPage = () => {
             const c = company.company || company;
           setCompanyInfo({
             companyName: c.name || '',
-            payrollEmail: c.payrollEmail || ''
+            payrollEmail: c.payrollEmail || '',
+            industry: c.industry || '',
+            website: c.website || '',
+            phone: c.phone || '',
+            address: c.address || '',
+            contactEmail: c.contactEmail || '',
           });
 
           if (c.workSchedule && typeof c.workSchedule === 'object') {
@@ -106,6 +112,7 @@ const SettingsPage = () => {
 
           // Load locations
           setLocations(c.locations || []);
+          setRemoteEmployeeIds(Array.isArray(c.remoteEmployeeIds) ? c.remoteEmployeeIds : []);
 
           // Load auto clock-out config
           setAutoClockOutConfig({
@@ -120,8 +127,10 @@ const SettingsPage = () => {
           setPlugins(c.plugins || {});
         }
       } catch (e) {
-        setLoadError('Failed to load company info');
+        setLoadError('Failed to load company info. Please refresh the page.');
         console.error('Error loading company data:', e);
+      } finally {
+        setIsLoading(false);
       }
     };
     loadCompany();
@@ -160,14 +169,13 @@ const SettingsPage = () => {
     address: '',
     latitude: '',
     longitude: '',
-    radius: '',
-    radiusType: 'preset' // 'preset' or 'custom'
+    radius: '',      // number string when custom, preset string when preset
+    radiusType: 'preset', // 'preset' | 'custom'
+    customUnit: 'm'  // 'm' | 'km' — only used when radiusType === 'custom'
   });
   const [isGettingLocation, setIsGettingLocation] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [locationToDelete, setLocationToDelete] = useState(null);
-
-
 
   // Load Work Locations
 
@@ -210,6 +218,29 @@ const SettingsPage = () => {
   };
 
   const handleSaveChanges = async () => {
+    // Validate required fields
+    const errors = {};
+    if (!companyInfo.companyName.trim()) {
+      errors.companyName = 'Company name is required';
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (companyInfo.payrollEmail && !emailRegex.test(companyInfo.payrollEmail)) {
+      errors.payrollEmail = 'Please enter a valid payroll email address';
+    }
+    if (companyInfo.contactEmail && !emailRegex.test(companyInfo.contactEmail)) {
+      errors.contactEmail = 'Please enter a valid contact email address';
+    }
+    const perDayHoursNum = Number(timesheetSettings.perDayHours);
+    if (!Number.isFinite(perDayHoursNum) || perDayHoursNum < 0 || perDayHoursNum > 24) {
+      errors.perDayHours = 'Hours per day must be between 0 and 24';
+    }
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      toast.error('Please fix the highlighted errors before saving');
+      return;
+    }
+    setFieldErrors({});
+
     try {
       setIsSaving(true);
       setSaveError(null);
@@ -221,9 +252,15 @@ const SettingsPage = () => {
         return;
       }
       const lunchBreakMinutes = autoLunchSettings.lunchBreakMinutes;
+      const clampedPerDayHours = Math.max(0, Math.min(24, perDayHoursNum));
       await updateCompanyProfile(companyId, {
-        name: companyInfo.companyName || '',
-        payrollEmail: companyInfo.payrollEmail || '',
+        name: companyInfo.companyName.trim(),
+        payrollEmail: companyInfo.payrollEmail.trim() || null,
+        industry: companyInfo.industry.trim() || null,
+        website: companyInfo.website.trim() || null,
+        phone: companyInfo.phone.trim() || null,
+        address: companyInfo.address.trim() || null,
+        contactEmail: companyInfo.contactEmail.trim() || null,
         workSchedule: workSchedule,
         workingDays: timesheetSettings.workingDays,
         roundingRules,
@@ -239,7 +276,7 @@ const SettingsPage = () => {
           dayShiftTime: autoClockOutConfig.dayShiftTime || '23:59',
           nightShiftTime: autoClockOutConfig.nightShiftTime || '11:59'
         },
-        perDayHours: timesheetSettings.perDayHours || '8',
+        perDayHours: clampedPerDayHours,
         plugins: plugins,
         // locations are now saved immediately, so we don't need to save them here
       });
@@ -255,11 +292,10 @@ const SettingsPage = () => {
         localStorage.setItem('mprar_weekStart_updated', String(Date.now()));
       } catch (_) { }
 
-      toast.success('Changes saved successfully');
+      toast.success('Settings saved successfully');
     } catch (err) {
       console.error(err);
-      //  setSaveError('Failed to save changes');
-      toast.error('Failed to save changes');
+      toast.error(err?.response?.data?.error || 'Failed to save changes. Please try again.');
     } finally {
       setIsSaving(false);
     }
@@ -269,7 +305,7 @@ const SettingsPage = () => {
 
   const handleAddLocation = () => {
     setEditingLocation(null);
-    setLocationForm({ name: '', address: '', latitude: '', longitude: '', radius: '', radiusType: 'preset' });
+    setLocationForm({ name: '', address: '', latitude: '', longitude: '', radius: '', radiusType: 'preset', customUnit: 'm' });
     setShowLocationModal(true);
   };
 
@@ -277,13 +313,25 @@ const SettingsPage = () => {
     setEditingLocation(location);
     const existingRadius = location.radius || '';
     const isPreset = radiusPresetOptions.includes(existingRadius);
+    let customValue = '';
+    let customUnit = 'm';
+    if (existingRadius && !isPreset) {
+      const match = existingRadius.match(/^([\d.]+)\s*(km|m)$/i);
+      if (match) {
+        customValue = match[1];
+        customUnit = match[2].toLowerCase();
+      } else {
+        customValue = existingRadius;
+      }
+    }
     setLocationForm({
       name: location.name || '',
       address: location.address || '',
       latitude: location.latitude?.toString() || '',
       longitude: location.longitude?.toString() || '',
-      radius: existingRadius,
-      radiusType: isPreset ? 'preset' : (existingRadius ? 'custom' : 'preset')
+      radius: isPreset ? existingRadius : customValue,
+      radiusType: isPreset ? 'preset' : (existingRadius ? 'custom' : 'preset'),
+      customUnit
     });
     setShowLocationModal(true);
   };
@@ -311,15 +359,29 @@ const SettingsPage = () => {
 
     // Determine final radius value
     let finalRadius = null;
-    if (locationForm.radiusType === 'none') {
-      finalRadius = null;
-    } else if (locationForm.radiusType === 'preset' || locationForm.radiusType === 'custom') {
-      finalRadius = locationForm.radius.trim() || null;
+    if (locationForm.radiusType === 'preset') {
+      if (!locationForm.radius.trim()) {
+        toast.error('Please select a preset radius.');
+        return;
+      }
+      finalRadius = locationForm.radius.trim();
+    } else if (locationForm.radiusType === 'custom') {
+      const rawNum = locationForm.radius.trim();
+      if (!rawNum) {
+        toast.error('Please enter a radius value.');
+        return;
+      }
+      const num = parseFloat(rawNum);
+      if (isNaN(num) || num <= 0) {
+        toast.error('Radius must be a positive number (e.g., 500 meters or 1.5 km).');
+        return;
+      }
+      finalRadius = `${num}${locationForm.customUnit}`;
     }
 
     // If radius is provided, coordinates are required
     if (finalRadius && (latitude === null || longitude === null)) {
-      toast.error('Latitude and longitude are required when radius is set.');
+      toast.error('Latitude and longitude are required when a radius is set.');
       return;
     }
 
@@ -367,7 +429,7 @@ const SettingsPage = () => {
 
       setShowLocationModal(false);
       setEditingLocation(null);
-      setLocationForm({ name: '', address: '', latitude: '', longitude: '', radius: '' });
+      setLocationForm({ name: '', address: '', latitude: '', longitude: '', radius: '', radiusType: 'preset', customUnit: 'm' });
       toast.success(editingLocation ? 'Location updated successfully' : 'Location added successfully');
     } catch (error) {
       console.error('Error saving location:', error);
@@ -383,11 +445,10 @@ const SettingsPage = () => {
     }
     setShowLocationModal(false);
     setEditingLocation(null);
-    setLocationForm({ name: '', address: '', latitude: '', longitude: '', radius: '', radiusType: 'preset' });
+    setLocationForm({ name: '', address: '', latitude: '', longitude: '', radius: '', radiusType: 'preset', customUnit: 'm' });
   };
 
   const handleDeleteClick = (locationId) => {
-    const location = locations.find(loc => loc.id === locationId);
     setLocationToDelete(locationId);
     setShowDeleteModal(true);
   };
@@ -433,17 +494,96 @@ const SettingsPage = () => {
     setIsGettingLocation(true);
     try {
       const location = await getUserCurrentLocation();
-      setLocationForm({
-        ...locationForm,
+      setLocationForm(prev => ({
+        ...prev,
         latitude: location.latitude.toString(),
         longitude: location.longitude.toString()
-      });
+      }));
       toast.success('Location captured successfully!');
     } catch (error) {
       console.error('Error getting current location:', error);
       toast.error(error.message || 'Failed to get your current location. Please enter coordinates manually.');
     } finally {
       setIsGettingLocation(false);
+    }
+  };
+
+  const getCompanyId = () => {
+    const companyPath = user?.companyId || '';
+    return companyPath.includes('/') ? companyPath.split('/')[1] : companyPath;
+  };
+
+  // Toggle a single employee in the pending selection
+  const togglePendingEmployee = (empId) => {
+    setPendingSelectionIds(prev => {
+      const next = new Set(prev);
+      next.has(empId) ? next.delete(empId) : next.add(empId);
+      return next;
+    });
+  };
+
+  // Toggle-select all employees on the current picker page
+  const toggleSelectCurrentPage = () => {
+    const allSelected = pagedAvailableEmployees.length > 0 &&
+      pagedAvailableEmployees.every(e => pendingSelectionIds.has(e.id));
+    setPendingSelectionIds(prev => {
+      const next = new Set(prev);
+      if (allSelected) {
+        pagedAvailableEmployees.forEach(e => next.delete(e.id));
+      } else {
+        pagedAvailableEmployees.forEach(e => next.add(e.id));
+      }
+      return next;
+    });
+  };
+
+  // Batch-add all pending selections to remote work
+  const handleAddSelectedRemoteEmployees = async () => {
+    if (pendingSelectionIds.size === 0) return;
+    const idsToAdd = [...pendingSelectionIds];
+    const newIds = [...new Set([...remoteEmployeeIds, ...idsToAdd])].sort();
+    const snapshot = [...remoteEmployeeIds];
+    setRemoteEmployeeIds(newIds);
+    setPendingSelectionIds(new Set());
+    setEmployeeBrowsePage(0);
+    setShowRemoteDropdown(false);
+
+    const companyId = getCompanyId();
+    if (!companyId) return;
+    setIsSavingRemote(true);
+    try {
+      await updateCompanyProfile(companyId, { remoteEmployeeIds: newIds });
+      await invalidateCompanyCache(companyId);
+      toast.success(`${idsToAdd.length} employee${idsToAdd.length !== 1 ? 's' : ''} added to remote work`);
+    } catch (err) {
+      setRemoteEmployeeIds(snapshot);
+      setShowRemoteDropdown(true);
+      toast.error('Failed to add employees. Please try again.');
+    } finally {
+      setIsSavingRemote(false);
+    }
+  };
+
+  const handleRemoveRemoteEmployee = async (employeeId) => {
+    const newIds = remoteEmployeeIds.filter(id => id !== employeeId);
+    setRemoteEmployeeIds(newIds);
+    // If removal empties the current page, jump back one page
+    const newTotal = Math.max(1, Math.ceil(newIds.length / REMOTE_PAGE_SIZE));
+    setRemoteListPage(p => Math.min(p, newTotal - 1));
+
+    const companyId = getCompanyId();
+    if (!companyId) return;
+    setIsSavingRemote(true);
+    try {
+      await updateCompanyProfile(companyId, { remoteEmployeeIds: newIds });
+      await invalidateCompanyCache(companyId);
+      toast.success('Employee removed from remote work');
+    } catch (err) {
+      // Rollback on failure
+      setRemoteEmployeeIds(remoteEmployeeIds);
+      toast.error('Failed to update remote work employees. Please try again.');
+    } finally {
+      setIsSavingRemote(false);
     }
   };
 
@@ -463,6 +603,91 @@ const SettingsPage = () => {
 
   // Logo Upload Handlers
   const [isDraggingLogo, setIsDraggingLogo] = useState(false);
+
+  // ── Remote Work Employees ── all new hooks after original isDraggingLogo hook
+  const [remoteEmployeeIds, setRemoteEmployeeIds] = useState([]);
+  const [allEmployees, setAllEmployees] = useState([]);
+  const [isLoadingEmployees, setIsLoadingEmployees] = useState(false);
+  const [isSavingRemote, setIsSavingRemote] = useState(false);
+  const [remoteSearchQuery, setRemoteSearchQuery] = useState('');
+  const [showRemoteDropdown, setShowRemoteDropdown] = useState(false);
+  const [employeeBrowsePage, setEmployeeBrowsePage] = useState(0);
+  const [remoteListPage, setRemoteListPage] = useState(0);
+
+  // Close remote-work dropdown on outside click
+  useEffect(() => {
+    if (!showRemoteDropdown) return;
+    const handler = () => { setShowRemoteDropdown(false); setPendingSelectionIds(new Set()); };
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
+  }, [showRemoteDropdown]);
+
+  // Load all company employees for remote-work assignment
+  useEffect(() => {
+    if (!user?.companyId) return;
+    const fetchEmployees = async () => {
+      setIsLoadingEmployees(true);
+      try {
+        const { data } = await hrApiClient.get('/hr/employees?limit=500');
+        setAllEmployees(data.employees || []);
+      } catch (err) {
+        console.error('Failed to load employees:', err);
+      } finally {
+        setIsLoadingEmployees(false);
+      }
+    };
+    fetchEmployees();
+  }, [user?.companyId]);
+
+  const REMOTE_PAGE_SIZE = 6;
+
+  const remoteEmployeeIdSet = useMemo(() => new Set(remoteEmployeeIds), [remoteEmployeeIds]);
+
+  // Sorted employees not yet remote-authorised, filtered by search query
+  const filteredAvailableEmployees = useMemo(() => {
+    const q = remoteSearchQuery.trim().toLowerCase();
+    return allEmployees
+      .filter(emp => !remoteEmployeeIdSet.has(emp.id))
+      .filter(emp => {
+        if (!q) return true;
+        return (
+          `${emp.firstName ?? ''} ${emp.lastName ?? ''}`.toLowerCase().includes(q) ||
+          (emp.email ?? '').toLowerCase().includes(q)
+        );
+      })
+      .sort((a, b) =>
+        `${a.firstName ?? ''} ${a.lastName ?? ''}`.localeCompare(`${b.firstName ?? ''} ${b.lastName ?? ''}`)
+      );
+  }, [allEmployees, remoteEmployeeIdSet, remoteSearchQuery]);
+
+  const totalAvailablePages = useMemo(
+    () => Math.max(1, Math.ceil(filteredAvailableEmployees.length / REMOTE_PAGE_SIZE)),
+    [filteredAvailableEmployees.length]
+  );
+
+  const pagedAvailableEmployees = useMemo(
+    () => filteredAvailableEmployees.slice(
+      employeeBrowsePage * REMOTE_PAGE_SIZE,
+      (employeeBrowsePage + 1) * REMOTE_PAGE_SIZE
+    ),
+    [filteredAvailableEmployees, employeeBrowsePage]
+  );
+
+  const remoteEmployeeDetails = useMemo(
+    () => remoteEmployeeIds
+      .map(id => allEmployees.find(e => e.id === id))
+      .filter(Boolean)
+      .sort((a, b) => `${a.firstName ?? ''} ${a.lastName ?? ''}`.localeCompare(`${b.firstName ?? ''} ${b.lastName ?? ''}`)),
+    [remoteEmployeeIds, allEmployees]
+  );
+
+  const totalRemotePages = useMemo(
+    () => Math.max(1, Math.ceil(remoteEmployeeDetails.length / REMOTE_PAGE_SIZE)),
+    [remoteEmployeeDetails.length]
+  );
+
+  // IDs checked in the picker but not yet saved
+  const [pendingSelectionIds, setPendingSelectionIds] = useState(() => new Set());
 
   const processLogoFile = async (file) => {
     if (!file) return;
@@ -653,6 +878,30 @@ const SettingsPage = () => {
             </button> */}
           </div>
 
+          {/* Loading skeleton for General Settings */}
+          {activeTab === 'general' && isLoading && (
+            <div className="space-y-6 animate-pulse">
+              <div className="flex justify-end"><div className="h-12 w-48 bg-gray-200 rounded-lg" /></div>
+              <div className="bg-white rounded-base p-6 shadow-lg space-y-6">
+                <div className="h-7 w-56 bg-gray-200 rounded" />
+                <div className="h-24 w-40 bg-gray-100 rounded-lg" />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {[1,2,3,4,5,6].map(i => <div key={i} className="h-12 bg-gray-100 rounded-lg" />)}
+                  <div className="md:col-span-2 h-12 bg-gray-100 rounded-lg" />
+                </div>
+              </div>
+              <div className="bg-white rounded-base p-6 shadow-lg space-y-4">
+                <div className="h-7 w-48 bg-gray-200 rounded" />
+                {[1,2,3,4].map(i => <div key={i} className="h-12 bg-gray-100 rounded-lg" />)}
+              </div>
+              <div className="bg-white rounded-base p-6 shadow-lg space-y-4">
+                <div className="h-7 w-56 bg-gray-200 rounded" />
+                <div className="h-12 bg-gray-100 rounded-lg" />
+                {[1,2].map(i => <div key={i} className="h-14 bg-gray-100 rounded-lg" />)}
+              </div>
+            </div>
+          )}
+
           {activeTab === 'clients' ? (
             <div className="h-[calc(100vh-200px)]">
               <ClientsPage isEmbedded={true} />
@@ -667,7 +916,7 @@ const SettingsPage = () => {
             </div>
           ) : activeTab === 'seats' ? (
             <SeatSettingsTab />
-          ) : (
+          ) : isLoading ? null : (
             <>
               {/* Save Changes Button */}
               <div className="flex justify-end">
@@ -682,7 +931,17 @@ const SettingsPage = () => {
                   </div>
                 </button>
               </div>
-              {loadError && <p className="text-sm text-red-500">{loadError}</p>}
+              {loadError && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center justify-between">
+                  <p className="text-sm text-red-600">{loadError}</p>
+                  <button
+                    onClick={() => window.location.reload()}
+                    className="text-sm font-medium text-red-700 underline hover:no-underline ml-4 flex-shrink-0"
+                  >
+                    Reload page
+                  </button>
+                </div>
+              )}
               {saveError && <p className="text-sm text-red-500">{saveError}</p>}
               {saveSuccess && <p className="text-sm text-green-600">{saveSuccess}</p>}
 
@@ -764,19 +1023,85 @@ const SettingsPage = () => {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Company Name */}
                   <div>
                     <label className="text-md font-medium text-text-primary mb-3 block">
-                      Company Name
+                      Company Name <span className="text-red-500">*</span>
                     </label>
                     <input
                       type="text"
                       value={companyInfo.companyName}
-                      onChange={(e) => setCompanyInfo({ ...companyInfo, companyName: e.target.value })}
-                      placeholder="Company Name"
-                      className="w-full h-12 px-4 border border-border-secondary rounded-lg text-md text-text-secondary placeholder:text-text-secondary focus:outline-none focus:border-border-accent-purple"
+                      onChange={(e) => {
+                        setCompanyInfo({ ...companyInfo, companyName: e.target.value });
+                        if (fieldErrors.companyName) setFieldErrors(prev => ({ ...prev, companyName: undefined }));
+                      }}
+                      placeholder="e.g., Apex Corporation"
+                      className={`w-full h-12 px-4 border rounded-lg text-md text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-border-accent-purple ${fieldErrors.companyName ? 'border-red-400 bg-red-50' : 'border-border-secondary'}`}
+                    />
+                    {fieldErrors.companyName && <p className="text-xs text-red-500 mt-1">{fieldErrors.companyName}</p>}
+                  </div>
+
+                  {/* Industry */}
+                  <div>
+                    <label className="text-md font-medium text-text-primary mb-3 block">
+                      Industry
+                    </label>
+                    <input
+                      type="text"
+                      value={companyInfo.industry}
+                      onChange={(e) => setCompanyInfo({ ...companyInfo, industry: e.target.value })}
+                      placeholder="e.g., Professional Services"
+                      className="w-full h-12 px-4 border border-border-secondary rounded-lg text-md text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-border-accent-purple"
                     />
                   </div>
 
+                  {/* Website */}
+                  <div>
+                    <label className="text-md font-medium text-text-primary mb-3 block">
+                      Website
+                    </label>
+                    <input
+                      type="url"
+                      value={companyInfo.website}
+                      onChange={(e) => setCompanyInfo({ ...companyInfo, website: e.target.value })}
+                      placeholder="https://www.yourcompany.com"
+                      className="w-full h-12 px-4 border border-border-secondary rounded-lg text-md text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-border-accent-purple"
+                    />
+                  </div>
+
+                  {/* Phone */}
+                  <div>
+                    <label className="text-md font-medium text-text-primary mb-3 block">
+                      Phone Number
+                    </label>
+                    <input
+                      type="tel"
+                      value={companyInfo.phone}
+                      onChange={(e) => setCompanyInfo({ ...companyInfo, phone: e.target.value })}
+                      placeholder="e.g., +44 20 7946 0958"
+                      className="w-full h-12 px-4 border border-border-secondary rounded-lg text-md text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-border-accent-purple"
+                    />
+                  </div>
+
+                  {/* Contact Email — Locked & Disabled */}
+                  <div>
+                    <label className="text-md font-medium text-text-primary mb-3 block">
+                      Contact Email
+                    </label>
+                    <input
+                      type="email"
+                      value={companyInfo.contactEmail}
+                      disabled
+                      placeholder="contact@company.com"
+                      className="w-full h-12 px-4 border border-border-secondary rounded-lg text-md bg-gray-50 text-gray-400 cursor-not-allowed italic focus:outline-none"
+                    />
+                    <p className="text-xs text-green-600 mt-1.5 flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                      Email is verified and locked for security.
+                    </p>
+                  </div>
+
+                  {/* Payroll Email */}
                   <div>
                     <label className="text-md font-medium text-text-primary mb-3 block">
                       Payroll Email
@@ -784,9 +1109,27 @@ const SettingsPage = () => {
                     <input
                       type="email"
                       value={companyInfo.payrollEmail}
-                      onChange={(e) => setCompanyInfo({ ...companyInfo, payrollEmail: e.target.value })}
+                      onChange={(e) => {
+                        setCompanyInfo({ ...companyInfo, payrollEmail: e.target.value });
+                        if (fieldErrors.payrollEmail) setFieldErrors(prev => ({ ...prev, payrollEmail: undefined }));
+                      }}
                       placeholder="payroll@company.com"
-                      className="w-full h-12 px-4 border border-border-secondary rounded-lg text-md text-text-secondary placeholder:text-text-secondary focus:outline-none focus:border-border-accent-purple"
+                      className={`w-full h-12 px-4 border rounded-lg text-md text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-border-accent-purple ${fieldErrors.payrollEmail ? 'border-red-400 bg-red-50' : 'border-border-secondary'}`}
+                    />
+                    {fieldErrors.payrollEmail && <p className="text-xs text-red-500 mt-1">{fieldErrors.payrollEmail}</p>}
+                  </div>
+
+                  {/* Address — full width */}
+                  <div className="md:col-span-2">
+                    <label className="text-md font-medium text-text-primary mb-3 block">
+                      Address
+                    </label>
+                    <input
+                      type="text"
+                      value={companyInfo.address}
+                      onChange={(e) => setCompanyInfo({ ...companyInfo, address: e.target.value })}
+                      placeholder="e.g., 1 Business Park, Canary Wharf, London, E14 5AB"
+                      className="w-full h-12 px-4 border border-border-secondary rounded-lg text-md text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-border-accent-purple"
                     />
                   </div>
                 </div>
@@ -812,15 +1155,20 @@ const SettingsPage = () => {
                       <input
                         type="number"
                         value={timesheetSettings.perDayHours}
-                        onChange={(e) => setTimesheetSettings({ ...timesheetSettings, perDayHours: e.target.value })}
+                        onChange={(e) => {
+                          setTimesheetSettings({ ...timesheetSettings, perDayHours: e.target.value });
+                          if (fieldErrors.perDayHours) setFieldErrors(prev => ({ ...prev, perDayHours: undefined }));
+                        }}
                         placeholder="8"
-                        min="1"
+                        min="0"
                         max="24"
-                        className="w-full h-12 px-4 pr-16 border border-border-secondary rounded-lg text-md text-text-secondary placeholder:text-text-secondary focus:outline-none focus:border-border-accent-purple [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        className={`w-full h-12 px-4 pr-16 border rounded-lg text-md text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-border-accent-purple [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${fieldErrors.perDayHours ? 'border-red-400 bg-red-50' : 'border-border-secondary'}`}
                       />
                       <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm text-text-secondary">hours</span>
                     </div>
-                    <p className="text-xs text-text-secondary mt-2">Standard daily hours for full-time employees</p>
+                    {fieldErrors.perDayHours
+                      ? <p className="text-xs text-red-500 mt-1">{fieldErrors.perDayHours}</p>
+                      : <p className="text-xs text-text-secondary mt-2">Standard daily hours for full-time employees</p>}
                   </div>
 
                   <div>
@@ -838,7 +1186,7 @@ const SettingsPage = () => {
                             lunchBreakMinutes: optionToLunchMinutes(value)
                           }));
                         }}
-                        className="w-full h-12 px-4 pr-10 border border-border-secondary rounded-lg text-md text-text-secondary appearance-none focus:outline-none focus:border-border-accent-purple"
+                        className="w-full h-12 px-4 pr-10 border border-border-secondary rounded-lg text-md text-text-primary appearance-none focus:outline-none focus:border-border-accent-purple"
                       >
                         {lunchBreakOptions.map((minutes) => (
                           <option key={`lunch-${minutes}`} value={`${minutes} mins`}>
@@ -866,7 +1214,7 @@ const SettingsPage = () => {
                               incrementMinutes: Number(e.target.value)
                             }
                           })}
-                          className="w-full h-12 px-4 pr-10 border border-border-secondary rounded-lg text-md text-text-secondary appearance-none focus:outline-none focus:border-border-accent-purple"
+                          className="w-full h-12 px-4 pr-10 border border-border-secondary rounded-lg text-md text-text-primary appearance-none focus:outline-none focus:border-border-accent-purple"
                         >
                           {roundingIncrementOptions.map((option) => (
                             <option key={`clock-in-${option}`} value={option}>
@@ -921,7 +1269,7 @@ const SettingsPage = () => {
                               incrementMinutes: Number(e.target.value)
                             }
                           })}
-                          className="w-full h-12 px-4 pr-10 border border-border-secondary rounded-lg text-md text-text-secondary appearance-none focus:outline-none focus:border-border-accent-purple"
+                          className="w-full h-12 px-4 pr-10 border border-border-secondary rounded-lg text-md text-text-primary appearance-none focus:outline-none focus:border-border-accent-purple"
                         >
                           {roundingIncrementOptions.map((option) => (
                             <option key={`clock-out-${option}`} value={option}>
@@ -997,7 +1345,7 @@ const SettingsPage = () => {
                           ...prev,
                           thresholdHours: Math.max(0, Number(e.target.value) || 0)
                         }))}
-                        className="w-full h-12 px-4 border border-border-secondary rounded-lg text-md text-text-secondary placeholder:text-text-secondary focus:outline-none focus:border-border-accent-purple disabled:bg-gray-100"
+                        className="w-full h-12 px-4 border border-border-secondary rounded-lg text-md text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-border-accent-purple disabled:bg-gray-100"
                       />
                       <p className="text-xs text-text-secondary mt-2">
                         Auto-deduct lunch once a shift exceeds this many hours.
@@ -1204,7 +1552,7 @@ const SettingsPage = () => {
                               {location.address && (
                                 <p className="text-sm text-text-secondary truncate">{location.address}</p>
                               )}
-                              {location.latitude !== null && location.longitude !== null && (
+                              {location.latitude != null && location.longitude != null && (
                                 <p className="text-xs text-text-secondary">
                                   {location.latitude.toFixed(6)}, {location.longitude.toFixed(6)}
                                 </p>
@@ -1242,7 +1590,325 @@ const SettingsPage = () => {
                 </div>
               </div>
 
+              {/* Remote Work Employees Section */}
+              <div className="bg-white rounded-base p-6 shadow-lg">
+                {/* Section header */}
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-2">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
+                      <Wifi className="h-5 w-5 text-purple-600" />
+                    </div>
+                    <div>
+                      <h2 className="text-2xl font-bold text-text-primary">Remote Work Employees</h2>
+                      <p className="text-sm text-text-secondary mt-0.5">
+                        Employees listed here bypass all location restrictions when clocking in/out.
+                      </p>
+                    </div>
+                  </div>
+                  {isSavingRemote && (
+                    <div className="flex items-center gap-2 text-sm text-purple-600 flex-shrink-0">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Saving…
+                    </div>
+                  )}
+                </div>
 
+                {/* Info banner */}
+                <div className="mb-6 mt-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <p className="text-xs text-amber-800">
+                    <strong>How this works:</strong> Use this instead of adding a "No Radius" location — that would affect <em>all</em> employees. Employees added here are individually exempt from location restrictions.
+                  </p>
+                </div>
+
+                {/* ── Add Employee Picker ── */}
+                <div className="mb-6">
+                  <label className="text-md font-semibold text-text-primary mb-3 block">
+                    Add Employee to Remote Work
+                  </label>
+
+                  {/* Search input */}
+                  <div className="relative" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-secondary pointer-events-none" />
+                      <input
+                        type="text"
+                        value={remoteSearchQuery}
+                        onChange={(e) => {
+                          setRemoteSearchQuery(e.target.value);
+                          setEmployeeBrowsePage(0);
+                          setShowRemoteDropdown(true);
+                        }}
+                        onFocus={() => setShowRemoteDropdown(true)}
+                        placeholder={isLoadingEmployees ? 'Loading employees…' : 'Search by name or email, or browse below…'}
+                        className="w-full h-12 pl-10 pr-10 border border-border-secondary rounded-lg text-md text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-border-accent-purple transition-colors"
+                        disabled={isLoadingEmployees}
+                        autoComplete="off"
+                      />
+                      {remoteSearchQuery && (
+                        <button
+                          type="button"
+                          onClick={() => { setRemoteSearchQuery(''); setEmployeeBrowsePage(0); }}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-text-secondary hover:text-text-primary"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Paginated dropdown */}
+                    {showRemoteDropdown && (
+                      <div className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-border-secondary rounded-xl shadow-xl overflow-hidden">
+                        {/* Loading state */}
+                        {isLoadingEmployees ? (
+                          <div className="flex items-center justify-center gap-2 py-8 text-sm text-text-secondary">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Loading employees…
+                          </div>
+                        ) : filteredAvailableEmployees.length === 0 ? (
+                          /* Empty state */
+                          <div className="text-center py-8">
+                            <Users className="h-8 w-8 text-gray-300 mx-auto mb-2" />
+                            <p className="text-sm text-text-secondary">
+                              {remoteSearchQuery.trim()
+                                ? `No employees match "${remoteSearchQuery.trim()}"`
+                                : allEmployees.length === 0
+                                  ? 'No employees found in this company'
+                                  : 'All employees are already authorised for remote work'}
+                            </p>
+                          </div>
+                        ) : (() => {
+                          const allPageSelected = pagedAvailableEmployees.length > 0 &&
+                            pagedAvailableEmployees.every(e => pendingSelectionIds.has(e.id));
+                          const somePageSelected = pagedAvailableEmployees.some(e => pendingSelectionIds.has(e.id));
+                          return (
+                            <>
+                              {/* Header: count + select-all checkbox */}
+                              <div className="flex items-center gap-3 px-4 pt-3 pb-2 border-b border-border-secondary">
+                                <label
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  className="flex items-center gap-2 cursor-pointer select-none flex-shrink-0"
+                                  title={allPageSelected ? 'Deselect all on this page' : 'Select all on this page'}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={allPageSelected}
+                                    ref={el => { if (el) el.indeterminate = !allPageSelected && somePageSelected; }}
+                                    onChange={() => toggleSelectCurrentPage()}
+                                    disabled={isSavingRemote}
+                                    className="w-4 h-4 rounded accent-purple-600 cursor-pointer"
+                                  />
+                                  <span className="text-xs text-text-secondary">All on page</span>
+                                </label>
+                                <p className="text-xs text-text-secondary flex-1">
+                                  {remoteSearchQuery.trim()
+                                    ? `${filteredAvailableEmployees.length} result${filteredAvailableEmployees.length !== 1 ? 's' : ''} for "${remoteSearchQuery.trim()}"`
+                                    : `${filteredAvailableEmployees.length} available`
+                                  }
+                                  {filteredAvailableEmployees.length > REMOTE_PAGE_SIZE && (
+                                    <> · {employeeBrowsePage * REMOTE_PAGE_SIZE + 1}–{Math.min((employeeBrowsePage + 1) * REMOTE_PAGE_SIZE, filteredAvailableEmployees.length)}</>
+                                  )}
+                                </p>
+                              </div>
+
+                              {/* Employee rows — scrollable */}
+                              <div className="max-h-56 overflow-y-auto">
+                                {pagedAvailableEmployees.map((emp) => {
+                                  const isChecked = pendingSelectionIds.has(emp.id);
+                                  return (
+                                    <label
+                                      key={emp.id}
+                                      onMouseDown={(e) => e.preventDefault()}
+                                      className={`w-full flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors border-b border-border-secondary last:border-b-0 ${isChecked ? 'bg-purple-50' : 'hover:bg-gray-50'} ${isSavingRemote ? 'opacity-50 pointer-events-none' : ''}`}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={isChecked}
+                                        onChange={() => togglePendingEmployee(emp.id)}
+                                        disabled={isSavingRemote}
+                                        className="w-4 h-4 rounded accent-purple-600 cursor-pointer flex-shrink-0"
+                                      />
+                                      <div className="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
+                                        <span className="text-xs font-bold text-purple-700">
+                                          {(emp.firstName?.[0] || '?').toUpperCase()}
+                                        </span>
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-medium text-text-primary truncate">
+                                          {emp.firstName} {emp.lastName}
+                                        </p>
+                                        <p className="text-xs text-text-secondary truncate">{emp.email}</p>
+                                      </div>
+                                      {isChecked && (
+                                        <span className="text-xs font-medium text-purple-600 flex-shrink-0">✓</span>
+                                      )}
+                                    </label>
+                                  );
+                                })}
+                              </div>
+
+                              {/* Pagination bar */}
+                              {totalAvailablePages > 1 && (
+                                <div className="flex items-center justify-between px-4 py-2 border-t border-border-secondary bg-gray-50">
+                                  <button
+                                    type="button"
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    onClick={() => setEmployeeBrowsePage(p => Math.max(0, p - 1))}
+                                    disabled={employeeBrowsePage === 0}
+                                    className="flex items-center gap-1 text-xs text-text-secondary hover:text-text-primary disabled:opacity-40 disabled:cursor-not-allowed px-2 py-1 rounded hover:bg-gray-100 transition-colors"
+                                  >
+                                    <ChevronLeft className="h-3.5 w-3.5" />
+                                    Prev
+                                  </button>
+                                  <span className="text-xs text-text-secondary">
+                                    Page {employeeBrowsePage + 1} of {totalAvailablePages}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    onClick={() => setEmployeeBrowsePage(p => Math.min(totalAvailablePages - 1, p + 1))}
+                                    disabled={employeeBrowsePage >= totalAvailablePages - 1}
+                                    className="flex items-center gap-1 text-xs text-text-secondary hover:text-text-primary disabled:opacity-40 disabled:cursor-not-allowed px-2 py-1 rounded hover:bg-gray-100 transition-colors"
+                                  >
+                                    Next
+                                    <ChevronRight className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
+                              )}
+
+                              {/* Sticky footer — confirm selection */}
+                              <div className={`flex items-center justify-between px-4 py-3 border-t-2 ${pendingSelectionIds.size > 0 ? 'border-purple-200 bg-purple-50' : 'border-border-secondary bg-gray-50'}`}>
+                                <span className="text-xs text-text-secondary">
+                                  {pendingSelectionIds.size > 0
+                                    ? <span className="font-semibold text-purple-700">{pendingSelectionIds.size} selected</span>
+                                    : 'Select employees above'
+                                  }
+                                </span>
+                                <button
+                                  type="button"
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  onClick={handleAddSelectedRemoteEmployees}
+                                  disabled={isSavingRemote || pendingSelectionIds.size === 0}
+                                  className="flex items-center gap-1.5 text-xs font-semibold text-white bg-purple-600 hover:bg-purple-700 disabled:bg-purple-300 disabled:cursor-not-allowed px-3 py-1.5 rounded-lg transition-colors"
+                                >
+                                  {isSavingRemote ? (
+                                    <>
+                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                      Saving…
+                                    </>
+                                  ) : (
+                                    <>
+                                      + Add{pendingSelectionIds.size > 0 ? ` (${pendingSelectionIds.size})` : ''}
+                                    </>
+                                  )}
+                                </button>
+                              </div>
+                            </>
+                          );
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* ── Authorised Remote Employees List ── */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-md font-semibold text-text-primary">
+                      Authorised Employees
+                      {remoteEmployeeDetails.length > 0 && (
+                        <span className="ml-2 text-xs font-medium text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full">
+                          {remoteEmployeeDetails.length}
+                        </span>
+                      )}
+                    </h3>
+                    {remoteEmployeeDetails.length > 0 && totalRemotePages > 1 && (
+                      <span className="text-xs text-text-secondary">
+                        {remoteListPage * REMOTE_PAGE_SIZE + 1}–{Math.min((remoteListPage + 1) * REMOTE_PAGE_SIZE, remoteEmployeeDetails.length)} of {remoteEmployeeDetails.length}
+                      </span>
+                    )}
+                  </div>
+
+                  {isLoadingEmployees && remoteEmployeeIds.length > 0 ? (
+                    <div className="flex items-center gap-2 py-6 text-sm text-text-secondary">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Loading employee details…
+                    </div>
+                  ) : remoteEmployeeDetails.length === 0 ? (
+                    <div className="text-center py-10 rounded-xl border border-dashed border-border-secondary">
+                      <Users className="h-8 w-8 text-gray-300 mx-auto mb-2" />
+                      <p className="text-sm text-text-secondary font-medium">No remote employees yet</p>
+                      <p className="text-xs text-text-secondary mt-1">Search above, tick one or more employees, then click <strong>+ Add</strong>.</p>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="space-y-2">
+                        {remoteEmployeeDetails
+                          .slice(remoteListPage * REMOTE_PAGE_SIZE, (remoteListPage + 1) * REMOTE_PAGE_SIZE)
+                          .map((emp) => (
+                            <div
+                              key={emp.id}
+                              className="flex items-center justify-between p-3 border border-border-secondary rounded-lg hover:bg-bg-secondary transition-colors"
+                            >
+                              <div className="flex items-center gap-3 flex-1 min-w-0">
+                                <div className="w-9 h-9 rounded-full bg-gradient-to-br from-purple-400 to-purple-600 flex items-center justify-center flex-shrink-0">
+                                  <span className="text-sm font-bold text-white">
+                                    {(emp.firstName?.[0] || '?').toUpperCase()}
+                                  </span>
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-semibold text-text-primary truncate">
+                                    {emp.firstName} {emp.lastName}
+                                  </p>
+                                  <p className="text-xs text-text-secondary truncate">{emp.email}</p>
+                                </div>
+                                <span className="hidden sm:flex items-center gap-1 text-xs text-green-700 bg-green-100 px-2 py-0.5 rounded-full font-medium flex-shrink-0">
+                                  <Wifi className="h-3 w-3" />
+                                  Remote
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveRemoteEmployee(emp.id)}
+                                disabled={isSavingRemote}
+                                className="ml-3 flex items-center gap-1 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 px-2 py-1.5 rounded-lg transition-colors disabled:opacity-50 flex-shrink-0"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                                Remove
+                              </button>
+                            </div>
+                          ))}
+                      </div>
+
+                      {/* Remote list pagination */}
+                      {totalRemotePages > 1 && (
+                        <div className="flex items-center justify-between mt-3 pt-3 border-t border-border-secondary">
+                          <button
+                            type="button"
+                            onClick={() => setRemoteListPage(p => Math.max(0, p - 1))}
+                            disabled={remoteListPage === 0}
+                            className="flex items-center gap-1.5 text-sm text-text-secondary hover:text-text-primary disabled:opacity-40 disabled:cursor-not-allowed px-3 py-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+                          >
+                            <ChevronLeft className="h-4 w-4" />
+                            Previous
+                          </button>
+                          <span className="text-sm text-text-secondary">
+                            Page {remoteListPage + 1} of {totalRemotePages}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setRemoteListPage(p => Math.min(totalRemotePages - 1, p + 1))}
+                            disabled={remoteListPage >= totalRemotePages - 1}
+                            className="flex items-center gap-1.5 text-sm text-text-secondary hover:text-text-primary disabled:opacity-40 disabled:cursor-not-allowed px-3 py-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+                          >
+                            Next
+                            <ChevronRight className="h-4 w-4" />
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
 
 
 
@@ -1377,7 +2043,6 @@ const SettingsPage = () => {
                               >
                                 <option value="preset">Select Preset Radius</option>
                                 <option value="custom">Custom Value</option>
-                                <option value="none">No Radius (Remote Work)</option>
                               </select>
                               <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 h-4 w-4 text-text-secondary pointer-events-none" />
                             </div>
@@ -1401,37 +2066,51 @@ const SettingsPage = () => {
                             )}
 
                             {locationForm.radiusType === 'custom' && (
-                              <input
-                                type="text"
-                                value={locationForm.radius}
-                                onChange={(e) => setLocationForm({ ...locationForm, radius: e.target.value })}
-                                placeholder="e.g., 750m, 0.5km, 2km, 500 meters"
-                                className="w-full h-12 px-4 border border-border-secondary rounded-lg text-md text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-border-accent-purple"
-                              />
-                            )}
-
-                            {locationForm.radiusType === 'none' && (
-                              <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
-                                <p className="text-sm text-green-800">
-                                  This location will have no radius restrictions. Users can clock in/out from anywhere.
-                                </p>
+                              <div className="flex gap-2">
+                                <input
+                                  type="number"
+                                  min="1"
+                                  step="any"
+                                  value={locationForm.radius}
+                                  onChange={(e) => setLocationForm({ ...locationForm, radius: e.target.value })}
+                                  placeholder="e.g. 500"
+                                  className="flex-1 h-12 px-4 border border-border-secondary rounded-lg text-md text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-border-accent-purple"
+                                />
+                                <div className="relative w-32 flex-shrink-0">
+                                  <select
+                                    value={locationForm.customUnit}
+                                    onChange={(e) => setLocationForm({ ...locationForm, customUnit: e.target.value })}
+                                    className="w-full h-12 px-3 pr-9 border border-border-secondary rounded-lg text-md text-text-primary appearance-none focus:outline-none focus:border-border-accent-purple"
+                                  >
+                                    <option value="m">meters (m)</option>
+                                    <option value="km">kilometers (km)</option>
+                                  </select>
+                                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-secondary pointer-events-none" />
+                                </div>
                               </div>
                             )}
 
-                            {locationForm.radius && (
-                              <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                                <p className="text-sm text-blue-800">
-                                  <strong>Selected:</strong> {locationForm.radius} radius
-                                </p>
-                              </div>
-                            )}
+                            {/* Preview selected radius */}
+                            {locationForm.radius && (() => {
+                              const preview = locationForm.radiusType === 'custom'
+                                ? (parseFloat(locationForm.radius) > 0 ? `${parseFloat(locationForm.radius)}${locationForm.customUnit}` : null)
+                                : locationForm.radius;
+                              return preview ? (
+                                <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                                  <p className="text-sm text-blue-800">
+                                    <strong>Radius:</strong> {preview}
+                                    {locationForm.radiusType === 'custom' && locationForm.customUnit === 'km' && parseFloat(locationForm.radius) > 0 && (
+                                      <span className="ml-2 text-blue-600">({(parseFloat(locationForm.radius) * 1000).toLocaleString()} m)</span>
+                                    )}
+                                  </p>
+                                </div>
+                              ) : null;
+                            })()}
 
                             <p className="text-xs text-text-secondary">
                               {locationForm.radiusType === 'preset'
-                                ? 'Select a preset radius or choose custom value. If radius is set, latitude and longitude are required.'
-                                : locationForm.radiusType === 'custom'
-                                  ? 'Enter custom radius value (e.g., "750m", "0.5km", "2km"). If radius is set, latitude and longitude are required.'
-                                  : 'No radius restriction - users can clock in/out from anywhere. Latitude and longitude are optional.'}
+                                ? 'Select a preset radius. Latitude and longitude are required when a radius is set.'
+                                : 'Enter a number and select the unit. Latitude and longitude are required when a radius is set.'}
                             </p>
                           </div>
                         </div>

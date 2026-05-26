@@ -264,8 +264,9 @@ const parseRadiusToMeters = (radius) => {
     return 0;
   }
 
-  // Extract number and unit
-  const match = radius.match(/([\d.]+)\s*(m|meter|meters|km|kilometer|kilometers|mi|mile|miles)?/i);
+  // Extract number and unit — longer alternatives must come before shorter ones
+  // to avoid 'm' matching the start of 'mile' or 'meter' before the full word is tried
+  const match = radius.match(/([\d.]+)\s*(kilometers?|meters?|miles?|km|mi|m)?/i);
 
   if (!match) {
     return 0;
@@ -275,7 +276,7 @@ const parseRadiusToMeters = (radius) => {
   const unit = (match[2] || 'm').toLowerCase();
 
   // Convert to meters
-  if (unit.startsWith('km')) {
+  if (unit.startsWith('km') || unit.startsWith('kilo')) {
     return value * 1000;
   } else if (unit.startsWith('mi')) {
     return value * 1609.34;

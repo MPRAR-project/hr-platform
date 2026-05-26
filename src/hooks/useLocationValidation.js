@@ -4,38 +4,48 @@ import { useAuth } from './useAuth';
 import hrApiClient from '../lib/hrApiClient';
 
 /**
- * Hook to validate user location for clock in/out
- * Checks location periodically and on demand
+ * Hook to validate user location for clock in/out.
+ * If the current user is in the company's remoteEmployeeIds list, location
+ * restrictions are bypassed entirely (O(1) Set lookup).
  */
 export const useLocationValidation = (checkInterval = 30000) => {
   const { user } = useAuth();
-  const [isLocationValid, setIsLocationValid] = useState(false); // Default to false until verified (more secure)
-  const [isCheckingLocation, setIsCheckingLocation] = useState(true); // Start as checking
+  const [isLocationValid, setIsLocationValid] = useState(false);
+  const [isCheckingLocation, setIsCheckingLocation] = useState(true);
   const [locationError, setLocationError] = useState(null);
   const [locationMessage, setLocationMessage] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
   const [companyLocations, setCompanyLocations] = useState([]);
   const [locationsLoaded, setLocationsLoaded] = useState(false);
+  const [remoteEmployeeIdSet, setRemoteEmployeeIdSet] = useState(new Set());
 
-  // Load company locations from REST
+  // Derived: is current user authorized for remote work?
+  const isRemoteEmployee = useMemo(
+    () => remoteEmployeeIdSet.has(user?.id || ''),
+    [remoteEmployeeIdSet, user?.id]
+  );
+
+  // Load company locations + remoteEmployeeIds in one request
   useEffect(() => {
     const fetchLocations = async () => {
       if (!user?.companyId) {
         setCompanyLocations([]);
+        setRemoteEmployeeIdSet(new Set());
         setLocationsLoaded(true);
         return;
       }
 
-      const companyId = user.companyId.replace('companies/', '');
-      
       try {
-        const { data } = await hrApiClient.get(`/hr/companies/${companyId}`);
-        const locations = data.locations || [];
+        const { data } = await hrApiClient.get('/hr/company');
+        const locations = data.company?.locations || [];
+        const remoteIds = new Set(data.company?.remoteEmployeeIds || []);
         setCompanyLocations(locations);
+        setRemoteEmployeeIdSet(remoteIds);
         setLocationsLoaded(true);
       } catch (error) {
-        console.error('Error fetching company locations:', error);
+        console.error('Error fetching company data:', error);
         setCompanyLocations([]);
+        setRemoteEmployeeIdSet(new Set());
         setLocationsLoaded(true);
       }
     };
@@ -43,9 +53,6 @@ export const useLocationValidation = (checkInterval = 30000) => {
     fetchLocations();
   }, [user?.companyId]);
 
-  // Check user location
-  // When validating a clock-in/out action, call `checkLocation({ forceFresh: true })`
-  // to avoid using stale cached geolocation results.
   const checkLocation = useCallback(async (opts = {}) => {
     if (!user?.companyId) {
       setIsLocationValid(true);
@@ -55,8 +62,16 @@ export const useLocationValidation = (checkInterval = 30000) => {
       return { isValid: true, message: 'No location restrictions configured', error: null, userLocation: null };
     }
 
-    // Wait for locations to load first
     if (!locationsLoaded) return null;
+
+    // Remote employee bypass — O(1) Set lookup
+    if (remoteEmployeeIdSet.has(user.id)) {
+      setIsLocationValid(true);
+      setIsCheckingLocation(false);
+      setLocationError(null);
+      setLocationMessage('Remote work authorized');
+      return { isValid: true, message: 'Remote work authorized', isRemote: true, error: null, userLocation: null };
+    }
 
     if (companyLocations.length === 0) {
       setIsLocationValid(true);
@@ -90,25 +105,17 @@ export const useLocationValidation = (checkInterval = 30000) => {
       };
     } catch (error) {
       console.error('[useLocationValidation] Location check error:', error);
-
-      // Use the structured error message from service
       setLocationError(error.message);
-
-      // If it's a permission denied, we might want to stop checking
       if (error.type === 'PERMISSION_DENIED') {
         setIsCheckingLocation(false);
       }
-
-      // On error, disable actions for security
       setIsLocationValid(false);
       return { isValid: false, message: null, error: error.message || 'Unable to get your location', userLocation: null };
     } finally {
-      // Only set checking to false if we haven't already disabled it
       setIsCheckingLocation(false);
     }
-  }, [user?.companyId, companyLocations, locationsLoaded]);
+  }, [user?.companyId, user?.id, companyLocations, locationsLoaded, remoteEmployeeIdSet]);
 
-  // Create a stable reference for location comparison
   const locationsKey = useMemo(() => {
     return JSON.stringify(companyLocations.map(loc => ({
       id: loc.id,
@@ -118,9 +125,18 @@ export const useLocationValidation = (checkInterval = 30000) => {
     })).sort((a, b) => (a.id || '').localeCompare(b.id || '')));
   }, [companyLocations]);
 
-  // Check location when locations change or periodically
+  // Run check when locations or remote set changes, and on interval
   useEffect(() => {
     if (!locationsLoaded) return;
+
+    // Remote bypass: no need to poll GPS
+    if (isRemoteEmployee) {
+      setIsLocationValid(true);
+      setLocationError(null);
+      setLocationMessage('Remote work authorized');
+      setIsCheckingLocation(false);
+      return;
+    }
 
     if (companyLocations.length === 0) {
       setIsLocationValid(true);
@@ -132,13 +148,9 @@ export const useLocationValidation = (checkInterval = 30000) => {
 
     checkLocation();
     const interval = setInterval(() => checkLocation(), checkInterval);
+    return () => clearInterval(interval);
+  }, [checkLocation, locationsKey, checkInterval, locationsLoaded, isRemoteEmployee]);
 
-    return () => {
-      clearInterval(interval);
-    };
-  }, [checkLocation, locationsKey, checkInterval, locationsLoaded]);
-
-  // Manual reload function (for compatibility)
   const loadCompanyLocations = useCallback(async () => {
     checkLocation();
   }, [checkLocation]);
@@ -150,8 +162,8 @@ export const useLocationValidation = (checkInterval = 30000) => {
     locationMessage,
     userLocation,
     companyLocations,
-    checkLocation, // Manual refresh function
-    loadCompanyLocations
+    checkLocation,
+    loadCompanyLocations,
+    isRemoteEmployee
   };
 };
-
