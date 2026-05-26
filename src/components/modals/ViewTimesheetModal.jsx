@@ -10,7 +10,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { useEmployeeTimesheets } from '../../hooks/useEmployeeTimesheets';
 import { timesheetDeduplication } from '../../services/timesheetDeduplication';
 import { generateTimesheetPDF } from '../../services/timesheetPdfExport';
-import { getUserWeekContext, submitWeek, updateTimeEntry, updateEntryDescription, updateDayDescription, addManualTimeEntry, deleteTimeEntry, upsertDailyEntry, invalidateTimesheetCache, deleteTimesheet } from '../../services/timesheets';
+import { getUserWeekContext, submitWeek, updateTimeEntry, updateEntryDescription, updateDayDescription, addManualTimeEntry, deleteTimeEntry, upsertDailyEntry, invalidateTimesheetCache, deleteTimesheet, getUserTimesheetsByWeek } from '../../services/timesheets';
 import { fetchApprovedAbsencesForWeek } from '../../services/timesheetAbsenceIntegration';
 import { timesheetValidation } from '../../services/timesheetValidation';
 import { calculateWeekTotals, processWeekData } from '../../services/weekDataProcessor';
@@ -108,11 +108,22 @@ const calculateDuration = (clockInStr, clockOutStr) => {
   if (!clockInStr || !clockOutStr || clockOutStr === '-' || clockInStr === '-') return null;
   try {
     const parseTime = (timeStr) => {
-      const [h, m] = timeStr.split(':').map(Number);
+      // Handle AM/PM format (e.g. "10:30 AM") and 24-hour format (e.g. "10:30")
+      const normalized = timeStr.trim().toUpperCase();
+      const isPM = normalized.includes('PM');
+      const isAM = normalized.includes('AM');
+      const cleaned = normalized.replace(/\s*(AM|PM)\s*/i, '');
+      const [hStr, mStr] = cleaned.split(':');
+      let h = parseInt(hStr, 10);
+      const m = parseInt(mStr, 10);
+      if (isNaN(h) || isNaN(m)) return NaN;
+      if (isPM && h !== 12) h += 12;
+      if (isAM && h === 12) h = 0;
       return h * 60 + m;
     };
     const inMin = parseTime(clockInStr);
     const outMin = parseTime(clockOutStr);
+    if (isNaN(inMin) || isNaN(outMin)) return null;
     if (outMin <= inMin) return null; // Invalid pair
     const durationMin = outMin - inMin;
     const durationHours = Math.floor(durationMin / 60);

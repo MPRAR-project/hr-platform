@@ -624,8 +624,46 @@ export function primeUserWeekContext(userId, companyIdPath, siteIdPath, weekStar
 }
 
 
-export async function updateDayDescription(userId, dateStr, description) {
-  return updateEntryDescription(userId, dateStr, null, description);
+export async function updateDayDescription(userIdOrObj, dateStr, description) {
+  // Support both legacy positional args and new object-based call from ViewTimesheetModal
+  let userId, dateStrResolved, notes, weekStartDay;
+
+  if (userIdOrObj && typeof userIdOrObj === 'object') {
+    ({ userId, dateStr: dateStrResolved, notes, weekStartDay } = userIdOrObj);
+    description = notes;
+  } else {
+    userId = userIdOrObj;
+    dateStrResolved = dateStr;
+  }
+
+  if (!userId) throw new Error('userId is required');
+  if (!dateStrResolved) throw new Error('dateStr is required');
+
+  // Fetch entries for this day to get real entryIds
+  try {
+    const { data } = await hrApiClient.get('/hr/time-entries', {
+      params: { userId, date: dateStrResolved },
+    });
+
+    const entries = data?.entries || data || [];
+    if (entries.length === 0) {
+      // No entries for this day — nothing to update (caller handles creation)
+      return { success: true, count: 0 };
+    }
+
+    // Update notes on each entry for the day
+    let count = 0;
+    for (const entry of entries) {
+      const entryId = entry.id || entry.entryId || entry.sessionId;
+      if (!entryId) continue;
+      await updateTimeEntry({ userId, dateStr: dateStrResolved, entryId, updates: { notes: description ?? '' } });
+      count++;
+    }
+    return { success: true, count };
+  } catch (err) {
+    // Fallback: try updateEntryDescription with a direct API call if time-entries list fails
+    throw new Error(err.message || 'Failed to update day description');
+  }
 }
 
 // ── Subscribe to timesheets ────────────────────────────────────────────────────
@@ -759,5 +797,3 @@ export async function prefetchAdjacentWeeks(userId, weekStart, options = {}) {
     })
   );
 }
-
-
