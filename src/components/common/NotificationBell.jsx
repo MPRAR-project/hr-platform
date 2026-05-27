@@ -74,6 +74,15 @@ const NotificationBell = () => {
             }
         } else if (notification.type === 'leave_decision') {
             navigate('/absences');
+        } else if (
+            notification.type === 'seat_request_approved' ||
+            notification.type === 'seat_request_rejected'
+        ) {
+            // Notify the requester — send them to the users page to add new users
+            navigate('/users');
+        } else if (notification.type === 'seat_request_new') {
+            // Notify the approver (site/senior manager) — send them to seat management
+            navigate('/seat-management');
         } else if (notification.type === 'allowance_update') {
             const employeeId = notification.data?.employeeId || notification.relatedEntityId;
             if (employeeId) {
@@ -153,7 +162,18 @@ const NotificationBell = () => {
                                                     {notification.message}
                                                 </p>
                                                 <p className="text-[10px] text-gray-400">
-                                                    {notification.createdAt?.toDate ? formatDistanceToNow(notification.createdAt.toDate(), { addSuffix: true }) : 'Just now'}
+                                                    {(() => {
+                                                        try {
+                                                            if (notification.createdAt?.toDate) {
+                                                                return formatDistanceToNow(notification.createdAt.toDate(), { addSuffix: true });
+                                                            }
+                                                            if (notification.createdAt) {
+                                                                const d = new Date(notification.createdAt);
+                                                                if (!isNaN(d.getTime())) return formatDistanceToNow(d, { addSuffix: true });
+                                                            }
+                                                        } catch (_) {}
+                                                        return 'Just now';
+                                                    })()}
                                                 </p>
                                             </div>
                                         </div>

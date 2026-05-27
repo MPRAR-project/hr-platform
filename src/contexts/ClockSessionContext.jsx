@@ -31,7 +31,7 @@ export const useClockSessionContext = () => {
 };
 
 export const ClockSessionProvider = ({ children }) => {
-    const { user } = useAuth();
+    const { user, isLoading: isAuthLoading } = useAuth();
     const [sessionDocs, setSessionDocs] = useState([]);
     const [recentEntries, setRecentEntries] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -72,6 +72,12 @@ export const ClockSessionProvider = ({ children }) => {
 
     // Subscribe to session documents via REST + WebSocket
     useEffect(() => {
+        // Wait for auth bootstrap to complete before making any API calls.
+        // Auth restores `user` from localStorage cache immediately, but the
+        // in-memory access token is only set after the async bootstrap finishes.
+        // Fetching before that completes causes a 401 on every page load.
+        if (isAuthLoading) return;
+
         if (!user?.uid) {
             setSessionDocs([]);
             setRecentEntries([]);
@@ -122,7 +128,7 @@ export const ClockSessionProvider = ({ children }) => {
             wsClient.off('clock:out', handleWsUpdate);
             wsClient.off('timesheet:updated', handleWsUpdate);
         };
-    }, [user?.uid]);
+    }, [user?.uid, isAuthLoading]);
 
     // Get current open session
     const getOpenSession = useCallback(() => {

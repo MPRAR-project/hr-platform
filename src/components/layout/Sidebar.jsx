@@ -346,7 +346,7 @@ const Sidebar = () => {
       to: '/users',
       label: 'Users',
       icon: Users,
-      roles: ['siteManager', 'seniorManager', 'adminManager', 'hrManager', 'hrAdvisor', 'adminAdvisor', 'contractManager']
+      roles: ['siteManager', 'seniorManager', 'teamManager', 'adminManager', 'hrManager', 'hrAdvisor', 'adminAdvisor', 'contractManager']
     },
     {
       to: '/allowance',
@@ -363,9 +363,9 @@ const Sidebar = () => {
     },
     {
       to: '/seat-management',
-      label: 'Seat Request',
+      label: 'Seat Requests',
       icon: PlusCircle,
-      roles: ['seniorManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor']
+      roles: ['siteManager', 'seniorManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor']
     },
     {
       to: '/myabsences',

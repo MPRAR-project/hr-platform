@@ -61,13 +61,7 @@ const AddTimesheetModal = ({ isOpen, onClose }) => {
     const [isCreating, setIsCreating] = useState(false);
     const [currentMonth, setCurrentMonth] = useState(new Date());
 
-    // Debug: Log weeklySummaries structure
-    console.log('[AddTimesheetModal] weeklySummaries:', weeklySummaries?.map(w => ({
-        start: w.start,
-        end: w.end,
-        period: w.period,
-        weekKey: w.weekKey
-    })));
+    // Removed debug log for weeklySummaries to prevent console spam
 
     // Week start must follow the company configuration chosen at signup.
     // If for some reason it is missing on the client, we fall back to

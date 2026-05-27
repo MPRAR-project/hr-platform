@@ -66,6 +66,8 @@ export async function getMyNotifications(userId, options = {}) {
     });
     return data.notifications || data || [];
   } catch (err) {
+    // 401 on first load = token still refreshing; silently return empty list
+    if (err.response?.status === 401) return [];
     if (err.response?.status === 404) return [];
     throw new Error(err.response?.data?.error || 'Failed to fetch notifications');
   }

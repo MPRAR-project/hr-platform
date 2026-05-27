@@ -79,7 +79,11 @@ const RolesBackfillMigrationPage = lazy(() => import('./pages/admin/RolesBackfil
 import Loader from './components/ui/Loader';
 
 const AppRouter = () => {
-  const { user } = useAuth();
+  const { user, isLoading } = useAuth();
+
+  if (isLoading) {
+    return <Loader fullScreen text="Loading application..." />;
+  }
 
   return (
     <Suspense fallback={<Loader fullScreen text="Loading application..." />}>
@@ -102,7 +106,7 @@ const AppRouter = () => {
             </RoleGuard>
           } />
           <Route path="/users" element={
-            <RoleGuard allowedRoles={['siteManager', 'seniorManager', 'adminManager', 'hrManager', 'hrAdvisor', 'adminAdvisor', 'contractManager']}>
+            <RoleGuard allowedRoles={['siteManager', 'seniorManager', 'teamManager', 'adminManager', 'hrManager', 'hrAdvisor', 'adminAdvisor', 'contractManager']}>
               <UserListPage />
             </RoleGuard>
           } />
@@ -167,7 +171,7 @@ const AppRouter = () => {
           <Route path="/myprofile" element={<ProfilePage />} />
           <Route path="/my-company" element={<MyCompanyPage />} />
           <Route path='/seat-management' element={
-            <RoleGuard allowedRoles={['seniorManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor']}>
+            <RoleGuard allowedRoles={['siteManager', 'seniorManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor']}>
               <SeatRequestPage />
             </RoleGuard>
           } />

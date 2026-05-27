@@ -9,11 +9,12 @@ import SeatRequestModal from '../../components/modals/SeatRequestModal';
 import PaymentConfirmationModal from '../../components/modals/PaymentConfirmationModal';
 import EditUserModal from '../../components/modals/EditUserModal';
 import DeleteConfirmationModal from '../../components/modals/DeleteConfirmationModal';
-import { UserPlus, RefreshCw } from 'lucide-react';
+import { UserPlus, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { usePaginatedUsers } from '../../hooks/usePaginatedUsers';
 import wsClient from '../../lib/wsClient';
 import { getEmployeeCount, addUsersBySiteManager, updateUserBySiteManager, subscribeToCompanyUsers, deleteUser } from '../../services/users';
+import { getManagedEmployeeIdsForManager } from '../../services/teams';
 import { getClients } from '../../services/clients';
 import { getSites } from '../../services/sites';
 import { usePerformanceMonitor, measureAsync } from '../../hooks/usePerformanceMonitor';
@@ -35,7 +36,7 @@ import { ConfigurationErrorState, NetworkErrorState, EmptyTeamState, NoSearchRes
 import { getBillingSummary, recordSeatTopUp } from '../../services/billing';
 import { createSeatRequest, emitSeatRequestEvent } from '../../services/seatRequestService';
 
-const SEAT_PURCHASERS = ['superUser', 'siteManager', 'seniorManager'];
+const SEAT_PURCHASERS = ['siteManager', 'seniorManager'];
 const ROLES_CAN_MANAGE_USERS = ['superUser', 'siteManager', 'seniorManager', 'adminManager', 'adminAdvisor', 'hrManager', 'hrAdvisor'];
 import { trackUserAction, dashboardLogger } from '../../utils/logger';
 import { invalidateCompanyCache } from '../../services/cacheInvalidationService';
@@ -125,12 +126,24 @@ const UserListPage = () => {
   const [optimisticStatusUpdates, setOptimisticStatusUpdates] = useState({}); // { userId: 'active' | 'archived' }
   const wasLoadingRef = useRef(false);
 
+  // --- Pagination & Page States ---
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 10;
+
+  // Reset page when filters or tabs change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedSiteId, selectedClientId, viewMode, activeTab]);
+
+
+
   // --- Team Management State (from SiteManagerDashboard) ---
   const [showSeatPaymentModal, setShowSeatPaymentModal] = useState(false);
   const [showSeatRequestModal, setShowSeatRequestModal] = useState(false);
   const [isInTrial, setIsInTrial] = useState(false);
   const [unarchivingUserId, setUnarchivingUserId] = useState(null);
   const [isCheckingSeats, setIsCheckingSeats] = useState(false);
+  const [managedIds, setManagedIds] = useState(new Set());
 
   // --- Pagination Hook ---
   const {
@@ -148,9 +161,33 @@ const UserListPage = () => {
       .toLowerCase()
       .replace(/[\s_-]+/g, '');
 
-  const SITE_OWNER_ROLE_KEYS = new Set(['superuser', 'siteowner', 'sitemanager', 'owner']);
+  // Roles that should be hidden from ALL user lists (site managers, senior managers, owners)
+  // These roles can only be seen by each other (siteManager/seniorManager see each other)
+  const HIDDEN_FROM_NON_ADMINS = new Set(['superuser', 'siteowner', 'sitemanager', 'owner', 'seniormanager']);
 
-  const isSiteOwnerOrManager = (rawRole) => SITE_OWNER_ROLE_KEYS.has(normalizeRoleKey(rawRole));
+  const isSiteOwnerOrManager = (rawRole) => HIDDEN_FROM_NON_ADMINS.has(normalizeRoleKey(rawRole));
+
+  // Roles that CAN see site managers/senior managers in the list
+  const currentRoleNorm = normalizeRoleKey(user?.role || user?.hrRole || '');
+  const isHighLevelViewer = HIDDEN_FROM_NON_ADMINS.has(currentRoleNorm);
+  const isTeamManager = currentRoleNorm === 'teammanager';
+
+  // Fetch direct-report IDs for team managers (drives flatUserList filtering)
+  useEffect(() => {
+    if (!isTeamManager) {
+      setManagedIds(new Set());
+      return;
+    }
+    const myId = user?.uid || user?.userId || user?.id;
+    const cId = companyId;
+    if (!myId || !cId) return;
+    let cancelled = false;
+    getManagedEmployeeIdsForManager(myId, cId)
+      .then(ids => { if (!cancelled) setManagedIds(new Set(ids)); })
+      .catch(() => { if (!cancelled) setManagedIds(new Set()); });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTeamManager, user?.uid, user?.userId, user?.id, companyId]);
 
   // Normalize data for OptimizedTeamTable and filter by viewMode, site, client, and HR Advisor visibility rules
   const flatUserList = useMemo(() => {
@@ -190,9 +227,16 @@ const UserListPage = () => {
         );
     }
 
-    // HR Advisors must not see Site Owner / Site Manager users
-    if (user?.role === 'hrAdvisor') {
-      normalized = normalized.filter((u) => !isSiteOwnerOrManager(u.primaryRole || u.role || u.hrRole));
+    // Apply role-based visibility rules:
+    // • Team Managers → only their direct reports (managedIds)
+    // • All other non-admin roles → hide site managers, senior managers, and owners
+    // • Site Managers / Senior Managers → see everyone
+    if (isTeamManager) {
+      normalized = normalized.filter(u => managedIds.has(u.id) || managedIds.has(u.userId) || managedIds.has(u.uid));
+    } else if (!isHighLevelViewer) {
+      // hrManager, hrAdvisor, adminManager, adminAdvisor, contractManager, employee, etc.
+      // — must NOT see siteManager / seniorManager / owner in the list
+      normalized = normalized.filter(u => !isSiteOwnerOrManager(u.primaryRole || u.role || u.hrRole));
     }
 
     // Filter by selected site
@@ -244,9 +288,23 @@ const UserListPage = () => {
       // Users -> Active View shows ONLY active users (excludes invited)
       return normalized.filter(u => (u.status || '').toLowerCase() === 'active');
     }
-  }, [paginatedUsers, viewMode, activeTab, user?.role, selectedSiteId, selectedClientId, optimisticStatusUpdates]);
+  }, [paginatedUsers, viewMode, activeTab, user?.role, user?.hrRole, selectedSiteId, selectedClientId, optimisticStatusUpdates, managedIds, isTeamManager, isHighLevelViewer]);
 
+  const paginatedFlatUserList = useMemo(() => {
+    return flatUserList.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  }, [flatUserList, currentPage]);
 
+  const totalPages = Math.ceil(flatUserList.length / PAGE_SIZE) || 1;
+
+  // Auto load more when hitting client-side bounds if server has more
+  useEffect(() => {
+    if (activeTab === 'users' && hasMore && !isPaginatedLoading && flatUserList.length > 0) {
+      const maxShown = currentPage * PAGE_SIZE;
+      if (flatUserList.length <= maxShown) {
+        loadMore();
+      }
+    }
+  }, [currentPage, flatUserList.length, hasMore, isPaginatedLoading, activeTab, loadMore]);
 
   // Performance monitoring
   usePerformanceMonitor('UserListPage');
@@ -256,13 +314,28 @@ const UserListPage = () => {
   useEffect(() => {
     const fetchFilters = async () => {
       if (!companyId) return;
+
+      // Serve from cache to avoid 429 on rapid tab switches
+      const sitesCacheKey   = `sites_list_${companyId}`;
+      const clientsCacheKey = `clients_list_${companyId}`;
+      const cachedSites   = getItem?.(sitesCacheKey);
+      const cachedClients = getItem?.(clientsCacheKey);
+
+      if (Array.isArray(cachedSites))   setSites(cachedSites);
+      if (Array.isArray(cachedClients)) setClients(cachedClients);
+
+      // If both already in cache, skip network call entirely
+      if (Array.isArray(cachedSites) && Array.isArray(cachedClients)) return;
+
       try {
         const [clientsData, sitesData] = await Promise.all([
-          getClients(companyId),
-          getSites(companyId)
+          Array.isArray(cachedClients) ? Promise.resolve(cachedClients) : getClients(companyId),
+          Array.isArray(cachedSites)   ? Promise.resolve(cachedSites)   : getSites(companyId)
         ]);
         setClients(clientsData);
         setSites(sitesData);
+        setItem?.(sitesCacheKey,   sitesData,   10 * 60 * 1000); // 10 min
+        setItem?.(clientsCacheKey, clientsData, 10 * 60 * 1000);
       } catch (e) {
         console.error('Failed to load filters', e);
       }
@@ -273,7 +346,8 @@ const UserListPage = () => {
     if (activeTab === 'users') {
       loadMore();
     }
-  }, [companyId, activeTab]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyId]); // intentionally exclude activeTab — filters don't change per tab
 
   useEffect(() => {
     if (!companyId || activeTab !== 'users') {
@@ -329,10 +403,30 @@ const UserListPage = () => {
     const fireReload = () => window.dispatchEvent(new CustomEvent('users:reload'));
     wsClient.on('employee:synced',   fireReload);
     wsClient.on('employee:archived', fireReload);
+    wsClient.on('users:reload',      fireReload);
     return () => {
       wsClient.off('employee:synced',   fireReload);
       wsClient.off('employee:archived', fireReload);
+      wsClient.off('users:reload',      fireReload);
     };
+  }, []);
+
+  // Real-time: seat request approved → notify the requester they can now add users
+  useEffect(() => {
+    const handleSeatApproved = (data) => {
+      toast.success(
+        `✅ Seat request approved! You can now add ${data?.seatCount || 'new'} user(s).`,
+        {
+          autoClose: 8000,
+          onClick: () => handleAddUsersClickTM()
+        }
+      );
+      // Refresh seat count so Add Users button unlocks immediately
+      setCountRefreshTrigger(t => t + 1);
+    };
+    wsClient.on('seatRequest:approved', handleSeatApproved);
+    return () => wsClient.off('seatRequest:approved', handleSeatApproved);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Track previous viewMode to prevent unnecessary reloads
@@ -451,32 +545,33 @@ const UserListPage = () => {
 
   const handleEditSaveLocal = async (updatedData) => {
     try {
-      const userId = updatedData?.userId ?? selectedUser?.id;
-      if (!userId) {
-        throw new Error('No user selected for update');
-      }
+      const userId = updatedData?.userId ?? selectedUser?.id ?? selectedUser?.userId;
+      if (!userId) throw new Error('No user selected for update');
 
-      const { userId: _uid, ...dataToSave } = updatedData || {};
-      const [firstName, ...lastNameParts] = (dataToSave.name || '').trim().split(' ');
-      const lastName = lastNameParts.join(' ').trim();
-      const normalizedRole = normalizeRoleKey(dataToSave.role);
+      const name = (updatedData.name || '').trim();
+      const [firstName, ...lastParts] = name.split(' ');
+      const lastName = lastParts.join(' ').trim();
+
+      // role comes from EditUserModal already as canonical camelCase (e.g. 'hrManager')
+      const primaryRole = updatedData.role || normalizeRoleKey(updatedData.primaryRole || '');
+
       const updates = {
-        displayName: dataToSave.name,
-        firstName: firstName || undefined,
-        lastName: lastName || undefined,
-        primaryRole: normalizedRole,
-        roles: [normalizedRole],
-        reportsTo: dataToSave.reportsTo || '',
-        managerUserId: dataToSave.reportsTo || ''
+        displayName:  name,
+        firstName:    firstName || undefined,
+        lastName:     lastName  || undefined,
+        primaryRole,                            // → maps to hrRole in updateUserBySiteManager
+        roles:        [primaryRole],
+        reportsTo:    updatedData.reportsTo || null, // null clears the field
+        managerUserId: updatedData.reportsTo || null,
       };
-      // [FIX] Pass companyId to ensure we update the correct company profile
+
       const effectiveCompanyId = companyId || user?.companyId;
       await updateUserBySiteManager(userId, updates, effectiveCompanyId);
 
       setShowEditModal(false);
       setSelectedUser(null);
-
-      // No need to manually update state as the real-time subscription will handle it
+      toast.success('User updated successfully.');
+      window.dispatchEvent(new CustomEvent('users:reload'));
     } catch (error) {
       console.error('Error updating user:', error);
       toast.error(error.message || 'Failed to update user');
@@ -851,29 +946,32 @@ const UserListPage = () => {
 
   const handleEditSaveTM = async (updatedData) => {
     try {
-      const userId = updatedData?.userId ?? selectedUser?.id;
-      if (!userId) {
-        throw new Error('No user selected for update');
-      }
-      const normalizedRole = normalizeRoleKey(updatedData.role);
+      const userId = updatedData?.userId ?? selectedUser?.id ?? selectedUser?.userId;
+      if (!userId) throw new Error('No user selected for update');
+
+      const name = (updatedData.name || '').trim();
+      const [firstName, ...lastParts] = name.split(' ');
+      const lastName = lastParts.join(' ').trim();
+      const primaryRole = updatedData.role || normalizeRoleKey(updatedData.primaryRole || '');
+
       const updates = {
-        displayName: updatedData.name,
-        primaryRole: normalizedRole,
-        roles: [normalizedRole],
-        reportsTo: updatedData.reportsTo,
-        managerUserId: updatedData.reportsTo || ''
+        displayName:   name,
+        firstName:     firstName || undefined,
+        lastName:      lastName  || undefined,
+        primaryRole,
+        roles:         [primaryRole],
+        reportsTo:     updatedData.reportsTo || null,
+        managerUserId: updatedData.reportsTo || null,
       };
 
       await updateUserBySiteManager(userId, updates, companyId);
-
-      // No need to manually update state as the real-time subscription will handle it
       setShowEditModal(false);
       setSelectedUser(null);
-
+      toast.success('User updated successfully.');
+      window.dispatchEvent(new CustomEvent('users:reload'));
     } catch (e) {
       console.error('Failed to update user:', e);
-      const userMessage = getUserErrorMessage(e);
-      toast.error(userMessage);
+      toast.error(getUserErrorMessage(e));
     }
   };
 
@@ -1123,19 +1221,17 @@ const UserListPage = () => {
 
         {activeTab === 'users' && (
           <>
-            {/* Page Header - always visible for skeleton-first */}
+            {/* Page Header */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4xl">
               <div className="flex flex-col">
                 <h2 className="text-2xl font-bold text-text-primary">Users</h2>
               </div>
-              <div className="flex gap-2 items-center">
-                <div className="relative w-48">
+              <div className="flex flex-wrap gap-2 items-center">
+                {/* Site filter */}
+                <div className="relative w-40">
                   <select
                     value={selectedSiteId}
-                    onChange={(e) => {
-                      console.log('[DEBUG] Site dropdown changed to:', e.target.value);
-                      setSelectedSiteId(e.target.value);
-                    }}
+                    onChange={(e) => setSelectedSiteId(e.target.value)}
                     aria-label="Filter by Site"
                     className="w-full h-10 px-3 border border-border-secondary rounded-lg text-sm bg-white focus:outline-none focus:border-purple-500"
                   >
@@ -1143,13 +1239,11 @@ const UserListPage = () => {
                     {sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 </div>
-                <div className="relative w-48">
+                {/* Client filter */}
+                <div className="relative w-40">
                   <select
                     value={selectedClientId}
-                    onChange={(e) => {
-                      console.log('[DEBUG] Client dropdown changed to:', e.target.value);
-                      setSelectedClientId(e.target.value);
-                    }}
+                    onChange={(e) => setSelectedClientId(e.target.value)}
                     aria-label="Filter by Client"
                     className="w-full h-10 px-3 border border-border-secondary rounded-lg text-sm bg-white focus:outline-none focus:border-purple-500"
                   >
@@ -1157,6 +1251,18 @@ const UserListPage = () => {
                     {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
                 </div>
+                {/* Add Users button — visible only to roles that can manage users */}
+                {ROLES_CAN_MANAGE_USERS.includes(user?.role) && viewMode === 'active' && (
+                  <Button
+                    variant="gradient"
+                    icon={UserPlus}
+                    iconFirst={true}
+                    onClick={handleAddUsersClickTM}
+                    isLoading={isCheckingSeats}
+                  >
+                    Add Users
+                  </Button>
+                )}
               </div>
             </div>
 
@@ -1233,7 +1339,8 @@ const UserListPage = () => {
                 <>
                   <div className="bg-white rounded-lg shadow border border-border-secondary overflow-hidden">
                     <OptimizedTeamTable
-                      teamMembers={flatUserList}
+                      teamMembers={paginatedFlatUserList}
+                      onEdit={ROLES_CAN_MANAGE_USERS.includes(user?.role) ? handleEditLocal : undefined}
                       onDeactivate={viewMode === 'active' ? handleDeactivate : undefined}
                       onActivate={handleUnarchiveUser}
                       onRevokeInvite={handleInviteDeleteRequest}
@@ -1242,17 +1349,29 @@ const UserListPage = () => {
                       currentUserRole={user?.role}
                     />
 
-                    {hasMore && (
-                      <div className="p-4 flex justify-center border-t border-gray-100">
-                        <Button
-                          variant="outline-primary"
-                          onClick={() => loadMore()}
-                          isLoading={isPaginatedLoading}
+                    <div className="px-5 py-4 border-t border-gray-100 flex items-center justify-between bg-white shrink-0">
+                      <p className="text-[13px] text-gray-500 font-medium">
+                        Showing {flatUserList.length === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, flatUserList.length)} of {flatUserList.length} users
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                          disabled={currentPage === 1}
+                          className="flex items-center justify-center p-2 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 transition disabled:opacity-30 disabled:hover:bg-transparent"
+                          aria-label="Previous Page"
                         >
-                          {isPaginatedLoading ? 'Loading more users...' : 'Load More Users'}
-                        </Button>
+                          <ChevronLeft size={16} />
+                        </button>
+                        <button
+                          onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                          disabled={(currentPage >= totalPages && !hasMore) || isPaginatedLoading}
+                          className="flex items-center justify-center p-2 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 transition disabled:opacity-30 disabled:hover:bg-transparent"
+                          aria-label="Next Page"
+                        >
+                          <ChevronRight size={16} />
+                        </button>
                       </div>
-                    )}
+                    </div>
                   </div>
                 </>
               )}

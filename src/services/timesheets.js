@@ -235,6 +235,9 @@ function normalizeEntry(e) {
 
 // ── Get timesheets by week (manager view) ─────────────────────────────────────
 export async function getTimesheetsByWeek(companyId, weekStartStr) {
+  // Guard: don't send an empty weekStart — frontend may call before config loads
+  if (!weekStartStr || !String(weekStartStr).trim()) return [];
+
   const cacheKey = `all_${companyId}_${weekStartStr}`;
   if (_timesheetMemCache.has(cacheKey)) return _timesheetMemCache.get(cacheKey);
 
@@ -278,6 +281,9 @@ export async function getTimesheetsInRange(companyId, startDate, endDate) {
 
 // ── Get user timesheets by week (employee view) ────────────────────────────────
 export async function getUserTimesheetsByWeek(userId, companyId, weekStartStr) {
+  // Guard: don't send an empty weekStart — frontend may call before config loads
+  if (!weekStartStr || !String(weekStartStr).trim()) return [];
+
   const cacheKey = `${userId}_${weekStartStr}`;
   if (_timesheetMemCache.has(cacheKey)) return _timesheetMemCache.get(cacheKey);
 
@@ -376,7 +382,9 @@ export async function updateEntryDescription(userId, dateStr, entryId, descripti
 
 // ── Delete a time entry ───────────────────────────────────────────────────────
 export async function deleteTimeEntry(userId, dateStr, entryId, sessionId) {
-  const id = entryId || sessionId;
+  // Accept either a raw ID string or an entry object
+  const rawId = (entryId && typeof entryId === 'object') ? (entryId.id || entryId.sessionId) : entryId;
+  const id = rawId || sessionId;
   if (!id) throw new Error('entryId or sessionId is required');
 
   try {

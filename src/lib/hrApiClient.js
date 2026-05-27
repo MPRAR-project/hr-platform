@@ -46,10 +46,80 @@ const hrApiClient = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
-// ── Request interceptor — attach access token ─────────────────────────────────
+// Helper to decode JWT payload client-side without verifying
+function parseJwt(token) {
+  if (!token || typeof token !== 'string' || !token.includes('.')) return null;
+  try {
+    const base64Url = token.split('.')[1];
+    const base64    = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const json      = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
+function isTokenExpired(token) {
+  const payload = parseJwt(token);
+  if (!payload || !payload.exp) return true;
+  // Pre-emptively refresh if token expires in less than 15 seconds
+  return (Date.now() / 1000) > (payload.exp - 15);
+}
+
+let activeRefreshPromise = null;
+
+// ── Request interceptor — attach access token with pre-emptive refresh ─────────
 hrApiClient.interceptors.request.use(
-  (config) => {
-    const token = tokenStore.getAccess();
+  async (config) => {
+    const urlStr = config.url || '';
+    const isAuthPath = urlStr.includes('/hr/auth/refresh') || 
+                       urlStr.includes('/hr/auth/login') || 
+                       urlStr.includes('/hr/auth/bridge') || 
+                       urlStr.includes('/hr/auth/register');
+
+    let token = tokenStore.getAccess();
+
+    if (!isAuthPath) {
+      const needsRefresh = !token || isTokenExpired(token);
+      
+      // Only attempt pre-emptive refresh if we have a cached user state indicating we are logged in
+      const hasSession = localStorage.getItem('mprar_auth_cache_v1');
+
+      if (needsRefresh && hasSession) {
+        if (!activeRefreshPromise) {
+          activeRefreshPromise = (async () => {
+            try {
+              const { data } = await axios.post(
+                `${BASE_URL}/hr/auth/refresh`,
+                {},
+                { withCredentials: true }
+              );
+              const newAccessToken = data.accessToken;
+              tokenStore.setAccess(newAccessToken);
+              return newAccessToken;
+            } catch (err) {
+              tokenStore.clearAll();
+              window.dispatchEvent(new CustomEvent('hr:auth:logout'));
+              throw err;
+            } finally {
+              activeRefreshPromise = null;
+            }
+          })();
+        }
+
+        try {
+          token = await activeRefreshPromise;
+        } catch (err) {
+          return Promise.reject(err);
+        }
+      }
+    }
+
     if (token) {
       config.headers['Authorization'] = `Bearer ${token}`;
     }

@@ -19,15 +19,37 @@ function normalizeDates(obj) {
   return out;
 }
 
+// ── In-flight deduplication — prevents duplicate concurrent requests ──────────
+const _inFlight = {};
+function dedupe(key, factory) {
+  if (!_inFlight[key]) {
+    _inFlight[key] = factory().finally(() => { delete _inFlight[key]; });
+  }
+  return _inFlight[key];
+}
+
+// Simple TTL memory cache to avoid hammering the endpoint on rapid re-renders
+const _cache = {};
+function memGet(key) { const e = _cache[key]; return (e && Date.now() < e.exp) ? e.val : null; }
+function memSet(key, val, ttlMs = 5 * 60 * 1000) { _cache[key] = { val, exp: Date.now() + ttlMs }; }
+
 // ── Sites ─────────────────────────────────────────────────────────────────────
 export async function getSites(companyId) {
-  try {
-    const { data } = await hrApiClient.get('/hr/sites');
-    return (data.sites || data || []).map(normalizeDates);
-  } catch (err) {
-    if (err.response?.status === 403) return [];
-    throw new Error(err.response?.data?.error || 'Failed to fetch sites');
-  }
+  const cacheKey = `sites_${companyId || 'all'}`;
+  const cached = memGet(cacheKey);
+  if (cached) return cached;
+
+  return dedupe(cacheKey, async () => {
+    try {
+      const { data } = await hrApiClient.get('/hr/sites');
+      const result = (data.sites || data || []).map(normalizeDates);
+      memSet(cacheKey, result);
+      return result;
+    } catch (err) {
+      if (err.response?.status === 403) return [];
+      throw new Error(err.response?.data?.error || 'Failed to fetch sites');
+    }
+  });
 }
 
 export async function getSiteById(siteId) {

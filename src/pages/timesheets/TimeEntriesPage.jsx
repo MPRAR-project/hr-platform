@@ -1395,12 +1395,14 @@ const TimeEntriesPage = () => {
                 weekStartDay
             });
 
-            // Call delete service
-            const result = await deleteTimeEntry(userId, dateStr, entry, weekStartDay);
+            // Call delete service — extract the time-entry ID from the entry object
+            const timeEntryId = entry?.id || entry?.sessionId;
+            if (!timeEntryId) throw new Error('Cannot determine time entry ID for deletion');
+            const result = await deleteTimeEntry(userId, dateStr, timeEntryId, null);
 
 
             if (result && result.success) {
-                toast.success(`Time entry deleted successfully. Removed ${result.deletedCount || 0} entries and ${result.deletedSessionsCount || 0} sessions.`);
+                toast.success('Time entry deleted successfully.');
 
                 // Apply optimistic update immediately if we have updated timesheet data
                 if (result.updatedTimesheet) {

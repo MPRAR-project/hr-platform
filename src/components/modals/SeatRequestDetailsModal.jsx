@@ -15,6 +15,7 @@ const SeatRequestDetailsModal = ({
   onClose = () => {},
   request,
   onApprove,
+  onReject,
   onCancel,
   loadingAction = false
 }) => {
@@ -22,7 +23,8 @@ const SeatRequestDetailsModal = ({
 
   const status = (request.status || 'pending').toLowerCase();
   const canApprove = typeof onApprove === 'function' && status === 'pending';
-  const canCancel = typeof onCancel === 'function' && status === 'pending';
+  const canReject  = typeof onReject  === 'function' && status === 'pending';
+  const canCancel  = typeof onCancel  === 'function' && status === 'pending';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40 px-4">
@@ -52,7 +54,7 @@ const SeatRequestDetailsModal = ({
             </div>
             <div>
               <p className="text-sm text-text-secondary">Requested Seats</p>
-              <p className="text-xl font-semibold text-text-primary">{request.additionalSeats}</p>
+              <p className="text-xl font-semibold text-text-primary">{request.additionalSeats ?? request.seatCount ?? '—'}</p>
             </div>
           </div>
 
@@ -66,8 +68,8 @@ const SeatRequestDetailsModal = ({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <p className="text-sm text-text-secondary">Requested By</p>
-              <p className="font-medium text-text-primary">{request.requestedBy?.name || '—'}</p>
-              <p className="text-sm text-text-secondary">{request.requestedBy?.email || ''}</p>
+              <p className="font-medium text-text-primary">{request.requestedBy?.name || request.requestedByName || '—'}</p>
+              <p className="text-sm text-text-secondary">{request.requestedBy?.email || request.requestedByEmail || ''}</p>
             </div>
             <div>
               <p className="text-sm text-text-secondary">Company</p>
@@ -97,6 +99,15 @@ const SeatRequestDetailsModal = ({
               disabled={loadingAction}
             >
               Cancel Request
+            </Button>
+          )}
+          {canReject && (
+            <Button
+              variant="outline-danger"
+              onClick={() => onReject(request)}
+              disabled={loadingAction}
+            >
+              Reject Request
             </Button>
           )}
           {canApprove && (

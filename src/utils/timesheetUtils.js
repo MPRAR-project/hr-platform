@@ -60,16 +60,6 @@ export function shouldShowSubmitButton(timesheet, companySettings, absencesMap, 
     // Submit is only allowed the day AFTER the week's last calendar day (strictly >)
     const allowed = todayUTC > weekEnd;
 
-    if (!allowed) {
-        const submitFrom = new Date(weekEnd);
-        submitFrom.setUTCDate(submitFrom.getUTCDate() + 1);
-        console.log(
-            `[shouldShowSubmitButton] ❌ Week ends ${weekEnd.toISOString().split('T')[0]}, submit available from ${submitFrom.toISOString().split('T')[0]}`
-        );
-    } else {
-        console.log(`[shouldShowSubmitButton] ✅ Week has ended — submit allowed`);
-    }
-
     return allowed;
 }
 

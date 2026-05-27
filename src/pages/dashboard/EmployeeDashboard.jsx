@@ -87,6 +87,10 @@ const EmployeeDashboard = () => {
     const [rawClockOutTime, setRawClockOutTime] = useState(null); // Raw time for calculations
     const [breakStartTime, setBreakStartTime] = useState(null);
     const [totalBreakTime, setTotalBreakTime] = useState(0); // in seconds
+    // Captures total elapsed seconds at clock-out to keep timer continuous on re-clock-in
+    // (context may lag by a few seconds and show stale "open" session, causing timer to reset)
+    const [sessionOffsetSec, setSessionOffsetSec] = useState(0);
+    const [sessionOffsetDate, setSessionOffsetDate] = useState(null); // 'YYYY-MM-DD'
     const { user } = useAuth();
     const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -387,6 +391,14 @@ const EmployeeDashboard = () => {
                 if (openSession) {
                     const rawStartedAt = openSession.startedAt ? new Date(openSession.startedAt) : new Date();
 
+                    // CRITICAL: The backend does not track ongoing breaks (breakStartTime).
+                    // If the user is currently on break, do NOT overwrite their status back to 'in'.
+                    if (clockStatus === 'break') {
+                        setClockInTime(rawStartedAt);
+                        setRawClockInTime(rawStartedAt);
+                        return;
+                    }
+
                     setClockInTime(rawStartedAt);
                     setRawClockInTime(rawStartedAt);
                     setClockOutTime(null);
@@ -394,6 +406,14 @@ const EmployeeDashboard = () => {
                     setTotalBreakTime(openSession.breakSec || 0);
                     setClockStatus('in');
                     return; // If there's an open session, don't check for completed sessions
+                }
+
+                // CRITICAL FIX: If clockStatus is already 'in' but the open session isn't
+                // in the context yet (WS update hasn't arrived), do NOT overwrite the
+                // optimistic clock-in state. Trust the optimistic state until the real-time
+                // context catches up with the server state.
+                if (clockStatus === 'in') {
+                    return;
                 }
 
                 // Check for completed sessions today using context
@@ -435,7 +455,7 @@ const EmployeeDashboard = () => {
             }
         };
         restoreSessionState();
-    }, [user?.uid, isLoadingSessions, getOpenSession, getTodaySessions, isClockOperationInProgress, sessionDocs]); // Added sessionDocs to sync when Firestore data changes
+    }, [user?.uid, isLoadingSessions, getOpenSession, getTodaySessions, isClockOperationInProgress, sessionDocs, clockStatus]); // Added clockStatus to track optimistic state
 
     // Error handling functions
     const showErrorMessage = useCallback((message, duration = 5000) => {
@@ -502,9 +522,10 @@ const EmployeeDashboard = () => {
 
     const reconcileState = useCallback(async () => {
         try {
-            if (!user?.id) return;
+            const userId = user?.uid || user?.id;
+            if (!userId) return;
 
-            const session = await getMyActiveSession(user.id);
+            const session = await getMyActiveSession(userId);
 
             if (session && session.status === 'open') {
                 const startedAt = session.startedAt instanceof Date ? session.startedAt : new Date(session.startedAt);
@@ -516,7 +537,7 @@ const EmployeeDashboard = () => {
                     setClockOutTime(null);
                     setRawClockOutTime(null);
                     setClockStatus('in');
-                    showErrorMessage('Clock status synchronized with server.', 3000);
+                    // Removed spammy error message
                 }
             } else {
                 // Server says we're clocked out, update local state
@@ -527,13 +548,13 @@ const EmployeeDashboard = () => {
                     setClockOutTime(null);
                     setRawClockOutTime(null);
                     setBreakStartTime(null);
-                    showErrorMessage('Clock status synchronized with server.', 3000);
+                    // Removed spammy error message
                 }
             }
         } catch (error) {
             console.error('Failed to reconcile state:', error);
         }
-    }, [user?.id, clockStatus, showErrorMessage]);
+    }, [user?.uid, user?.id, clockStatus]);
 
     useEffect(() => {
         if (!user?.uid) return;
@@ -667,6 +688,15 @@ const EmployeeDashboard = () => {
 
                 totalEffectiveSec += duration || 0;
             });
+
+        // Apply sessionOffsetSec as a floor for today only.
+        // This handles the context lag when the user re-clocks in immediately after clocking out:
+        // the previous session may still appear as "open" in context (step 1 = 0), so we
+        // use the value we captured at clock-out time as a guaranteed minimum.
+        const todayStr = new Date().toISOString().split('T')[0];
+        if (sessionOffsetDate === todayStr && sessionOffsetSec > 0) {
+            totalEffectiveSec = Math.max(totalEffectiveSec, sessionOffsetSec);
+        }
 
         // 2. Add current active session's live effective time
         const effectiveClockStatus = optimisticState?.clockStatus || clockStatus;
@@ -970,6 +1000,12 @@ const EmployeeDashboard = () => {
         const companyId = (user?.companyId || '').split('/')[1] || '';
         const siteId = (user?.siteId || '').split('/')[1] || '';
 
+        // Snapshot previous display state so we can restore it on error
+        const prevClockInTime = clockInTime;
+        const prevRawClockInTime = rawClockInTime;
+        const prevClockOutTime = clockOutTime;
+        const prevRawClockOutTime = rawClockOutTime;
+
         // Apply rounding to the clock-in time for immediate display
         const { resolveRoundingRules } = await import('../../services/roundingRules');
         const { roundSessionRange } = await import('../../utils/timeRounding');
@@ -981,7 +1017,7 @@ const EmployeeDashboard = () => {
         setClockOutTime(null);
         setRawClockOutTime(null);
         setClockStatus('in');
-        setTotalBreakTime(0);
+        setTotalBreakTime(0); // Reset break counter for this new session
         setBreakStartTime(null);
 
         // OPTIMIZATION: Make clock in instant, fetch data in background
@@ -994,6 +1030,9 @@ const EmployeeDashboard = () => {
                 assignedLocationId: null,
                 assignedLocationName: null
             }).then(async () => {
+                // Clock-in confirmed by server — show success toast
+                toast.success('Clocked in successfully ⏰', { autoClose: 3000 });
+
                 // Fetch location data in background after successful clock in
                 try {
                     const today = new Date();
@@ -1010,10 +1049,12 @@ const EmployeeDashboard = () => {
                     console.warn('Background location fetch failed:', error);
                 }
             }).catch((error) => {
-                // Revert UI on error
+                // Revert UI on error — restore previous session display
                 setClockStatus('out');
-                setClockInTime(null);
-                setRawClockInTime(null);
+                setClockInTime(prevClockInTime);
+                setRawClockInTime(prevRawClockInTime);
+                setClockOutTime(prevClockOutTime);
+                setRawClockOutTime(prevRawClockOutTime);
 
                 // Show error
                 const errorMsg = getErrorMessage(error, 'clockIn');
@@ -1023,11 +1064,14 @@ const EmployeeDashboard = () => {
                 activeClockOperationRef.current = null;
                 endOperation();
             });
+
         } catch (error) {
-            // Handle synchronous errors
+            // Handle synchronous errors — restore previous display state
             setClockStatus('out');
-            setClockInTime(null);
-            setRawClockInTime(null);
+            setClockInTime(prevClockInTime);
+            setRawClockInTime(prevRawClockInTime);
+            setClockOutTime(prevClockOutTime);
+            setRawClockOutTime(prevRawClockOutTime);
             activeClockOperationRef.current = null;
             endOperation();
             const errorMsg = getErrorMessage(error, 'clockIn');
@@ -1056,6 +1100,18 @@ const EmployeeDashboard = () => {
         let extraBreak = 0;
         if (breakStartTime) extraBreak = Math.floor((currentTime - breakStartTime) / 1000);
         const finalBreakTime = totalBreakTime + extraBreak;
+
+        // Snapshot total elapsed seconds BEFORE resetting state so the next clock-in
+        // can continue the timer from the right value even if context lags.
+        if (rawClockInTime) {
+            const grossSec = Math.max(0, Math.floor((currentTime - new Date(rawClockInTime)) / 1000));
+            const currentSessionEffSec = Math.max(0, grossSec - finalBreakTime);
+            const closedSec = (getTodaySessions?.() || [])
+                .filter(s => ['closed', 'ended', 'ended-by-manager', 'ended-by-system'].includes(s.status))
+                .reduce((sum, s) => sum + (s.rawDurationEffectiveSec ?? s.durationEffectiveSec ?? 0), 0);
+            setSessionOffsetSec(closedSec + currentSessionEffSec);
+            setSessionOffsetDate(currentTime.toISOString().split('T')[0]);
+        }
 
         const userId = user?.uid || 'unknown';
         const companyId = (user?.companyId || '').split('/')[1] || '';
@@ -1459,7 +1515,9 @@ const EmployeeDashboard = () => {
         optimisticState,
         currentTime,
         getTodaySessions,
-        getOpenSession
+        getOpenSession,
+        sessionOffsetSec,
+        sessionOffsetDate
     ]);
 
     const grossTime = useMemo(() => calculateGrossTime(), [

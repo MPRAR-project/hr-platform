@@ -82,15 +82,18 @@ export const AuthProvider = ({ children }) => {
       let tokenUser = getCurrentUser();
 
       if (!tokenUser) {
-        // No token in memory — try refreshing from the httpOnly refresh cookie
-        try {
-          const { data } = await import('../lib/hrApiClient').then(m => m.default.post('/hr/auth/refresh'));
-          if (data?.accessToken) {
-            tokenStore.setAccess(data.accessToken);
-            tokenUser = getCurrentUser();
+        // No token in memory — try refreshing from the httpOnly refresh cookie if a cached session exists
+        const hasSession = localStorage.getItem(AUTH_CACHE_KEY);
+        if (hasSession) {
+          try {
+            const { data } = await import('../lib/hrApiClient').then(m => m.default.post('/hr/auth/refresh'));
+            if (data?.accessToken) {
+              tokenStore.setAccess(data.accessToken);
+              tokenUser = getCurrentUser();
+            }
+          } catch {
+            // Cookie absent or expired — require re-login
           }
-        } catch {
-          // Cookie absent or expired — require re-login
         }
       }
 
