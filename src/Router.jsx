@@ -249,11 +249,7 @@ const AppRouter = () => {
               <SitesPage />
             </RoleGuard>
           } />
-          <Route path="/admin/data-cleanup" element={
-            <RoleGuard allowedRoles={['superUser']}>
-              <DataCleanupPage />
-            </RoleGuard>
-          } />
+
           <Route path="/invoice-summary" element={
             <RoleGuard allowedRoles={['siteManager', 'seniorManager']}>
               <PluginGuard pluginName="payslipAndInvoice">
