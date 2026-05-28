@@ -425,15 +425,15 @@ const EditTrainingAssignmentModal = ({ isOpen, onClose, assignment, training, us
       const result = await trainingService.updateAssignment(assignment.id, updateData, user.uid, companyId);
       console.log('Assignment update result:', result);
 
-      if (result.success) {
+      if (result && !result.error) {
         toast.success('Training assignment updated successfully');
         if (onUpdate) {
           // Pass the updated assignment back to the parent to avoid re-fetching
-          onUpdate(result.data || { ...assignment, ...updateData });
+          onUpdate(result.data || result || { ...assignment, ...updateData });
         }
         onClose();
       } else {
-        throw new Error(result.error || 'Failed to update assignment');
+        throw new Error(result?.error || 'Failed to update assignment');
       }
     } catch (error) {
       console.error('Error updating training assignment:', error);
