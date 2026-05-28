@@ -17,6 +17,7 @@ const EditAbsenceModal = ({ isOpen, onClose, onSave, absence }) => {
   const [userAllowances, setUserAllowances] = useState([]);
   const [loadingAllowances, setLoadingAllowances] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
 
   // Update form data when absence prop changes
   useEffect(() => {
@@ -71,25 +72,28 @@ const EditAbsenceModal = ({ isOpen, onClose, onSave, absence }) => {
   // We disable if the net increase in days exceeds the available remaining balance.
   const isSameLeaveType = allowanceService.normalizeLeaveType(formData.leaveType) === allowanceService.normalizeLeaveType(absence?.leaveType || absence?.leave);
   const effectiveRemainingDays = isSameLeaveType ? remainingDays + oldRequestedDays : remainingDays;
-  const isExceedingAllowance = formData.leaveType && newRequestedDays > effectiveRemainingDays;
+  const isExceedingAllowance = formData.leaveType && selectedAllowance && newRequestedDays > effectiveRemainingDays;
 
   const handleSave = async () => {
+    setErrorMsg('');
     if (!formData.leaveType || !formData.startingDate || !formData.endingDate) {
-      alert('Please fill in all required fields.');
+      setErrorMsg('Please fill in all required fields.');
       return;
     }
 
     if (isExceedingAllowance) {
-      alert(`You are requesting ${newRequestedDays} days, but only have ${effectiveRemainingDays} days available for this type.`);
+      setErrorMsg(`You are requesting ${newRequestedDays} days, but only have ${effectiveRemainingDays} days available for this type.`);
       return;
     }
 
     setIsSaving(true);
     try {
       await onSave(formData);
+      setErrorMsg('');
       onClose();
     } catch (error) {
       console.error('Error saving absence:', error);
+      setErrorMsg(error.message || 'Failed to save changes. Please try again.');
     } finally {
       setIsSaving(false);
     }
@@ -124,7 +128,10 @@ const EditAbsenceModal = ({ isOpen, onClose, onSave, absence }) => {
             <div className="relative">
               <select
                 value={formData.leaveType}
-                onChange={(e) => setFormData({ ...formData, leaveType: e.target.value })}
+                onChange={(e) => {
+                  setErrorMsg('');
+                  setFormData({ ...formData, leaveType: e.target.value });
+                }}
                 disabled={loadingAllowances}
                 className="w-full h-12 px-4 pr-10 border border-border-secondary rounded-lg text-md text-text-primary appearance-none focus:outline-none focus:border-border-accent-purple disabled:bg-gray-50"
               >
@@ -157,7 +164,10 @@ const EditAbsenceModal = ({ isOpen, onClose, onSave, absence }) => {
             <input
               type="text"
               value={formData.reason}
-              onChange={(e) => setFormData({ ...formData, reason: e.target.value })}
+              onChange={(e) => {
+                setErrorMsg('');
+                setFormData({ ...formData, reason: e.target.value });
+              }}
               placeholder="Fever"
               className="w-full h-12 px-4 border border-border-secondary rounded-lg text-md text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-border-accent-purple"
             />
@@ -172,6 +182,7 @@ const EditAbsenceModal = ({ isOpen, onClose, onSave, absence }) => {
                 value={formData.startingDate}
                 onChange={(e) => {
                   const newDate = e.target.value;
+                  setErrorMsg('');
                   setFormData(prev => ({
                     ...prev,
                     startingDate: newDate,
@@ -189,7 +200,10 @@ const EditAbsenceModal = ({ isOpen, onClose, onSave, absence }) => {
                 type="date"
                 value={formData.endingDate}
                 min={formData.startingDate}
-                onChange={(e) => setFormData({ ...formData, endingDate: e.target.value })}
+                onChange={(e) => {
+                  setErrorMsg('');
+                  setFormData({ ...formData, endingDate: e.target.value });
+                }}
                 placeholder="DD-MM-YYYY"
                 className="w-full h-12 px-4 border border-border-secondary rounded-lg text-md text-text-primary placeholder:text-text-secondary focus:outline-none focus:border-border-accent-purple"
               />
@@ -218,6 +232,12 @@ const EditAbsenceModal = ({ isOpen, onClose, onSave, absence }) => {
                   You are changing the dates to request more days than available.
                 </p>
               )}
+            </div>
+          )}
+
+          {errorMsg && (
+            <div className="p-3 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm font-medium">
+              {errorMsg}
             </div>
           )}
 

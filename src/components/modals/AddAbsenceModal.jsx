@@ -18,6 +18,7 @@ const AddAbsenceModal = ({ isOpen, onClose, onSave, userId, preloadedAllowances 
   const [uploadProgress, setUploadProgress] = useState(0);
   const [userAllowances, setUserAllowances] = useState([]);
   const [loadingAllowances, setLoadingAllowances] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
 
   // Fetch user's assigned leave types when modal opens
   useEffect(() => {
@@ -71,6 +72,7 @@ const AddAbsenceModal = ({ isOpen, onClose, onSave, userId, preloadedAllowances 
 
   const handleStartingDateChange = (e) => {
     const newStartingDate = e.target.value;
+    setErrorMsg('');
     setFormData(prev => {
       const updatedData = { ...prev, startingDate: newStartingDate };
       if (prev.endingDate && newStartingDate && prev.endingDate < newStartingDate) {
@@ -81,6 +83,7 @@ const AddAbsenceModal = ({ isOpen, onClose, onSave, userId, preloadedAllowances 
   };
 
   const handleLeaveTypeChange = (e) => {
+    setErrorMsg('');
     setFormData(prev => ({
       ...prev,
       leaveType: e.target.value,
@@ -90,16 +93,17 @@ const AddAbsenceModal = ({ isOpen, onClose, onSave, userId, preloadedAllowances 
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
+    setErrorMsg('');
     if (file) {
       // Validate file size (e.g., max 5MB)
       if (file.size > 5 * 1024 * 1024) {
-        alert('File size must be less than 5MB');
+        setErrorMsg('File size must be less than 5MB');
         return;
       }
       // Validate file type
       const validTypes = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png'];
       if (!validTypes.includes(file.type)) {
-        alert('Only PDF and image files (JPG, PNG) are allowed');
+        setErrorMsg('Only PDF and image files (JPG, PNG) are allowed');
         return;
       }
     }
@@ -132,9 +136,10 @@ const AddAbsenceModal = ({ isOpen, onClose, onSave, userId, preloadedAllowances 
   };
 
   const handleSubmit = async () => {
+    setErrorMsg('');
     // Validation
     if (!formData.leaveType || !formData.startingDate || !formData.endingDate) {
-      alert('Please fill in all required fields (Leave Type, Start Date, End Date).');
+      setErrorMsg('Please fill in all required fields (Leave Type, Start Date, End Date).');
       return;
     }
 
@@ -161,7 +166,7 @@ const AddAbsenceModal = ({ isOpen, onClose, onSave, userId, preloadedAllowances 
           ? `You have already used all of your ${leaveDisplayName} allowance (Total: ${total} days).`
           : `You are requesting ${requestedDays} days, but you only have ${actualRemaining.toFixed(1)} days remaining for ${leaveDisplayName}.`;
         
-        alert(overMsg);
+        setErrorMsg(overMsg);
         return;
       }
     }
@@ -171,7 +176,7 @@ const AddAbsenceModal = ({ isOpen, onClose, onSave, userId, preloadedAllowances 
 
     if (requiresFile && !formData.supportingFile) {
       const chosenLabel = LEAVE_TYPES.find(t => t.value === formData.leaveType)?.label || formData.leaveType;
-      alert(`The ${chosenLabel} request requires a supporting document/certificate.`);
+      setErrorMsg(`The ${chosenLabel} request requires a supporting document/certificate.`);
       return;
     }
 
@@ -215,11 +220,12 @@ const AddAbsenceModal = ({ isOpen, onClose, onSave, userId, preloadedAllowances 
         supportingFile: null,
       });
       setUploadProgress(0);
+      setErrorMsg('');
       onClose();
 
     } catch (error) {
       console.error("Submission error:", error);
-      alert('Failed to submit request: ' + error.message);
+      setErrorMsg('Failed to submit request: ' + error.message);
     } finally {
       setIsSaving(false);
     }
@@ -242,7 +248,7 @@ const AddAbsenceModal = ({ isOpen, onClose, onSave, userId, preloadedAllowances 
     ? allowanceService.calculateDaysFromDates(formData.startingDate, formData.endingDate) 
     : 0;
   
-  const isExceedingAllowance = formData.leaveType && requestedDays > actualRemaining;
+  const isExceedingAllowance = formData.leaveType && selectedAllowance && requestedDays > actualRemaining;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -310,7 +316,10 @@ const AddAbsenceModal = ({ isOpen, onClose, onSave, userId, preloadedAllowances 
             <label className="text-md font-semibold text-text-primary mb-3 block">Reason</label>
             <textarea
               value={formData.reason}
-              onChange={(e) => setFormData({ ...formData, reason: e.target.value })}
+              onChange={(e) => {
+                setErrorMsg('');
+                setFormData({ ...formData, reason: e.target.value });
+              }}
               placeholder="Brief description of your absence..."
               rows={3}
               disabled={isSaving}
@@ -337,7 +346,10 @@ const AddAbsenceModal = ({ isOpen, onClose, onSave, userId, preloadedAllowances 
               <input
                 type="date"
                 value={formData.endingDate}
-                onChange={(e) => setFormData({ ...formData, endingDate: e.target.value })}
+                onChange={(e) => {
+                  setErrorMsg('');
+                  setFormData({ ...formData, endingDate: e.target.value });
+                }}
                 min={formData.startingDate || todayDate}
                 disabled={isSaving}
                 className="w-full h-12 px-4 border border-border-secondary rounded-lg text-md text-text-primary focus:outline-none focus:border-border-accent-purple disabled:bg-gray-50"
@@ -400,6 +412,12 @@ const AddAbsenceModal = ({ isOpen, onClose, onSave, userId, preloadedAllowances 
                   <div className="bg-indigo-600 h-2 rounded-full transition-all" style={{ width: `${uploadProgress}%` }}></div>
                 </div>
               )}
+            </div>
+          )}
+
+          {errorMsg && (
+            <div className="p-3 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm font-medium">
+              {errorMsg}
             </div>
           )}
 

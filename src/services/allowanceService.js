@@ -59,7 +59,7 @@ class AllowanceService {
   // ── Normalize leave type key ─────────────────────────────────────────────
   normalizeLeaveType(leaveType) {
     if (!leaveType) return '';
-    const lower = String(leaveType).toLowerCase().trim();
+    const lower = String(leaveType).toLowerCase().trim().replace(/_/g, ' ');
     return LEAVE_TYPE_ALIASES[lower] || lower.replace(/\s+/g, '');
   }
 

@@ -35,12 +35,19 @@ function calcDurationDays(startingDate, endingDate) {
 }
 
 function normalizeDateFields(data) {
+  if (!data) return data;
   // Convert Firestore-style timestamps to ISO strings for display
   const out = { ...data };
   ['createdAt', 'updatedAt', 'submittedDate', 'approvedDate', 'declinedDate'].forEach((k) => {
     if (out[k]?.toDate) out[k] = out[k].toDate().toISOString();
     else if (out[k]?.seconds) out[k] = new Date(out[k].seconds * 1000).toISOString();
   });
+  if (out.absenceType && !out.leaveType) {
+    out.leaveType = out.absenceType;
+  }
+  if (out.leaveType && !out.absenceType) {
+    out.absenceType = out.leaveType;
+  }
   return out;
 }
 
@@ -69,6 +76,7 @@ class AbsenceService {
 
     const payload = {
       ...absenceData,
+      absenceType:  absenceData.leaveType || absenceData.leave || absenceData.absenceType,
       startDate:    absenceData.startingDate,
       endDate:      absenceData.endingDate,
       duration:     `${durationDays} days`,
@@ -208,20 +216,24 @@ class AbsenceService {
 
   // ── Update Absence ─────────────────────────────────────────────────────────
   async updateAbsence(absenceId, updateData, currentUser) {
+    const preparedData = {
+      ...updateData,
+      absenceType: updateData.leaveType || updateData.leave || updateData.absenceType
+    };
     // Recalculate duration if dates changed
-    if (updateData.startingDate || updateData.endingDate) {
+    if (preparedData.startingDate || preparedData.endingDate) {
       const days = calcDurationDays(
-        updateData.startingDate || updateData.startDate,
-        updateData.endingDate   || updateData.endDate
+        preparedData.startingDate || preparedData.startDate,
+        preparedData.endingDate   || preparedData.endDate
       );
-      updateData.duration     = `${days} days`;
-      updateData.durationDays = days;
-      if (updateData.startingDate) { updateData.startDate = updateData.startingDate; delete updateData.startingDate; }
-      if (updateData.endingDate)   { updateData.endDate   = updateData.endingDate;   delete updateData.endingDate;   }
+      preparedData.duration     = `${days} days`;
+      preparedData.durationDays = days;
+      if (preparedData.startingDate) { preparedData.startDate = preparedData.startingDate; delete preparedData.startingDate; }
+      if (preparedData.endingDate)   { preparedData.endDate   = preparedData.endingDate;   delete preparedData.endingDate;   }
     }
 
     try {
-      const { data } = await hrApiClient.put(`/hr/absences/${absenceId}`, updateData);
+      const { data } = await hrApiClient.put(`/hr/absences/${absenceId}`, preparedData);
       return normalizeDateFields(data);
     } catch (err) {
       if (err.response?.status === 403) throw new Error('Permission denied');
