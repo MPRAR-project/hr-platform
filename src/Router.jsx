@@ -49,8 +49,7 @@ const SeatRequestPage = lazy(() => import('./pages/users/SeatManagementPage'));
 const TimesheetManagementPage = lazy(() => import('./pages/timesheets/TimesheetManagementPage'));
 const AbsenceManagementPage = lazy(() => import('./pages/absence/AbsenceManagementPage'));
 const EmployeeAbsencesPage = lazy(() => import('./pages/absence/EmployeeAbsencesPage'));
-const MigrationPage = lazy(() => import('./pages/admin/MigrationPage'));
-const MultiCompanyMigrationPage = lazy(() => import('./pages/admin/MultiCompanyMigrationPage'));
+
 const EmployeeTimesheetsPage = lazy(() => import('./pages/timesheets/EmployeeTimesheetPage'));
 const TimeEntriesPage = lazy(() => import('./pages/timesheets/TimeEntriesPage'));
 const InviteSignupPage = lazy(() => import('./pages/auth/InviteSignupPage'));
@@ -59,8 +58,6 @@ const LoaderTestPage = lazy(() => import('./pages/test/LoaderTestPage'));
 const ClientsPage = lazy(() => import('./pages/clients/ClientsPage'));
 const SitesPage = lazy(() => import('./pages/admin/SitesPage'));
 const TimesheetArchivePage = lazy(() => import('./pages/timesheets/TimesheetArchivePage'));
-const DataCleanupPage = lazy(() => import('./pages/admin/DataCleanupPage'));
-const ManualEntryMigrationPage = lazy(() => import('./pages/admin/ManualEntryMigrationPage'));
 const InvoiceSummaryPage = lazy(() => import('./pages/financials/InvoiceSummaryPage'));
 const InvoiceSettingsPage = lazy(() => import('./pages/financials/InvoiceSettingsPage'));
 const InvoiceGeneratorPage = lazy(() => import('./pages/financials/InvoiceGeneratorPage'));
@@ -74,7 +71,6 @@ const TimesheetInspectorPage = lazy(() => import('./pages/debug/TimesheetInspect
 const SessionDebugPage = lazy(() => import('./pages/debug/SessionDebugPage'));
 const SuperAdminUserListPage = lazy(() => import('./pages/admin/SuperAdminUserListPage'));
 const DummyTimesheetGenerator = lazy(() => import('./pages/ManuralPage'));
-const RolesBackfillMigrationPage = lazy(() => import('./pages/admin/RolesBackfillMigrationPage'));
 
 import Loader from './components/ui/Loader';
 
@@ -227,16 +223,7 @@ const AppRouter = () => {
               </PluginGuard>
             </RoleGuard>
           } />
-          <Route path="/admin/migration" element={
-            <RoleGuard allowedRoles={['superUser']}>
-              <MigrationPage />
-            </RoleGuard>
-          } />
-          <Route path="/admin/multi-company-migration" element={
-            <RoleGuard allowedRoles={['siteManager', 'superUser']}>
-              <MultiCompanyMigrationPage />
-            </RoleGuard>
-          } />
+
           <Route path="/admin/week-start-helper" element={
             <RoleGuard allowedRoles={['superUser']}>
               <WeekStartHelper />
@@ -265,16 +252,6 @@ const AppRouter = () => {
           <Route path="/admin/data-cleanup" element={
             <RoleGuard allowedRoles={['superUser']}>
               <DataCleanupPage />
-            </RoleGuard>
-          } />
-          <Route path="/admin/manual-entry-migration" element={
-            <RoleGuard allowedRoles={['superUser']}>
-              <ManualEntryMigrationPage />
-            </RoleGuard>
-          } />
-          <Route path="/admin/roles-migration" element={
-            <RoleGuard allowedRoles={['superUser']}>
-              <RolesBackfillMigrationPage />
             </RoleGuard>
           } />
           <Route path="/invoice-summary" element={
