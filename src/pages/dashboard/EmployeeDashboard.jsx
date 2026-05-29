@@ -163,6 +163,82 @@ const EmployeeDashboard = () => {
     const clockOutRetryTimeoutRef = useRef(null);
     const activeClockOperationRef = useRef(null); // Track active operation to prevent duplicates
 
+    const lastDayRef = useRef(new Date().toLocaleDateString('en-CA'));
+
+    // ── Local-date helpers ────────────────────────────────────────────────────
+    const getLocalDateStr = () => {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+
+    // ── Restore clock state from localStorage immediately on mount ────────────
+    // This eliminates the loading flash (timer showing 00:00:00 for 1-2 sec)
+    // while the backend session context is still fetching.
+    // The authoritative restoreSessionState effect will overwrite once sessions load.
+    useEffect(() => {
+        if (!user?.uid) return;
+        try {
+            const saved = JSON.parse(localStorage.getItem(`mprar_clock_${user.uid}`) || 'null');
+            if (!saved) return;
+            const today = getLocalDateStr();
+            if (saved.date !== today) return; // stale – different day, don't restore
+            if (saved.clockStatus === 'in' && saved.rawClockInTime) {
+                setRawClockInTime(new Date(saved.rawClockInTime));
+                setClockInTime(saved.clockInTime ? new Date(saved.clockInTime) : new Date(saved.rawClockInTime));
+                setClockStatus('in');
+                setTotalBreakTime(saved.totalBreakTime || 0);
+            } else if (saved.clockStatus === 'out' && saved.rawClockInTime) {
+                setRawClockInTime(new Date(saved.rawClockInTime));
+                setClockInTime(saved.clockInTime ? new Date(saved.clockInTime) : new Date(saved.rawClockInTime));
+                if (saved.rawClockOutTime) {
+                    setRawClockOutTime(new Date(saved.rawClockOutTime));
+                    setClockOutTime(saved.clockOutTime ? new Date(saved.clockOutTime) : new Date(saved.rawClockOutTime));
+                }
+                setTotalBreakTime(saved.totalBreakTime || 0);
+                setClockStatus('out');
+            }
+            if (saved.sessionOffsetSec != null) setSessionOffsetSec(saved.sessionOffsetSec);
+            if (saved.sessionOffsetDate)        setSessionOffsetDate(saved.sessionOffsetDate);
+        } catch { /* ignore parse errors */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user?.uid]);
+
+    // ── Persist clock state to localStorage on every meaningful change ────────
+    useEffect(() => {
+        if (!user?.uid) return;
+        try {
+            localStorage.setItem(`mprar_clock_${user.uid}`, JSON.stringify({
+                date: getLocalDateStr(),
+                clockStatus,
+                clockInTime: clockInTime instanceof Date ? clockInTime.toISOString() : clockInTime,
+                rawClockInTime: rawClockInTime instanceof Date ? rawClockInTime.toISOString() : rawClockInTime,
+                clockOutTime: clockOutTime instanceof Date ? clockOutTime.toISOString() : clockOutTime,
+                rawClockOutTime: rawClockOutTime instanceof Date ? rawClockOutTime.toISOString() : rawClockOutTime,
+                totalBreakTime,
+                sessionOffsetSec,
+                sessionOffsetDate,
+            }));
+        } catch { /* ignore storage errors */ }
+    }, [user?.uid, clockStatus, clockInTime, rawClockInTime, clockOutTime, rawClockOutTime, totalBreakTime, sessionOffsetSec, sessionOffsetDate]);
+
+    // ── Midnight auto-reset: clear clock display when the day rolls over ──────
+    useEffect(() => {
+        const today = getLocalDateStr();
+        if (today !== lastDayRef.current) {
+            lastDayRef.current = today;
+            // New day — reset all clock display state
+            setClockStatus('out');
+            setClockInTime(null);
+            setRawClockInTime(null);
+            setClockOutTime(null);
+            setRawClockOutTime(null);
+            setTotalBreakTime(0);
+            setSessionOffsetSec(0);
+            setSessionOffsetDate(null);
+            try { localStorage.removeItem(`mprar_clock_${user?.uid}`); } catch { /* ignore */ }
+        }
+    }, [currentTime]); // currentTime ticks every second – cheap date-string comparison
+
     // Load user's shift preference
     useEffect(() => {
         const loadShift = async () => {

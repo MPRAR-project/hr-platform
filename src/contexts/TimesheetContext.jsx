@@ -11,9 +11,9 @@ import { useClockSessionContext } from './ClockSessionContext';
 import {
     fetchWeeklySummaries,
     getUserTimesheetsByWeek,
-    subscribeToTimesheets,
     getCompanyWorkSchedule
 } from '../services/timesheets';
+import wsClient from '../lib/wsClient';
 import { processWeekData, calculateWeekTotals } from '../services/weekDataProcessor';
 import { getUserWeekContext } from '../services/timesheets';
 import { getWeekRangeForDate, formatISODate, DEFAULT_WEEK_START_DAY } from '../utils/weekStartUtils';
@@ -348,13 +348,32 @@ export const TimesheetProvider = ({ children }) => {
 
         fetchData();
 
-        // WebSocket listener
-        const unsubscribe = subscribeToTimesheets(user.uid, user.companyId, '', (sheets) => {
-            handleTimesheetUpdate(sheets);
-        });
+        // Re-fetch timesheets on relevant WS events
+        const doRefetch = () => {
+            fetchWeeklySummaries(user.uid, 12)
+                .then(sheets => handleTimesheetUpdate(sheets))
+                .catch(err => console.warn('[TimesheetProvider] WS-triggered refetch failed:', err));
+        };
+
+        // clock:out — backend creates/updates timesheet entry; refresh with a brief delay
+        // so the backend has time to reconcile before we read
+        const onClockOut = (data) => {
+            const myId = user.uid;
+            if (!data?.employeeId || data.employeeId === myId || data.userId === myId) {
+                setTimeout(doRefetch, 1800);
+            }
+        };
+
+        wsClient.on('timesheet:updated', doRefetch);
+        wsClient.on('clock:out', onClockOut);
+        // Also refresh on window focus so stale data is never shown after the tab regains focus
+        const onFocus = () => doRefetch();
+        window.addEventListener('focus', onFocus);
 
         return () => {
-            if (unsubscribe) unsubscribe();
+            wsClient.off('timesheet:updated', doRefetch);
+            wsClient.off('clock:out', onClockOut);
+            window.removeEventListener('focus', onFocus);
         };
     }, [user?.uid, user?.companyId, authIsLoading]);
 

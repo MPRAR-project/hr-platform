@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { getTimesheetEditPermissions } from "../../../utils/timesheetPermissions";
 import ViewTimesheetModal from "../../../components/modals/ViewTimesheetModal";
 import { Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow } from "../../../components/shared/Table";
@@ -18,6 +19,7 @@ import { getWeekRangeForDate, normalizeWeekStartDay, formatWeeklyRange } from ".
 
 
 export const TimesheetTab = () => {
+    const navigate = useNavigate();
     const [viewModalOpen, setViewModalOpen] = useState(false)
     const [editModalOpen, setEditModalOpen] = useState(false)
     const [addModalOpen, setAddModalOpen] = useState(false)
@@ -295,13 +297,22 @@ export const TimesheetTab = () => {
                 {/* Current Week Summary removed per request */}
 
                 <div className="flex flex-col md:flex-row gap-3 md:items-center md:justify-between">
-                    <Button
-                        onClick={() => setAddModalOpen(true)}
-                        variant="gradient"
-                        cn="w-full md:w-auto"
-                    >
-                        + Add Timesheet
-                    </Button>
+                    <div className="flex flex-col sm:flex-row gap-3">
+                        <Button
+                            onClick={() => setAddModalOpen(true)}
+                            variant="gradient"
+                            cn="w-full sm:w-auto"
+                        >
+                            + Add Timesheet
+                        </Button>
+                        <Button
+                            onClick={() => navigate('/time-entries')}
+                            variant="outline-primary"
+                            cn="w-full sm:w-auto"
+                        >
+                            View / Add Time Entries
+                        </Button>
+                    </div>
 
                     <div className="flex flex-col sm:flex-row gap-3">
                         <div className="flex items-center gap-2">

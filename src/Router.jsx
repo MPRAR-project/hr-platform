@@ -172,24 +172,16 @@ const AppRouter = () => {
             </RoleGuard>
           } />
           <Route path="/timesheets" element={
-            <PluginGuard pluginName="scheduling">
-              <TimesheetManagementPage userRole={user?.role} />
-            </PluginGuard>
+            <TimesheetManagementPage userRole={user?.role} />
           } />
           <Route path="/timesheets/:id" element={
-            <PluginGuard pluginName="scheduling">
-              <EmployeeTimesheetsPage />
-            </PluginGuard>
+            <EmployeeTimesheetsPage />
           } />
           <Route path="/timesheet-archives" element={
-            <PluginGuard pluginName="scheduling">
-              <TimesheetArchivePage />
-            </PluginGuard>
+            <TimesheetArchivePage />
           } />
           <Route path="/time-entries" element={
-            <PluginGuard pluginName="scheduling">
-              <TimeEntriesPage />
-            </PluginGuard>
+            <TimeEntriesPage />
           } />
           <Route path="/documents" element={<DocumentManagementPage />} />
           <Route path="/incidents" element={

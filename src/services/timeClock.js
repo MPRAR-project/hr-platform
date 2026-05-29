@@ -233,7 +233,7 @@ export async function getSessionsForDateRange({ userId, companyId, startDate, en
       params: {
         // Backend expects `from` and `to`; also send aliases for compatibility
         from:      startDate instanceof Date ? startDate.toISOString().split('T')[0] : startDate,
-        to:        endDate   instanceof Date ? endDate.toISOString().split('T')[0]   : endDate,
+        to:        endDate   instanceof Date ? endDate.toISOString()                 : endDate,
       },
     });
     return (data.entries || data || []).map(normalizeEntry);

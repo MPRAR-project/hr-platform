@@ -327,7 +327,10 @@ const TimesheetManagementPage = ({ userRole = 'employee' }) => {
 
           // Normalize for Table
           const name = u.displayName || `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email;
-          const hireDate = u.createdAt?.toDate ? u.createdAt.toDate().toLocaleDateString() : (u.hireDate || '—');
+          // startDate is the actual hire date (when the employee was added to the company)
+          const hireDate = u.startDate
+            ? new Date(u.startDate).toLocaleDateString()
+            : (u.createdAt ? new Date(u.createdAt instanceof Date ? u.createdAt : u.createdAt?.toDate?.() || u.createdAt).toLocaleDateString() : '—');
 
           return {
             ...u,

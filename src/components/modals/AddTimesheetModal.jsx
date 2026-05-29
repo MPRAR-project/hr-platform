@@ -117,35 +117,35 @@ const AddTimesheetModal = ({ isOpen, onClose }) => {
         }
     };
 
-    // Generate calendar days for current month view
+    // Generate calendar days for current month view — always 42 cells (6 rows × 7 cols)
     const calendarDays = useMemo(() => {
         const year = currentMonth.getFullYear();
         const month = currentMonth.getMonth();
 
-        // Get first day of month and calculate offset
         const firstDay = new Date(year, month, 1);
-        const lastDay = new Date(year, month + 1, 0);
+        const lastDay  = new Date(year, month + 1, 0);
+        // startOffset: column index (0=Sun…6=Sat) where the 1st of the month falls
         const startOffset = firstDay.getDay();
 
         const days = [];
 
-        // Add previous month's trailing days
-        for (let i = startOffset - 1; i >= 0; i--) {
-            const date = new Date(year, month, -i);
-            days.push({ date, isCurrentMonth: false });
+        // Trailing days from the previous month — fill left-side blank columns
+        // new Date(year, month, 1 - i) counts backwards from the 1st:
+        //   i=1 → day 0  = last day of prev month
+        //   i=2 → day -1 = second-to-last, etc.
+        for (let i = startOffset; i > 0; i--) {
+            days.push({ date: new Date(year, month, 1 - i), isCurrentMonth: false });
         }
 
-        // Add current month's days
-        for (let i = 1; i <= lastDay.getDate(); i++) {
-            const date = new Date(year, month, i);
-            days.push({ date, isCurrentMonth: true });
+        // Current month days
+        for (let d = 1; d <= lastDay.getDate(); d++) {
+            days.push({ date: new Date(year, month, d), isCurrentMonth: true });
         }
 
-        // Add next month's leading days to complete the grid
-        const remainingDays = 42 - days.length; // 6 rows * 7 days
-        for (let i = 1; i <= remainingDays; i++) {
-            const date = new Date(year, month + 1, i);
-            days.push({ date, isCurrentMonth: false });
+        // Leading days from the next month — complete the 6-row grid
+        const remaining = 42 - days.length;
+        for (let d = 1; d <= remaining; d++) {
+            days.push({ date: new Date(year, month + 1, d), isCurrentMonth: false });
         }
 
         return days;
@@ -298,12 +298,29 @@ const AddTimesheetModal = ({ isOpen, onClose }) => {
                         {/* Calendar Days */}
                         <div className="grid grid-cols-7 gap-1">
                             {calendarDays.map(({ date, isCurrentMonth }, index) => {
-                                const isWeekStart = isWeekStartingDate(date, effectiveWeekStartDay);
-                                const hasTimesheet = hasExistingTimesheet(date);
-                                const isFuture = isFutureWeekStart(date, effectiveWeekStartDay);
-                                const isDisabled = !isWeekStart || hasTimesheet || isFuture;
-                                const isSelected = selectedDate && formatISODate(selectedDate) === formatISODate(date);
-                                const weekRange = isWeekStart ? getWeekRangePreview(date) : null;
+                                const isWeekStart  = isCurrentMonth && isWeekStartingDate(date, effectiveWeekStartDay);
+                                const hasTimesheet = isCurrentMonth && hasExistingTimesheet(date);
+                                const isFuture     = isCurrentMonth && isFutureWeekStart(date, effectiveWeekStartDay);
+                                // Non-current-month days are always disabled regardless of day-of-week
+                                const isDisabled   = !isCurrentMonth || !isWeekStart || hasTimesheet || isFuture;
+                                const isSelected   = isCurrentMonth && selectedDate && formatISODate(selectedDate) === formatISODate(date);
+                                const weekRange    = isWeekStart && !isDisabled ? getWeekRangePreview(date) : null;
+
+                                // Build className from explicit state — avoids Tailwind class conflicts
+                                let cellClass = 'aspect-square p-1 text-sm rounded-lg transition-all relative ';
+                                if (!isCurrentMonth) {
+                                    cellClass += 'text-gray-200 cursor-default';
+                                } else if (isSelected) {
+                                    cellClass += 'bg-purple-600 text-white font-bold ring-2 ring-purple-300 cursor-pointer';
+                                } else if (isWeekStart && hasTimesheet) {
+                                    cellClass += 'bg-gray-100 text-gray-400 line-through cursor-not-allowed opacity-60';
+                                } else if (isWeekStart && isFuture) {
+                                    cellClass += 'bg-red-50 text-red-400 line-through cursor-not-allowed opacity-60';
+                                } else if (isWeekStart) {
+                                    cellClass += 'bg-purple-50 text-purple-600 hover:bg-purple-100 font-semibold cursor-pointer';
+                                } else {
+                                    cellClass += 'text-gray-400 cursor-default';
+                                }
 
                                 return (
                                     <button
@@ -311,22 +328,13 @@ const AddTimesheetModal = ({ isOpen, onClose }) => {
                                         onClick={() => !isDisabled && handleDateClick(date)}
                                         disabled={isDisabled}
                                         title={weekRange ? `Week: ${weekRange.start} - ${weekRange.end}` : ''}
-                                        className={`
-                      aspect-square p-1 text-sm rounded-lg transition-all relative
-                      ${!isCurrentMonth ? 'text-gray-300' : ''}
-                      ${isDisabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}
-                      ${isWeekStart && !hasTimesheet && !isFuture && !isSelected ? 'bg-purple-50 text-purple-600 hover:bg-purple-100 font-semibold' : ''}
-                      ${isSelected ? 'bg-purple-600 text-white font-bold ring-2 ring-purple-300' : ''}
-                      ${hasTimesheet && isWeekStart ? 'bg-gray-200 text-gray-500 line-through' : ''}
-                      ${isFuture && isWeekStart ? 'bg-red-50 text-red-400 line-through' : ''}
-                      ${!isWeekStart ? 'text-gray-400' : ''}
-                    `}
+                                        className={cellClass}
                                     >
                                         {date.getDate()}
-                                        {hasTimesheet && isWeekStart && (
-                                            <span className="absolute top-0 right-0 text-xs">✓</span>
+                                        {isCurrentMonth && hasTimesheet && isWeekStart && (
+                                            <span className="absolute top-0 right-0 text-xs text-green-600">✓</span>
                                         )}
-                                        {isFuture && isWeekStart && (
+                                        {isCurrentMonth && isFuture && isWeekStart && (
                                             <span className="absolute top-0 right-0 text-xs">🚫</span>
                                         )}
                                     </button>

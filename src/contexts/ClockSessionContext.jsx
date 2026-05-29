@@ -31,7 +31,7 @@ export const useClockSessionContext = () => {
 };
 
 export const ClockSessionProvider = ({ children }) => {
-    const { user, isLoading: isAuthLoading } = useAuth();
+    const { user, isLoading: isAuthLoading, companySettings } = useAuth();
     const [sessionDocs, setSessionDocs] = useState([]);
     const [recentEntries, setRecentEntries] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -39,15 +39,18 @@ export const ClockSessionProvider = ({ children }) => {
     const unsubscribeRef = useRef(null);
     const isInitialLoadRef = useRef(true);
 
+    // Derive per-day hours from company settings (used for overtime threshold)
+    const perDayHours = companySettings?.perDayHours || 8;
+
     // Process sessions into recent entries
     const updateRecentEntries = useCallback((docs) => {
         try {
-            const entries = processRecentEntries(docs, 7);
+            const entries = processRecentEntries(docs, 7, perDayHours);
             setRecentEntries(entries);
         } catch (err) {
             console.error('[ClockSessionProvider] Error processing recent entries:', err);
         }
-    }, []);
+    }, [perDayHours]);
 
     // Handle session document updates
     const handleSessionUpdate = useCallback((docs, metadata) => {
@@ -100,7 +103,7 @@ export const ClockSessionProvider = ({ children }) => {
                 });
                 
                 setSessionDocs(sessions);
-                setRecentEntries(processRecentEntries(sessions, 7));
+                setRecentEntries(processRecentEntries(sessions, 7, perDayHours));
             } catch (err) {
                 console.error('[ClockSessionProvider] Fetch error:', err);
                 setError(err.message);
@@ -135,13 +138,16 @@ export const ClockSessionProvider = ({ children }) => {
         return sessionDocs.find(s => s.status === 'open') || null;
     }, [sessionDocs]);
 
-    // Get today's sessions
+    // Get today's sessions — uses LOCAL date so day boundaries match the user's timezone
     const getTodaySessions = useCallback(() => {
-        const todayStr = new Date().toISOString().split('T')[0];
+        const now = new Date();
+        const todayLocalStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
         return sessionDocs.filter(s => {
-            const date = s.startedAt ? (typeof s.startedAt === 'string' ? s.startedAt : s.startedAt.toISOString()) : '';
-            return date.startsWith(todayStr);
+            if (!s.startedAt) return false;
+            const d = new Date(s.startedAt);
+            const localStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            return localStr === todayLocalStr;
         });
     }, [sessionDocs]);
 
@@ -155,7 +161,7 @@ export const ClockSessionProvider = ({ children }) => {
             getSessionsForDateRange({ userId: user.uid, startDate, endDate: now })
                 .then(sessions => {
                     setSessionDocs(sessions);
-                    setRecentEntries(processRecentEntries(sessions, 7));
+                    setRecentEntries(processRecentEntries(sessions, 7, perDayHours));
                 })
                 .finally(() => setIsLoading(false));
         }
@@ -179,61 +185,63 @@ export const ClockSessionProvider = ({ children }) => {
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function processRecentEntries(sessions = [], limit = 7) {
+function processRecentEntries(sessions = [], limit = 7, perDayHours = 8) {
   if (!Array.isArray(sessions)) return [];
-  
-  // Group sessions by date
+
+  // Group sessions by LOCAL date so the day boundary matches the user's timezone
   const groups = {};
-  
+
   // Sort sessions descending by startedAt
   const sortedSessions = [...sessions].sort((a, b) => {
     const da = a.startedAt ? new Date(a.startedAt) : new Date(0);
     const db = b.startedAt ? new Date(b.startedAt) : new Date(0);
     return db - da;
   });
-  
+
   for (const s of sortedSessions) {
     if (!s.startedAt) continue;
     const startDate = new Date(s.startedAt);
     if (isNaN(startDate.getTime())) continue;
-    
-    const dateKey = startDate.toISOString().split('T')[0]; // YYYY-MM-DD
-    if (!groups[dateKey]) {
-      groups[dateKey] = [];
+
+    // Use LOCAL date string so sessions group by the user's local day, not UTC
+    const localDate = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`;
+    if (!groups[localDate]) {
+      groups[localDate] = [];
     }
-    groups[dateKey].push(s);
+    groups[localDate].push(s);
   }
   
   const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  
+  const dailyLimitMins = (perDayHours || 8) * 60;
+
   const entries = Object.keys(groups).slice(0, limit).map(dateKey => {
     const daySessions = groups[dateKey];
-    const dateObj = new Date(dateKey);
-    
+    const dateObj = new Date(dateKey + 'T12:00:00'); // noon avoids DST shift at midnight
+
     const dayName = daysOfWeek[dateObj.getDay()] || 'Unknown';
     const dateStr = `${months[dateObj.getMonth()]} ${dateObj.getDate()}`;
-    
+
     let totalMins = 0;
     let breakMins = 0;
-    
+
     const clockInOutPairs = daySessions.map(s => {
       totalMins += Number(s.totalMinutes) || 0;
       breakMins += Number(s.breakMinutes) || 0;
-      
-      const inTime = s.startedAt 
-        ? new Date(s.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+
+      const inTime = s.startedAt
+        ? new Date(s.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         : '—';
-      const outTime = s.endedAt 
-        ? new Date(s.endedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+      const outTime = s.endedAt
+        ? new Date(s.endedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         : '—';
-        
+
       return { clockIn: inTime, clockOut: outTime };
     });
-    
+
     const totalHours = (totalMins / 60).toFixed(1);
     const breakHours = (breakMins / 60).toFixed(1);
-    const overtime = totalMins > 480 ? ((totalMins - 480) / 60).toFixed(1) : '0.0';
+    const overtime = totalMins > dailyLimitMins ? ((totalMins - dailyLimitMins) / 60).toFixed(1) : '0.0';
     
     return {
       day: dayName,
