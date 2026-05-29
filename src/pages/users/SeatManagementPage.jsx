@@ -17,6 +17,7 @@ import {
 } from '../../services/seatRequestService';
 import { recordSeatTopUp } from '../../services/billing';
 import PaymentConfirmationModal from '../../components/modals/PaymentConfirmationModal';
+import DeleteConfirmationModal from '../../components/modals/DeleteConfirmationModal';
 import { toast } from 'react-toastify';
 import { LoadingSkeleton } from '../../components/ui/LoadingSkeleton';
 import wsClient from '../../lib/wsClient';
@@ -122,12 +123,20 @@ const SeatRequestPage = () => {
     }
   };
 
-  const handleCancelRequest = async (request) => {
+  const [requestToCancel, setRequestToCancel] = useState(null);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+
+  const handleCancelRequest = (request) => {
     if (request.status !== 'pending') return;
-    if (!window.confirm('Cancel this seat request?')) return;
+    setRequestToCancel(request);
+    setShowCancelModal(true);
+  };
+
+  const confirmCancelRequest = async () => {
+    if (!requestToCancel || requestToCancel.status !== 'pending') return;
     try {
       setIsProcessingAction(true);
-      await updateSeatRequestStatus(request.id, 'cancelled', {
+      await updateSeatRequestStatus(requestToCancel.id, 'cancelled', {
         resolvedById: user?.uid,
         resolvedByName: user?.displayName || user?.email || 'User',
         resolvedByEmail: user?.email,
@@ -140,6 +149,8 @@ const SeatRequestPage = () => {
       toast.error(error?.message || 'Failed to cancel request');
     } finally {
       setIsProcessingAction(false);
+      setShowCancelModal(false);
+      setRequestToCancel(null);
       setIsDetailsOpen(false);
     }
   };
@@ -380,6 +391,20 @@ const SeatRequestPage = () => {
         onApprove={isApprover ? handleApproveRequest : undefined}
         onReject={isApprover ? handleRejectRequest : undefined}
         loadingAction={isProcessingAction}
+      />
+      <DeleteConfirmationModal
+        isOpen={showCancelModal}
+        onClose={() => {
+          setShowCancelModal(false);
+          setRequestToCancel(null);
+        }}
+        onConfirm={confirmCancelRequest}
+        title="Cancel Seat Request"
+        description="Are you sure you want to cancel this seat request?"
+        warningMessage="This action cannot be undone."
+        confirmButtonText="Yes, Cancel Request"
+        cancelButtonText="Keep Request"
+        variant="danger"
       />
     </div>
   );

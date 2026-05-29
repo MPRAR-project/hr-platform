@@ -128,7 +128,8 @@ class DocumentService {
                     employeeId: userRole === 'employee' ? userId : (filters.userId || filters.employeeId)
                 }
             });
-            return { success: true, data: data.requests || data || [] };
+            const requestsArray = Array.isArray(data.requests) ? data.requests : (Array.isArray(data) ? data : []);
+            return { success: true, data: requestsArray.map(r => ({ ...r, isRequest: true })) };
         } catch (error) {
             console.error('[DocumentService] Error fetching document requests:', error);
             return { success: false, error: error.message };
