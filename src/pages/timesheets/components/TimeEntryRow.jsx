@@ -105,6 +105,12 @@ const TimeEntryRow = ({
             ? (saved?.rawStart || saved?.startedAt || null)
             : (saved?.rawEnd || saved?.endedAt || null);
 
+        const parsedRaw = toDateSafe(rawStr);
+        if (parsedRaw && !isNaN(parsedRaw.getTime()) && (rawStr instanceof Date || (typeof rawStr === 'string' && rawStr.includes('-') && rawStr.includes('T')))) {
+            if (showActualTime) return parsedRaw;
+            return roundingRules ? applyRoundingToDate(parsedRaw, kind === 'in' ? roundingRules.clockIn : roundingRules.clockOut) : parsedRaw;
+        }
+
         const isManualSavedEntry = saved?.isManual === true || saved?.source === 'manual' || saved?.manual === true;
 
         if (typeof rawStr === 'string' && rawStr.includes(':')) {
@@ -179,8 +185,8 @@ const TimeEntryRow = ({
 
                     if (entry?.savedEntries) {
                         entry.savedEntries.forEach(e => {
-                            const startDt = toDateSafe(e.rawStart) || dateFromHHMM(e.clockIn, dateStr);
-                            const endDt = toDateSafe(e.rawEnd) || dateFromHHMM(e.clockOut, dateStr);
+                            const startDt = toDateSafe(e.rawStart) || toDateSafe(e.clockIn) || dateFromHHMM(e.clockIn, dateStr);
+                            const endDt = toDateSafe(e.rawEnd) || toDateSafe(e.clockOut) || dateFromHHMM(e.clockOut, dateStr);
                             const startVal = startDt ? startDt.getTime() : (e.clockIn || 'NONE');
                             const endVal = endDt ? endDt.getTime() : (e.clockOut || 'NONE');
 

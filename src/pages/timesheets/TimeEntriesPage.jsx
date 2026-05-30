@@ -422,13 +422,7 @@ const TimeEntriesPage = () => {
         // Use getWeekRangeForDate to properly calculate the week based on company setting
         const { start } = getWeekRangeForDate(baseDate, normalizedWeekStart);
 
-        console.log('[TimeEntriesPage] weekDates calculation:', {
-            baseDate: baseDate.toISOString(),
-            isUsingSelectedWeek: !!selectedWeekStart,
-            normalizedWeekStart,
-            calculatedWeekStart: start.toISOString(),
-            startDayName: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][start.getDay()]
-        });
+
 
         // Generate 7 days starting from the week start
         const dates = [];
@@ -574,9 +568,17 @@ const TimeEntriesPage = () => {
                 if (primarySavedEntry) {
                     // Helper to convert time string (HH:MM) to Date for formatting
                     const timeStringToDate = (timeStr, dateStr) => {
-                        if (!timeStr || typeof timeStr !== 'string') return null;
+                        if (!timeStr) return null;
                         try {
-                            const [hours, minutes] = timeStr.split(':').map(Number);
+                            const parsed = new Date(timeStr);
+                            if (timeStr instanceof Date && !isNaN(timeStr.getTime())) {
+                                return timeStr;
+                            }
+                            if (typeof timeStr === 'string' && timeStr.includes('-') && timeStr.includes('T') && !isNaN(parsed.getTime())) {
+                                return parsed;
+                            }
+
+                            const [hours, minutes] = String(timeStr).split(':').map(Number);
                             if (isNaN(hours) || isNaN(minutes)) return null;
                             const date = new Date(dateStr);
                             date.setHours(hours, minutes, 0, 0);

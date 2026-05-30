@@ -79,19 +79,60 @@ const EmployeeDashboard = () => {
     const [showShiftModal, setShowShiftModal] = useState(false);
     const [shiftModalData, setShiftModalData] = useState(null);
     const [pendingClockIn, setPendingClockIn] = useState(false);
-    const [clockStatus, setClockStatus] = useState('out'); // 'out', 'in', 'break'
+    const { user } = useAuth();
+
+    // ── Local-date helpers ────────────────────────────────────────────────────
+    const getLocalDateStr = () => {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+
+    // ── Read persisted clock state from localStorage synchronously ─────────────
+    // Called once as a lazy initializer so the FIRST render has the right values.
+    // This eliminates the 00:00:00 flash that would otherwise appear while the
+    // useEffect restore runs asynchronously after mount.
+    const readSavedClockState = () => {
+        try {
+            const uid = user?.uid;
+            if (!uid) return null;
+            const raw = localStorage.getItem(`mprar_clock_${uid}`);
+            if (!raw) return null;
+            const saved = JSON.parse(raw);
+            if (!saved) return null;
+            const today = new Date();
+            const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+            if (saved.date !== todayStr) return null; // stale — different day
+            return saved;
+        } catch {
+            return null;
+        }
+    };
+
+    const _saved = readSavedClockState();
+
+    // Lazy initializers read from localStorage so first render has correct values
+    const [clockStatus, setClockStatus] = useState(() => _saved?.clockStatus || 'out');
     const [currentTime, setCurrentTime] = useState(new Date());
-    const [clockInTime, setClockInTime] = useState(null); // Display time (rounded)
-    const [clockOutTime, setClockOutTime] = useState(null); // Display time (rounded)
-    const [rawClockInTime, setRawClockInTime] = useState(null); // Raw time for calculations
-    const [rawClockOutTime, setRawClockOutTime] = useState(null); // Raw time for calculations
-    const [breakStartTime, setBreakStartTime] = useState(null);
-    const [totalBreakTime, setTotalBreakTime] = useState(0); // in seconds
+    const [clockInTime, setClockInTime] = useState(() =>
+        _saved?.clockInTime ? new Date(_saved.clockInTime) : (_saved?.rawClockInTime ? new Date(_saved.rawClockInTime) : null)
+    );
+    const [clockOutTime, setClockOutTime] = useState(() =>
+        _saved?.clockOutTime ? new Date(_saved.clockOutTime) : (_saved?.rawClockOutTime ? new Date(_saved.rawClockOutTime) : null)
+    );
+    const [rawClockInTime, setRawClockInTime] = useState(() =>
+        _saved?.rawClockInTime ? new Date(_saved.rawClockInTime) : null
+    );
+    const [rawClockOutTime, setRawClockOutTime] = useState(() =>
+        _saved?.rawClockOutTime ? new Date(_saved.rawClockOutTime) : null
+    );
+    const [breakStartTime, setBreakStartTime] = useState(() =>
+        _saved?.breakStartTime ? new Date(_saved.breakStartTime) : null
+    );
+    const [totalBreakTime, setTotalBreakTime] = useState(() => _saved?.totalBreakTime || 0);
     // Captures total elapsed seconds at clock-out to keep timer continuous on re-clock-in
     // (context may lag by a few seconds and show stale "open" session, causing timer to reset)
-    const [sessionOffsetSec, setSessionOffsetSec] = useState(0);
-    const [sessionOffsetDate, setSessionOffsetDate] = useState(null); // 'YYYY-MM-DD'
-    const { user } = useAuth();
+    const [sessionOffsetSec, setSessionOffsetSec] = useState(() => _saved?.sessionOffsetSec || 0);
+    const [sessionOffsetDate, setSessionOffsetDate] = useState(() => _saved?.sessionOffsetDate || null);
     const [isRefreshing, setIsRefreshing] = useState(false);
 
 
@@ -165,43 +206,6 @@ const EmployeeDashboard = () => {
 
     const lastDayRef = useRef(new Date().toLocaleDateString('en-CA'));
 
-    // ── Local-date helpers ────────────────────────────────────────────────────
-    const getLocalDateStr = () => {
-        const d = new Date();
-        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    };
-
-    // ── Restore clock state from localStorage immediately on mount ────────────
-    // This eliminates the loading flash (timer showing 00:00:00 for 1-2 sec)
-    // while the backend session context is still fetching.
-    // The authoritative restoreSessionState effect will overwrite once sessions load.
-    useEffect(() => {
-        if (!user?.uid) return;
-        try {
-            const saved = JSON.parse(localStorage.getItem(`mprar_clock_${user.uid}`) || 'null');
-            if (!saved) return;
-            const today = getLocalDateStr();
-            if (saved.date !== today) return; // stale – different day, don't restore
-            if (saved.clockStatus === 'in' && saved.rawClockInTime) {
-                setRawClockInTime(new Date(saved.rawClockInTime));
-                setClockInTime(saved.clockInTime ? new Date(saved.clockInTime) : new Date(saved.rawClockInTime));
-                setClockStatus('in');
-                setTotalBreakTime(saved.totalBreakTime || 0);
-            } else if (saved.clockStatus === 'out' && saved.rawClockInTime) {
-                setRawClockInTime(new Date(saved.rawClockInTime));
-                setClockInTime(saved.clockInTime ? new Date(saved.clockInTime) : new Date(saved.rawClockInTime));
-                if (saved.rawClockOutTime) {
-                    setRawClockOutTime(new Date(saved.rawClockOutTime));
-                    setClockOutTime(saved.clockOutTime ? new Date(saved.clockOutTime) : new Date(saved.rawClockOutTime));
-                }
-                setTotalBreakTime(saved.totalBreakTime || 0);
-                setClockStatus('out');
-            }
-            if (saved.sessionOffsetSec != null) setSessionOffsetSec(saved.sessionOffsetSec);
-            if (saved.sessionOffsetDate)        setSessionOffsetDate(saved.sessionOffsetDate);
-        } catch { /* ignore parse errors */ }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [user?.uid]);
 
     // ── Persist clock state to localStorage on every meaningful change ────────
     useEffect(() => {
@@ -215,11 +219,13 @@ const EmployeeDashboard = () => {
                 clockOutTime: clockOutTime instanceof Date ? clockOutTime.toISOString() : clockOutTime,
                 rawClockOutTime: rawClockOutTime instanceof Date ? rawClockOutTime.toISOString() : rawClockOutTime,
                 totalBreakTime,
+                // Persist breakStartTime so we can resume break timer after refresh
+                breakStartTime: breakStartTime instanceof Date ? breakStartTime.toISOString() : breakStartTime,
                 sessionOffsetSec,
                 sessionOffsetDate,
             }));
         } catch { /* ignore storage errors */ }
-    }, [user?.uid, clockStatus, clockInTime, rawClockInTime, clockOutTime, rawClockOutTime, totalBreakTime, sessionOffsetSec, sessionOffsetDate]);
+    }, [user?.uid, clockStatus, clockInTime, rawClockInTime, clockOutTime, rawClockOutTime, totalBreakTime, breakStartTime, sessionOffsetSec, sessionOffsetDate]);
 
     // ── Midnight auto-reset: clear clock display when the day rolls over ──────
     useEffect(() => {
@@ -439,9 +445,17 @@ const EmployeeDashboard = () => {
         };
     }, [user?.uid, refresh]);
 
+    // Refs that mirror state so the restore callback can read them without being in deps
+    const clockStatusRef = useRef(clockStatus);
+    const breakStartTimeRef = useRef(breakStartTime);
+    const totalBreakTimeRef = useRef(totalBreakTime);
+    useEffect(() => { clockStatusRef.current = clockStatus; }, [clockStatus]);
+    useEffect(() => { breakStartTimeRef.current = breakStartTime; }, [breakStartTime]);
+    useEffect(() => { totalBreakTimeRef.current = totalBreakTime; }, [totalBreakTime]);
+
     // Restore ongoing clock session on mount (if user navigated away and returned)
     // Now uses real-time context data
-    // Also syncs when sessionDocs change (e.g., after timesheet edit updates Firestore)
+    // Also syncs when sessionDocs change (e.g., after timesheet edit updates sessions)
     useEffect(() => {
         const restoreSessionState = async () => {
             try {
@@ -454,6 +468,9 @@ const EmployeeDashboard = () => {
                 }
 
                 if (!user?.uid) return;
+
+                // Read current status via ref to avoid dep cycle
+                const currentClockStatus = clockStatusRef.current;
 
                 // Get open session from context first
                 let openSession = getOpenSession();
@@ -469,9 +486,29 @@ const EmployeeDashboard = () => {
 
                     // CRITICAL: The backend does not track ongoing breaks (breakStartTime).
                     // If the user is currently on break, do NOT overwrite their status back to 'in'.
-                    if (clockStatus === 'break') {
+                    if (currentClockStatus === 'break') {
+                        // Just sync the clock-in time, keep break status as-is
                         setClockInTime(rawStartedAt);
                         setRawClockInTime(rawStartedAt);
+                        // Sync server-side break accumulation but keep local breakStartTime
+                        if (openSession.breakSec) {
+                            setTotalBreakTime(prev => Math.max(prev, openSession.breakSec));
+                        }
+                        return;
+                    }
+
+                    // CRITICAL FIX: Status is 'in' after ending a break.
+                    // The server's openSession.breakSec may still be 0 (async write in-flight).
+                    // Never let the server's stale 0 overwrite our locally-computed break total.
+                    // Use Math.max so we always keep the higher of server vs local.
+                    if (currentClockStatus === 'in') {
+                        // Update times from server but keep 'in' status
+                        setClockInTime(rawStartedAt);
+                        setRawClockInTime(rawStartedAt);
+                        setClockOutTime(null);
+                        setRawClockOutTime(null);
+                        // Key fix: don't let a stale server breakSec=0 erase the optimistic total
+                        setTotalBreakTime(prev => Math.max(prev, openSession.breakSec || 0));
                         return;
                     }
 
@@ -479,20 +516,22 @@ const EmployeeDashboard = () => {
                     setRawClockInTime(rawStartedAt);
                     setClockOutTime(null);
                     setRawClockOutTime(null);
-                    setTotalBreakTime(openSession.breakSec || 0);
+                    // Use Math.max here too in case restore fires right after endBreak
+                    setTotalBreakTime(prev => Math.max(prev, openSession.breakSec || 0));
                     setClockStatus('in');
+                    setBreakStartTime(null);
                     return; // If there's an open session, don't check for completed sessions
                 }
 
-                // CRITICAL FIX: If clockStatus is already 'in' but the open session isn't
-                // in the context yet (WS update hasn't arrived), do NOT overwrite the
-                // optimistic clock-in state. Trust the optimistic state until the real-time
-                // context catches up with the server state.
-                if (clockStatus === 'in') {
+                // No open session on server.
+                // If the local UI still thinks we're clocked in or on break (optimistic state)
+                // — don't override until the operation completes or we confirm the server state.
+                if (currentClockStatus === 'in' || currentClockStatus === 'break') {
+                    // Trust optimistic state — server may be lagging (WS not arrived yet)
                     return;
                 }
 
-                // Check for completed sessions today using context
+                // Both server and local agree: clocked out. Show most recent completed session.
                 const todaySessions = getTodaySessions();
 
                 // Sort by startedAt descending (most recent first)
@@ -508,30 +547,35 @@ const EmployeeDashboard = () => {
                 // But set status to 'out' so user can clock in again (multiple sessions per day allowed)
                 if (sortedTodaySessions.length > 0) {
                     const lastSession = sortedTodaySessions[0];
-                    const clockInTime = lastSession.startedAt ? new Date(lastSession.startedAt) : null;
-                    const rawClockInTime = clockInTime;
-                    const clockOutTime = lastSession.endedAt ? new Date(lastSession.endedAt) : null;
-                    const rawClockOutTime = clockOutTime;
-                    setClockInTime(clockInTime); // Display time (rounded)
-                    setRawClockInTime(rawClockInTime); // Raw time for calculations
-                    setClockOutTime(clockOutTime); // Display time (rounded)
-                    setRawClockOutTime(rawClockOutTime); // Raw time for calculations
+                    const resolvedClockInTime = lastSession.startedAt ? new Date(lastSession.startedAt) : null;
+                    const resolvedClockOutTime = lastSession.endedAt ? new Date(lastSession.endedAt) : null;
+                    setClockInTime(resolvedClockInTime);
+                    setRawClockInTime(resolvedClockInTime);
+                    setClockOutTime(resolvedClockOutTime);
+                    setRawClockOutTime(resolvedClockOutTime);
+                    setTotalBreakTime(lastSession.breakSec || 0);
+                    setBreakStartTime(null);
                     setClockStatus('out'); // Set to 'out' to allow clocking in again
                 } else {
-                    // No sessions today, default to 'out'
-                    setClockStatus('out');
-                    setClockInTime(null);
-                    setRawClockInTime(null);
-                    setClockOutTime(null);
-                    setRawClockOutTime(null);
-                    setTotalBreakTime(0);
+                    // No sessions today AND not clocked in. Only reset if we were genuinely 'out'.
+                    if (currentClockStatus === 'out') {
+                        setClockInTime(null);
+                        setRawClockInTime(null);
+                        setClockOutTime(null);
+                        setRawClockOutTime(null);
+                        setTotalBreakTime(0);
+                        setBreakStartTime(null);
+                    }
                 }
             } catch (e) {
                 console.error('Failed to restore session state', e);
             }
         };
         restoreSessionState();
-    }, [user?.uid, isLoadingSessions, getOpenSession, getTodaySessions, isClockOperationInProgress, sessionDocs, clockStatus]); // Added clockStatus to track optimistic state
+    // IMPORTANT: clockStatus is intentionally NOT in deps — we read it via ref.
+    // Adding it would cause infinite loops as restore writes to state which changes clockStatus.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user?.uid, isLoadingSessions, getOpenSession, getTodaySessions, isClockOperationInProgress, sessionDocs]);
 
     // Error handling functions
     const showErrorMessage = useCallback((message, duration = 5000) => {
@@ -601,30 +645,29 @@ const EmployeeDashboard = () => {
             const userId = user?.uid || user?.id;
             if (!userId) return;
 
+            const currentStatus = clockStatusRef.current;
+
             const session = await getMyActiveSession(userId);
 
             if (session && session.status === 'open') {
                 const startedAt = session.startedAt instanceof Date ? session.startedAt : new Date(session.startedAt);
                 
                 // Server says we're clocked in, update local state
-                if (clockStatus === 'out') {
+                if (currentStatus === 'out') {
                     setClockInTime(startedAt);
                     setRawClockInTime(startedAt);
                     setClockOutTime(null);
                     setRawClockOutTime(null);
                     setClockStatus('in');
-                    // Removed spammy error message
                 }
             } else {
-                // Server says we're clocked out, update local state
-                if (clockStatus !== 'out') {
+                // Server says we're clocked out
+                // IMPORTANT: Only update the status flag — do NOT clear the clock-in/out times.
+                // Those times are still needed to display the frozen elapsed timer correctly.
+                // The restoreSessionState effect will overwrite them with proper server values.
+                if (currentStatus !== 'out') {
                     setClockStatus('out');
-                    setClockInTime(null);
-                    setRawClockInTime(null);
-                    setClockOutTime(null);
-                    setRawClockOutTime(null);
                     setBreakStartTime(null);
-                    // Removed spammy error message
                 }
             }
         } catch (error) {
@@ -653,15 +696,13 @@ const EmployeeDashboard = () => {
     }, [getOpenSession, sessionDocs]);
 
     // Initialize totalBreakTime for the ACTIVE session
+    // Syncs from Firestore when sessionDocs update, but NEVER lets a lower server
+    // value erase a locally-computed optimistic break total (e.g. right after endBreak).
     useEffect(() => {
         if (clockStatus === 'in' || clockStatus === 'break') {
             const currentBreakTime = calculateCurrentSessionBreakTime();
-            console.log('[Dashboard] Syncing break time from Firestore:', {
-                currentBreakTime,
-                openSessionBreakSec: getOpenSession?.()?.breakSec,
-                previousTotalBreakTime: totalBreakTime
-            });
-            setTotalBreakTime(currentBreakTime);
+            // Use Math.max so the optimistic local value is never wiped by a stale server 0
+            setTotalBreakTime(prev => Math.max(prev, currentBreakTime));
         } else if (clockStatus === 'out' && !isClockOperationInProgress) {
             // Only clear totalBreakTime if we are NOT currently clocking out
             setTotalBreakTime(0);
@@ -814,8 +855,15 @@ const EmployeeDashboard = () => {
                         const currentBreakInterval = Math.max(0, Math.floor((new Date() - effectiveBreakStartTime) / 1000));
                         currentSessionBreakSec = liveBreakSec + currentBreakInterval;
                     } else {
-                        // Clocked in (not on break): Use live break time from Firestore
-                        currentSessionBreakSec = openSession?.breakSec || 0;
+                        // Clocked in (not on break): use whichever is larger — the server's
+                        // breakSec or the local totalBreakTime.
+                        // CRITICAL: after endBreak(), the server may not have updated breakSec yet
+                        // (async DB write). Using only openSession.breakSec here would deduct 0
+                        // seconds of break, making the timer jump forward by the full break duration.
+                        // Taking Math.max() ensures the locally-computed break is always respected
+                        // immediately, and the server value takes over once it catches up.
+                        const serverBreakSec = openSession?.breakSec || 0;
+                        currentSessionBreakSec = Math.max(serverBreakSec, totalBreakTime || 0);
                     }
 
                     // Effective = Gross - Breaks
@@ -1478,39 +1526,48 @@ const EmployeeDashboard = () => {
         try {
             if (!user?.uid) return;
 
-            const session = await getMyActiveSession(user.id);
+            // Check for open session
+            const session = await getMyActiveSession(user.uid || user.id);
 
             if (session && session.status === 'open') {
-                // Only sync if we're currently showing 'out' (prevents timer reset)
-                if (clockStatus === 'out') {
-                    const startedAt = session.startedAt instanceof Date ? session.startedAt : new Date(session.startedAt);
-                    setClockInTime(startedAt);
-                    setRawClockInTime(startedAt);
-                    setClockOutTime(null);
-                    setRawClockOutTime(null);
+                // Server says we are clocked IN
+                const startedAt = session.startedAt instanceof Date ? session.startedAt : new Date(session.startedAt);
 
-                    if (session.breakStartTime) {
-                        setClockStatus('break');
-                        setBreakStartTime(session.breakStartTime instanceof Date ? session.breakStartTime : new Date(session.breakStartTime));
-                    } else {
-                        setClockStatus('in');
-                    }
+                // Always update clock-in time from server (most authoritative source)
+                setClockInTime(startedAt);
+                setRawClockInTime(startedAt);
+                setClockOutTime(null);
+                setRawClockOutTime(null);
+                // Use Math.max — manual refresh may race with an async endBreak DB write;
+                // if the server breakSec is still 0, keep the local optimistic total
+                setTotalBreakTime(prev => Math.max(prev, session.breakSec || 0));
 
-                    setTotalBreakTime(session.breakSec || 0);
+                // Determine if user was on break
+                // Backend doesn't track breakStartTime; if local state says 'break' keep it
+                const currentStatus = clockStatusRef.current;
+                if (currentStatus === 'break') {
+                    // Keep break status, don't overwrite breakStartTime
                 } else {
-                    setTotalBreakTime(session.breakSec || 0);
-                }
-            } else {
-                // No open session
-                if (clockStatus !== 'out') {
-                    setClockStatus('out');
-                    setClockInTime(null);
-                    setRawClockInTime(null);
-                    setClockOutTime(null);
-                    setRawClockOutTime(null);
-                    setTotalBreakTime(0);
+                    setClockStatus('in');
                     setBreakStartTime(null);
                 }
+
+                toast.success('Clock status refreshed — you are clocked in', { autoClose: 2000 });
+            } else {
+                // Server says NO open session — clocked out or never clocked in today
+                const currentStatus = clockStatusRef.current;
+
+                if (currentStatus === 'in' || currentStatus === 'break') {
+                    // Server and local disagree — server wins; set to clocked out
+                    // But keep the clock-in/out TIMES from context so elapsed doesn't jump to 0.
+                    // The restoreSessionState will sync the proper completed session shortly.
+                    setClockStatus('out');
+                    setBreakStartTime(null);
+                    toast.info('You have been clocked out', { autoClose: 3000 });
+                }
+                // If already 'out' locally and server agrees — just refresh context
+                // Trigger context refresh to pull latest completed sessions
+                if (refresh) refresh();
             }
 
             // Refresh weekly hours
@@ -1518,11 +1575,11 @@ const EmployeeDashboard = () => {
 
         } catch (error) {
             console.error('[EmployeeDashboard] Refresh failed:', error);
-            toast.error('Failed to refresh');
+            toast.error('Failed to refresh clock status');
         } finally {
             setIsRefreshing(false);
         }
-    }, [isRefreshing, user?.uid, clockStatus, loadWeeklyHours]);
+    }, [isRefreshing, user?.uid, user?.id, clockStatus, loadWeeklyHours, refresh]);
 
 
     // Debouncing and conflict prevention

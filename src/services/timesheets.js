@@ -728,6 +728,14 @@ export { reconcileTimesheetForWeek as default };
 // submitCurrentWeek → submitWeek (used by TimesheetTab.jsx)
 export const submitCurrentWeek = submitWeek;
 
+// submitTimesheetForApproval(userId, weekStartStr, weekEndStr)
+// Called by TimeEntriesPage handleSubmitWeek — wraps submitWeek which needs (userId, companyId, weekStart)
+// companyId is omitted here and submitWeek will look it up via /hr/timesheets/ensure
+export async function submitTimesheetForApproval(userId, weekStartStr, weekEndStr) {
+  return submitWeek(userId, null, weekStartStr);
+}
+
+
 // ── Bulk / manager utilities (used by useTimesheetData.js hook) ───────────────
 
 /**
