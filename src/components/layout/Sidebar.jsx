@@ -367,12 +367,7 @@ const Sidebar = () => {
       icon: PlusCircle,
       roles: ['siteManager', 'seniorManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor']
     },
-    {
-      to: '/myabsences',
-      label: 'My Absences',
-      icon: Calendar,
-      roles: ['employee', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor']
-    },
+
 
     {
       to: '/settings',
