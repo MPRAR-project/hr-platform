@@ -442,15 +442,17 @@ const ViewTimesheetModal = ({
   // Get week key from timesheet (it's the weekKey like "2025-11-17_2025-11-23")
   const weekKey = useMemo(() => {
     if (!timesheet) return null;
+    if (weekStartDate) {
+      const { start, end } = getWeekRangeForDate(weekStartDate, contextWeekStartDay || DEFAULT_WEEK_START_DAY);
+      return `${formatISODate(start)}_${formatISODate(end)}`;
+    }
     return timesheet.id || timesheet.raw?.weekKey || timesheet.weekKey || null;
-  }, [timesheet]);
+  }, [timesheet, weekStartDate, contextWeekStartDay]);
 
-  // Build a minimal weekData structure from the timesheet's own data when the context
-  // hasn't populated weeksByKey yet (e.g. first open, slow context load).
   const buildFallbackWeekData = useCallback(() => {
     if (!timesheet) return null;
-    const startStr = timesheet.start || timesheet.weekStart || timesheet.period;
-    const endStr   = timesheet.end   || timesheet.weekEnd;
+    const startStr = timesheet.start || timesheet.weekStart || timesheet.period || timesheet.raw?.start;
+    const endStr   = timesheet.end   || timesheet.weekEnd || timesheet.raw?.end;
     if (!startStr) return null;
 
     const startDate = new Date(startStr.includes('T') ? startStr : startStr + 'T00:00:00Z');

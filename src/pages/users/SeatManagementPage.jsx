@@ -210,16 +210,19 @@ const SeatRequestPage = () => {
 
   const formattedRequests = useMemo(
     () =>
-      requests.map((req) => ({
-        ...req,
-        requestDate: parseRequestDate(req.requestedAt),
-        requestedAtDisplay: (() => {
-          if (!req.requestedAt) return '—';
-          if (req.requestedAt?.toDate) return req.requestedAt.toDate().toLocaleString();
-          const d = new Date(req.requestedAt);
-          return isNaN(d.getTime()) ? '—' : d.toLocaleString();
-        })()
-      })),
+      requests.map((req) => {
+        const dateVal = req.createdAt || req.requestedAt;
+        return {
+          ...req,
+          requestDate: parseRequestDate(dateVal),
+          requestedAtDisplay: (() => {
+            if (!dateVal) return '—';
+            if (dateVal?.toDate) return dateVal.toDate().toLocaleString();
+            const d = new Date(dateVal);
+            return isNaN(d.getTime()) ? '—' : d.toLocaleString();
+          })()
+        };
+      }),
     [requests]
   );
 

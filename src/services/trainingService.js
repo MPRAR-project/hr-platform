@@ -293,6 +293,7 @@ const trainingService = {
   getTrainingStatistics,
   subscribeTrainings,
   subscribeAssignments,
+  getTrainingAssignments,
 };
 
 export default trainingService;
