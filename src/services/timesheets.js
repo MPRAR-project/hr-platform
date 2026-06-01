@@ -454,19 +454,45 @@ export async function addManualTimeEntry(
 }
 
 // ── Submit week for approval ───────────────────────────────────────────────────
-export async function submitWeek(userId, companyId, weekStartStr) {
+export async function submitWeek(userId, companyIdOrWeekStart, weekStartStr) {
+  let resolvedCompanyId = null;
+  let resolvedWeekStart = null;
+
+  const isDateString = (str) => typeof str === 'string' && /^\d{4}-\d{2}-\d{2}/.test(str);
+
+  if (isDateString(companyIdOrWeekStart)) {
+    resolvedWeekStart = companyIdOrWeekStart;
+  } else if (companyIdOrWeekStart instanceof Date) {
+    resolvedWeekStart = formatISODateUtil(companyIdOrWeekStart);
+  } else {
+    resolvedCompanyId = companyIdOrWeekStart || null;
+    resolvedWeekStart = weekStartStr;
+  }
+
+  if (!resolvedWeekStart && isDateString(weekStartStr)) {
+    resolvedWeekStart = weekStartStr;
+  } else if (!resolvedWeekStart && weekStartStr instanceof Date) {
+    resolvedWeekStart = formatISODateUtil(weekStartStr);
+  }
+
+  if (!resolvedWeekStart) {
+    const { start } = getWeekRangeForDate(new Date(), DEFAULT_WEEK_START_DAY);
+    resolvedWeekStart = formatISODateUtil(start);
+  }
+
   try {
     // Step 1: ensure the timesheet exists and get its ID
     const ensureRes = await hrApiClient.post('/hr/timesheets/ensure', {
       employeeId: userId,
-      weekStart:  weekStartStr,
+      weekStart:  resolvedWeekStart,
+      companyId:  resolvedCompanyId ? resolvedCompanyId.replace('companies/', '') : null,
     });
     const timesheetId = ensureRes.data?.id;
     if (!timesheetId) throw new Error('Could not find or create timesheet');
 
     // Step 2: submit it
     const { data } = await hrApiClient.post(`/hr/timesheets/${timesheetId}/submit`);
-    invalidateTimesheetCache(userId, weekStartStr, [], { cascade: true });
+    invalidateTimesheetCache(userId, resolvedWeekStart, [], { cascade: true });
     return { success: true, ...data };
   } catch (err) {
     if (err.response?.status === 404) throw new Error('Timesheet not found for this week');

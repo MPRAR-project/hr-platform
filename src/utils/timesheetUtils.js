@@ -52,9 +52,9 @@ export function shouldShowSubmitButton(timesheet, companySettings, absencesMap, 
 
     if (isNaN(weekEnd.getTime())) return false;
 
-    // Today at UTC midnight
+    // Today at UTC midnight (based on local date)
     const now = new Date();
-    const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const todayUTC = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
 
     // ─── Business Rule ──────────────────────────────────────────────────────────
     // Submit is only allowed the day AFTER the week's last calendar day (strictly >)

@@ -65,10 +65,9 @@ export const TimesheetTab = () => {
 
         const displayName = user?.displayName || user?.email || 'User';
         return weeklySummaries.map(w => {
-            // ✅ FIXED: Use user's week start day to calculate correct week range
-            const baseDate = w.start instanceof Date ? w.start : new Date(w.start);
-            const effectiveWeekStartDay = normalizeWeekStartDay(userWeekStartDay);
-            const { start: weekStart, end: weekEnd } = getWeekRangeForDate(baseDate, effectiveWeekStartDay);
+            // Use actual start and end dates from the database to format the range and set bounds
+            const weekStart = w.start instanceof Date ? w.start : new Date(w.start + 'T00:00:00');
+            const weekEnd = w.end instanceof Date ? w.end : new Date(w.end + 'T23:59:59');
             const periodLabel = formatWeeklyRange(weekStart, weekEnd);
 
             const normalizeStatusLabel = (s) => {

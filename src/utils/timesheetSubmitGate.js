@@ -25,8 +25,8 @@ export function canSubmitTimesheet(weekEnd, now = new Date()) {
   const endDate = weekEnd instanceof Date ? weekEnd : new Date(weekEnd + 'T00:00:00Z');
   if (isNaN(endDate.getTime())) return false;
 
-  // Today at UTC midnight
-  const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  // Today at UTC midnight (based on local date)
+  const todayUTC = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
 
   // Submit is allowed only AFTER the last day (strictly greater than weekEnd)
   return todayUTC > endDate;

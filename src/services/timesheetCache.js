@@ -6,9 +6,21 @@ import { measureAsync } from '../hooks/usePerformanceMonitor';
 class TimesheetCache extends DataCache {
   constructor() {
     super();
+    this.cache = new Map();
+    this.ttl = 5 * 60 * 1000; // default fallback TTL
     this.timesheetTTL = 5 * 60 * 1000; // 5 minutes for active timesheet data
     this.historicalTTL = 15 * 60 * 1000; // 15 minutes for historical data
     this.weeklyTTL = 10 * 60 * 1000; // 10 minutes for weekly aggregations
+  }
+
+  // Delete key from cache
+  delete(key) {
+    try {
+      return this.cache.delete(key);
+    } catch (error) {
+      console.error('TimesheetCache.delete: Failed to delete key:', error);
+      return false;
+    }
   }
 
   // Cache weekly timesheet data for a specific user and week
