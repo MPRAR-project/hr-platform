@@ -337,7 +337,7 @@ export const useManagerTimesheets = (managerId, userIds, options = {}) => {
             // Clear cache if force refresh is requested
             if (forceRefresh) {
                 userIds.forEach(userId => invalidateTimesheetCache(userId));
-                timesheetCache.delete(`timesheets:manager:${managerId}:pending`);
+                timesheetCache.deleteKey(`timesheets:manager:${managerId}:pending`);
             }
 
             const result = await measureAsync(`useManagerTimesheets-fetch-${managerId}`, async () => {
@@ -398,7 +398,7 @@ export const useManagerTimesheets = (managerId, userIds, options = {}) => {
 
     const invalidateCache = useCallback(() => {
         userIds.forEach(userId => invalidateTimesheetCache(userId));
-        timesheetCache.delete(`timesheets:manager:${managerId}:pending`);
+        timesheetCache.deleteKey(`timesheets:manager:${managerId}:pending`);
     }, [managerId, userIds]);
 
     return {
@@ -438,7 +438,7 @@ export const usePendingApprovals = (managerId, options = {}) => {
         try {
             // Clear cache if force refresh is requested
             if (forceRefresh) {
-                timesheetCache.delete(`timesheets:manager:${managerId}:pending`);
+                timesheetCache.deleteKey(`timesheets:manager:${managerId}:pending`);
             }
 
             const result = await measureAsync(`usePendingApprovals-fetch-${managerId}`, async () => {
@@ -503,7 +503,7 @@ export const usePendingApprovals = (managerId, options = {}) => {
     }, [fetchPendingData]);
 
     const invalidateCache = useCallback(() => {
-        timesheetCache.delete(`timesheets:manager:${managerId}:pending`);
+        timesheetCache.deleteKey(`timesheets:manager:${managerId}:pending`);
     }, [managerId]);
 
     return {

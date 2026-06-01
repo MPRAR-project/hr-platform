@@ -75,7 +75,10 @@ class AllowanceService {
       const { data } = await hrApiClient.get('/hr/allowances', {
         params: { employeeId },
       });
-      return (data.leaveAllowances || data.allowances || data || []).map(normalizeDates);
+      const list = Array.isArray(data)
+        ? data
+        : [...(data.leaveAllowances || []), ...(data.allowances || [])];
+      return list.map(normalizeDates);
     } catch (err) {
       if (err.response?.status === 403) return [];
       throw new Error(err.response?.data?.error || 'Failed to fetch allowances');
@@ -86,11 +89,40 @@ class AllowanceService {
   async getAllowancesForCompany(companyId) {
     try {
       const { data } = await hrApiClient.get('/hr/allowances');
-      return (data.leaveAllowances || data.allowances || data || []).map(normalizeDates);
+      const list = Array.isArray(data)
+        ? data
+        : [...(data.leaveAllowances || []), ...(data.allowances || [])];
+      return list.map(normalizeDates);
     } catch (err) {
       if (err.response?.status === 403) return [];
       throw new Error(err.response?.data?.error || 'Failed to fetch company allowances');
     }
+  }
+
+  // ── Get pending employee IDs ─────────────────────────────────────────────
+  async getPendingEmployeeIds() {
+    try {
+      const { data } = await hrApiClient.get('/hr/allowances/pending');
+      return data.pendingEmployeeIds || [];
+    } catch (err) {
+      console.error('[allowanceService] Failed to fetch pending employee IDs:', err);
+      return [];
+    }
+  }
+
+  // ── Subscribe to pending employee IDs ────────────────────────────────────
+  subscribeToPendingEmployeeIds(callback, onError) {
+    const poll = async () => {
+      try {
+        const data = await this.getPendingEmployeeIds();
+        callback(data);
+      } catch (err) {
+        if (onError) onError(err);
+      }
+    };
+    poll();
+    const interval = setInterval(poll, 60000); // 1 min poll
+    return () => clearInterval(interval);
   }
 
   // ── Get single allowance ─────────────────────────────────────────────────

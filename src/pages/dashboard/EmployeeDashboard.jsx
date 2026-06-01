@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Clock, CheckCircle, AlertTriangle, Users, MapPin, Navigation, X, ArrowRight, Calendar, FileText, Coffee, Loader2 } from 'lucide-react';
 import { RefreshCw } from 'lucide-react';
 import TimesheetConfirmModal from '../../components/modals/TimesheetConfirmModal';
@@ -73,6 +74,7 @@ const StatusIndicator = React.memo(({ status, isLoading, operationType }) => {
 StatusIndicator.displayName = 'StatusIndicator';
 
 const EmployeeDashboard = () => {
+    const navigate = useNavigate();
     const [currentView, setCurrentView] = useState('dashboard');
     const [showTimesheetModal, setShowTimesheetModal] = useState(false);
     const [showClockOutModal, setShowClockOutModal] = useState(false);
@@ -2321,6 +2323,66 @@ const EmployeeDashboard = () => {
                     </SectionContainer>
                 </div>
 
+                {/* Quick Access & Tools Section */}
+                {hasSchedulingPlugin && (
+                    <SectionContainer title="Quick Access & Tools">
+                        <div className="p-6">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                                <button
+                                    onClick={() => navigate('/timesheets')}
+                                    className="flex items-center gap-4 p-4 rounded-xl border border-gray-200 bg-white hover:border-purple-500 hover:shadow-md transition-all text-left group"
+                                >
+                                    <div className="p-3 bg-purple-50 text-purple-600 rounded-lg group-hover:bg-purple-100 transition-colors">
+                                        <CheckCircle className="h-6 w-6" />
+                                    </div>
+                                    <div>
+                                        <h4 className="font-semibold text-gray-900 group-hover:text-purple-600 transition-colors">My Timesheets</h4>
+                                        <p className="text-xs text-gray-500">View and submit timesheets</p>
+                                    </div>
+                                </button>
+
+                                <button
+                                    onClick={() => navigate('/time-entries')}
+                                    className="flex items-center gap-4 p-4 rounded-xl border border-gray-200 bg-white hover:border-purple-500 hover:shadow-md transition-all text-left group"
+                                >
+                                    <div className="p-3 bg-blue-50 text-blue-600 rounded-lg group-hover:bg-blue-100 transition-colors">
+                                        <Clock className="h-6 w-6" />
+                                    </div>
+                                    <div>
+                                        <h4 className="font-semibold text-gray-900 group-hover:text-purple-600 transition-colors">Time Entries</h4>
+                                        <p className="text-xs text-gray-500">Track and view daily entries</p>
+                                    </div>
+                                </button>
+
+                                <button
+                                    onClick={() => navigate('/schedule')}
+                                    className="flex items-center gap-4 p-4 rounded-xl border border-gray-200 bg-white hover:border-purple-500 hover:shadow-md transition-all text-left group"
+                                >
+                                    <div className="p-3 bg-green-50 text-green-600 rounded-lg group-hover:bg-green-100 transition-colors">
+                                        <Calendar className="h-6 w-6" />
+                                    </div>
+                                    <div>
+                                        <h4 className="font-semibold text-gray-900 group-hover:text-purple-600 transition-colors">My Schedule</h4>
+                                        <p className="text-xs text-gray-500">View your assigned shifts</p>
+                                    </div>
+                                </button>
+
+                                <button
+                                    onClick={() => navigate('/incidents')}
+                                    className="flex items-center gap-4 p-4 rounded-xl border border-gray-200 bg-white hover:border-purple-500 hover:shadow-md transition-all text-left group"
+                                >
+                                    <div className="p-3 bg-red-50 text-red-600 rounded-lg group-hover:bg-red-100 transition-colors">
+                                        <AlertTriangle className="h-6 w-6" />
+                                    </div>
+                                    <div>
+                                        <h4 className="font-semibold text-gray-900 group-hover:text-purple-600 transition-colors">Report Incident</h4>
+                                        <p className="text-xs text-gray-500">Create new incident reports</p>
+                                    </div>
+                                </button>
+                            </div>
+                        </div>
+                    </SectionContainer>
+                )}
 
                 {/* Recent Time Entries */}
                 <div className="hidden">

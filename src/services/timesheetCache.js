@@ -13,12 +13,28 @@ class TimesheetCache extends DataCache {
     this.weeklyTTL = 10 * 60 * 1000; // 10 minutes for weekly aggregations
   }
 
-  // Delete key from cache
-  delete(key) {
+  // Delete key from cache safely
+  deleteKey(key) {
     try {
       return this.cache.delete(key);
     } catch (error) {
-      console.error('TimesheetCache.delete: Failed to delete key:', error);
+      console.error('TimesheetCache.deleteKey: Failed to delete key:', error);
+      return false;
+    }
+  }
+
+  // Delete wrapper for backward compatibility
+  delete(key) {
+    return this.deleteKey(key);
+  }
+
+  // Clear all cache entries
+  clear() {
+    try {
+      this.cache.clear();
+      return true;
+    } catch (error) {
+      console.error('TimesheetCache.clear: Failed to clear cache:', error);
       return false;
     }
   }
@@ -427,8 +443,8 @@ export const getTimesheetCacheStats = () =>
 
 // Enhanced cache invalidation system for real-time updates
 class TimesheetCacheInvalidator {
-  constructor(cache) {
-    this.cache = cache;
+  constructor(cacheService) {
+    this.cacheService = cacheService;
     this.debugMode = process.env.NODE_ENV === 'development';
   }
 
@@ -464,7 +480,7 @@ class TimesheetCacheInvalidator {
       ];
 
       weekCacheKeys.forEach(key => {
-        if (this.cache.delete(key)) {
+        if (this.cacheService.deleteKey(key)) {
           deletedCount++;
           deletedKeys.push(key);
         }
@@ -477,9 +493,9 @@ class TimesheetCacheInvalidator {
       ];
 
       userSummaryPatterns.forEach(pattern => {
-        for (const key of this.cache.cache.keys()) {
+        for (const key of this.cacheService.cache.keys()) {
           if (key.startsWith(pattern)) {
-            if (this.cache.delete(key)) {
+            if (this.cacheService.deleteKey(key)) {
               deletedCount++;
               deletedKeys.push(key);
             }
@@ -503,7 +519,7 @@ class TimesheetCacheInvalidator {
           ];
 
           dayKeys.forEach(key => {
-            if (this.cache.delete(key)) {
+            if (this.cacheService.deleteKey(key)) {
               deletedCount++;
               deletedKeys.push(key);
             }
@@ -555,9 +571,9 @@ class TimesheetCacheInvalidator {
       ];
 
       managerPatterns.forEach(pattern => {
-        for (const key of this.cache.cache.keys()) {
+        for (const key of this.cacheService.cache.keys()) {
           if (key.startsWith(pattern) && (key.includes(userId) || key.includes(weekStart))) {
-            if (this.cache.delete(key)) {
+            if (this.cacheService.deleteKey(key)) {
               deletedCount++;
               deletedKeys.push(key);
             }
@@ -573,9 +589,9 @@ class TimesheetCacheInvalidator {
       ];
 
       dashboardPatterns.forEach(pattern => {
-        for (const key of this.cache.cache.keys()) {
+        for (const key of this.cacheService.cache.keys()) {
           if (key.startsWith(pattern) && key.includes(weekStart)) {
-            if (this.cache.delete(key)) {
+            if (this.cacheService.deleteKey(key)) {
               deletedCount++;
               deletedKeys.push(key);
             }
@@ -623,9 +639,9 @@ class TimesheetCacheInvalidator {
     let deletedCount = 0;
     const deletedKeys = [];
 
-    for (const key of this.cache.cache.keys()) {
+    for (const key of this.cacheService.cache.keys()) {
       if (key.includes(`user:${userId}`) || key.includes(`:${userId}:`)) {
-        if (this.cache.delete(key)) {
+        if (this.cacheService.deleteKey(key)) {
           deletedCount++;
           deletedKeys.push(key);
         }
@@ -644,9 +660,9 @@ class TimesheetCacheInvalidator {
     let deletedCount = 0;
     const deletedKeys = [];
 
-    for (const key of this.cache.cache.keys()) {
+    for (const key of this.cacheService.cache.keys()) {
       if (key.includes(weekStart) || key.includes(`:weekly:${weekStart}`) || key.includes(`:team:${weekStart}`)) {
-        if (this.cache.delete(key)) {
+        if (this.cacheService.deleteKey(key)) {
           deletedCount++;
           deletedKeys.push(key);
         }
@@ -665,9 +681,9 @@ class TimesheetCacheInvalidator {
     let deletedCount = 0;
     const deletedKeys = [];
 
-    for (const key of this.cache.cache.keys()) {
+    for (const key of this.cacheService.cache.keys()) {
       if (key.includes(timesheetId)) {
-        if (this.cache.delete(key)) {
+        if (this.cacheService.deleteKey(key)) {
           deletedCount++;
           deletedKeys.push(key);
         }
@@ -691,9 +707,9 @@ class TimesheetCacheInvalidator {
       'fetchWeekDetailsForModal:'
     ];
 
-    for (const key of this.cache.cache.keys()) {
+    for (const key of this.cacheService.cache.keys()) {
       if (timesheetPatterns.some(pattern => key.startsWith(pattern))) {
-        if (this.cache.delete(key)) {
+        if (this.cacheService.deleteKey(key)) {
           deletedCount++;
           deletedKeys.push(key);
         }
@@ -707,7 +723,7 @@ class TimesheetCacheInvalidator {
    * Get invalidation statistics
    */
   getInvalidationStats() {
-    const allKeys = Array.from(this.cache.cache.keys());
+    const allKeys = Array.from(this.cacheService.cache.keys());
     const timesheetKeys = allKeys.filter(key => 
       key.startsWith('timesheets:') || 
       key.startsWith('timesheet:') || 

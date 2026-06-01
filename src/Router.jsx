@@ -198,7 +198,7 @@ const AppRouter = () => {
             </PluginGuard>
           } />
           <Route path="/schedule" element={
-            <RoleGuard allowedRoles={['siteManager', 'adminManager', 'employee']}>
+            <RoleGuard allowedRoles={['siteManager', 'seniorManager', 'adminManager', 'employee']}>
               <PluginGuard pluginName="scheduling">
                 <SchedulePage />
               </PluginGuard>

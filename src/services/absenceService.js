@@ -266,6 +266,18 @@ class AbsenceService {
     }
   }
 
+  // ── Cancel Absence ─────────────────────────────────────────────────────────
+  async cancelAbsence(absenceId, cancellationData, currentUser) {
+    try {
+      const { data } = await hrApiClient.post(`/hr/absences/${absenceId}/cancel`, { reason: cancellationData.cancellationReason || cancellationData.reason });
+      return normalizeDateFields(data);
+    } catch (err) {
+      if (err.response?.status === 403) throw new Error('Permission denied');
+      if (err.response?.status === 404) throw new Error('Absence not found');
+      throw new Error(err.response?.data?.error || 'Failed to cancel absence');
+    }
+  }
+
   // ── Absence Summary (yearly by type) ──────────────────────────────────────
   async getAbsenceSummary(userId) {
     try {

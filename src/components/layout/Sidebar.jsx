@@ -291,13 +291,13 @@ const Sidebar = () => {
       label: 'Scheduling',
       icon: CalendarDays,
       to: '/schedule',
-      roles: ['siteManager', 'seniorManager'],
+      roles: ['siteManager', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor', 'contractManager', 'employee'],
       condition: hasSchedulingPlugin,
       children: [
         {
           label: 'Schedule',
           to: '/schedule',
-          roles: ['siteManager', 'seniorManager'],
+          roles: ['siteManager', 'seniorManager', 'adminManager', 'employee'],
           condition: hasSchedulingPlugin,
         },
         {
@@ -311,13 +311,6 @@ const Sidebar = () => {
           to: '/activity-oversight',
           label: 'Activity Oversight',
           icon: Activity,
-          roles: ['siteManager', 'seniorManager'],
-          condition: hasSchedulingPlugin
-        },
-        {
-          to: '/incidents',
-          label: 'Incidents',
-          icon: AlertTriangle,
           roles: ['siteManager', 'seniorManager'],
           condition: hasSchedulingPlugin
         }
@@ -334,6 +327,13 @@ const Sidebar = () => {
       label: 'Documents',
       icon: FileText,
       roles: ['siteManager', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor', 'employee']
+    },
+    {
+      to: '/incidents',
+      label: 'Incidents',
+      icon: AlertTriangle,
+      roles: ['siteManager', 'seniorManager', 'teamManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor', 'contractManager', 'employee'],
+      condition: hasSchedulingPlugin
     },
     {
       to: '/hr-onboarding',

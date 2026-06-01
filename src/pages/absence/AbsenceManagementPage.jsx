@@ -622,6 +622,59 @@ const AbsenceManagementPage = () => {
     }
   };
 
+  const handleCancel = async (absenceId, cancellationReason) => {
+    // Optimistically update status
+    setMyAbsencesHistory(prev => prev.map(absence =>
+      absence.id === absenceId
+        ? {
+            ...absence,
+            status: 'Cancelled',
+            cancellationReason,
+            cancelledBy: user.userId || user.uid,
+            cancelledByName: user.displayName,
+            cancelledAt: new Date().toISOString(),
+            isOptimistic: true
+          }
+        : absence
+    ));
+
+    setSyncingIds(prev => new Set([...prev, absenceId]));
+
+    try {
+      await absenceService.cancelAbsence(absenceId, {
+        cancellationReason
+      }, user);
+      setShowViewModal(false);
+
+      setSyncingIds(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(absenceId);
+        return newSet;
+      });
+
+      toast.success('Absence cancelled successfully!');
+
+      // Refresh data to update stats and cache
+      const companyIdRaw = normalizeId(user.companyId);
+      setItem?.(`absences_${companyIdRaw}`, null); // Invalidate cache
+      loadEmployeesData(true);
+      if (activeTab === 'My Absences') {
+        setAllowancesRefreshNonce((n) => n + 1);
+      }
+
+    } catch (err) {
+      console.error('Error cancelling absence:', err);
+      setError(err.message);
+      toast.error(err.message || 'Failed to cancel absence request. Please try again.');
+
+      setSyncingIds(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(absenceId);
+        return newSet;
+      });
+    }
+  };
+
   const getStatusVariant = (status) => {
     switch (status.toLowerCase()) {
       case 'pending':
@@ -1054,6 +1107,7 @@ const AbsenceManagementPage = () => {
             absence={selectedAbsence}
             onApprove={handleApprove}
             onDecline={handleDecline}
+            onCancel={handleCancel}
             currentUser={user}
           />
         )}

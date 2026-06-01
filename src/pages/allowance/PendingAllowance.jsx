@@ -302,60 +302,23 @@ const PendingAllowancePage = () => {
     }
   };
 
-  // Fetch all active allowances for the company to determine pending employees
+  // Fetch all pending employee IDs
   useEffect(() => {
     if (!user?.companyId || employees.length === 0) return;
 
     const fetchCompanyAllowances = async () => {
       try {
-        const currentYear = new Date().getFullYear();
-
         if (unsubscribeAllowancesRef.current) {
           unsubscribeAllowancesRef.current();
         }
 
-        unsubscribeAllowancesRef.current = allowanceService.subscribeToCompanyAllowances(
-          user.companyId,
-          user,
-          currentYear,
-          (allowancesData) => {
-            // Build a map: employeeId -> Set of normalized leave types
-            const employeeAllowanceMap = new Map();
-            allowancesData.forEach((data) => {
-              const empId = data.employeeId;
-              if (!employeeAllowanceMap.has(empId)) {
-                employeeAllowanceMap.set(empId, new Set());
-              }
-              const normalized = allowanceService.normalizeLeaveType(data.leaveType);
-              employeeAllowanceMap.get(empId).add(normalized);
-            });
-
-            // Determine pending: employees with NO allowances, or ONLY sick leave
-            const pending = new Set();
-            const sickLeaveNormalized = allowanceService.normalizeLeaveType('sick_leave');
-
-            employees.forEach((emp) => {
-              const role = (emp?.primaryRole || emp?.role || '').toString().toLowerCase();
-              if (role === 'sitemanager') return; // skip site managers
-
-              const types = employeeAllowanceMap.get(emp.id);
-              if (!types || types.size === 0) {
-                // No allowances at all
-                pending.add(emp.id);
-              } else {
-                // Check if they ONLY have sick leave
-                const nonSickTypes = [...types].filter(t => t !== sickLeaveNormalized);
-                if (nonSickTypes.length === 0) {
-                  pending.add(emp.id);
-                }
-              }
-            });
-
-            setPendingEmployeeIds(pending);
+        unsubscribeAllowancesRef.current = allowanceService.subscribeToPendingEmployeeIds(
+          (pendingIds) => {
+            setPendingEmployeeIds(new Set(pendingIds));
             setAllowancesLoaded(true);
           },
           (err) => {
-            console.error('Error in company allowances subscription:', err);
+            console.error('Error in pending allowances subscription:', err);
             setAllowancesLoaded(true);
           }
         );

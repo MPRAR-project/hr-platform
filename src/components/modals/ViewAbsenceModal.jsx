@@ -39,7 +39,7 @@ const ViewAbsenceModal = ({ isOpen, onClose, absence, onApprove, onDecline, onCa
     if (!currentUser || !absence) return false;
 
     // Users cannot approve their own absences
-    if (absence.userId === currentUser.uid) return false;
+    if (absence.userId === currentUser.uid || absence.userId === currentUser.userId) return false;
 
     // Only certain roles can approve absences
     const managerRoles = ['siteManager', 'hrManager', 'hrAdvisor', 'adminManager', 'adminAdvisor', 'teamManager'];
@@ -51,7 +51,7 @@ const ViewAbsenceModal = ({ isOpen, onClose, absence, onApprove, onDecline, onCa
     if (!currentUser || !absence) return false;
 
     // Employees cannot cancel - only managers
-    if (absence.userId === currentUser.uid) return false;
+    if (absence.userId === currentUser.uid || absence.userId === currentUser.userId) return false;
 
     // Only specific manager roles can cancel approved absences
     return CANCELLATION_ROLES.includes(currentUser.role);
@@ -268,6 +268,19 @@ const ViewAbsenceModal = ({ isOpen, onClose, absence, onApprove, onDecline, onCa
                   Approve
                 </Button>
               </div>
+            )}
+
+            {/* Approved Status - Show Cancel (Managers Only) */}
+            {String(absence.status).toLowerCase() === "approved" && canCancelAbsence() && (
+              <Button
+                onClick={handleCancelClick}
+                variant='danger'
+                icon={Ban}
+                iconFirst={true}
+                cn='w-full h-12'
+              >
+                Cancel Absence
+              </Button>
             )}
 
           </div>

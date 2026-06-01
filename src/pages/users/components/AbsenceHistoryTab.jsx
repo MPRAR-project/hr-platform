@@ -60,15 +60,45 @@ const AbsencesHistoryTab = ({ absences, currentUser, refreshAbsences }) => {
     setHistoryModalOpen(false);
     setSelectedAbsence(null);
   }
-  const handleApprove = (absenceId) => {
-    console.log('Approve absence:', absenceId);
-    // Add your approval logic here
+  const handleApprove = async (absenceId) => {
+    try {
+      await absenceService.approveAbsence(absenceId, currentUser);
+      toast.success('Absence request approved successfully!');
+      if (refreshAbsences) {
+        await refreshAbsences();
+      }
+    } catch (error) {
+      console.error('Error approving absence:', error);
+      toast.error('Failed to approve absence. Please try again.');
+    }
     setShowViewModal(false);
   };
 
-  const handleDecline = (absenceId, reason) => {
-    console.log('Decline absence:', absenceId, 'Reason:', reason);
-    // Add your decline logic here
+  const handleDecline = async (absenceId, reason) => {
+    try {
+      await absenceService.declineAbsence(absenceId, reason, currentUser);
+      toast.success('Absence request declined successfully!');
+      if (refreshAbsences) {
+        await refreshAbsences();
+      }
+    } catch (error) {
+      console.error('Error declining absence:', error);
+      toast.error('Failed to decline absence. Please try again.');
+    }
+    setShowViewModal(false);
+  };
+
+  const handleCancel = async (absenceId, reason) => {
+    try {
+      await absenceService.cancelAbsence(absenceId, { cancellationReason: reason }, currentUser);
+      toast.success('Absence request cancelled successfully!');
+      if (refreshAbsences) {
+        await refreshAbsences();
+      }
+    } catch (error) {
+      console.error('Error cancelling absence:', error);
+      toast.error('Failed to cancel absence. Please try again.');
+    }
     setShowViewModal(false);
   };
 
@@ -197,6 +227,7 @@ const AbsencesHistoryTab = ({ absences, currentUser, refreshAbsences }) => {
         absence={selectedAbsence}
         onApprove={handleApprove}
         onDecline={handleDecline}
+        onCancel={handleCancel}
         currentUser={currentUser}
       />
 
